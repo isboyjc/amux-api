@@ -32,3 +32,4 @@ tmp/
 
 token_estimator_test.go
 .cursor
+skills-lock.json
