@@ -43,6 +43,7 @@ import {
 } from '@douyinfe/semi-illustrations';
 import {
   calculateModelPrice,
+  formatDynamicPriceSummary,
   getLobeHubIcon,
   parsePricingReference,
   formatGroupDiscount,
@@ -481,6 +482,11 @@ const PricingCardView = ({
                           style={{ color: 'var(--semi-color-text-2)' }}
                         >
                           {model.vendor_name}
+                        </div>
+                      )}
+                      {priceData.isDynamicPricing && (
+                        <div className='flex flex-col gap-1 text-xs mt-1'>
+                          {formatDynamicPriceSummary(priceData.billingExpr, t)}
                         </div>
                       )}
                     </div>
