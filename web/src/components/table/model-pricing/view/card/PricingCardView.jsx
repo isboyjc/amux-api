@@ -486,7 +486,7 @@ const PricingCardView = ({
                       )}
                       {priceData.isDynamicPricing && (
                         <div className='flex flex-col gap-1 text-xs mt-1'>
-                          {formatDynamicPriceSummary(priceData.billingExpr, t)}
+                          {formatDynamicPriceSummary(priceData.billingExpr, t, priceData.usedGroupRatio)}
                         </div>
                       )}
                     </div>
