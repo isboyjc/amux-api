@@ -152,18 +152,14 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	if relayInfo.ResponsesUsageInfo != nil {
 		if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists && webSearchTool.CallCount > 0 {
 			summary.WebSearchCallCount = webSearchTool.CallCount
-			summary.WebSearchPrice = operation_setting.GetWebSearchPricePerThousand(summary.ModelName, webSearchTool.SearchContextSize)
+			summary.WebSearchPrice = operation_setting.GetToolPrice(getWebSearchPriceKey(summary.ModelName))
 			dWebSearchQuota = decimal.NewFromFloat(summary.WebSearchPrice).
 				Mul(decimal.NewFromInt(int64(webSearchTool.CallCount))).
 				Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
 		}
 	} else if strings.HasSuffix(summary.ModelName, "search-preview") {
-		searchContextSize := ctx.GetString("chat_completion_web_search_context_size")
-		if searchContextSize == "" {
-			searchContextSize = "medium"
-		}
 		summary.WebSearchCallCount = 1
-		summary.WebSearchPrice = operation_setting.GetWebSearchPricePerThousand(summary.ModelName, searchContextSize)
+		summary.WebSearchPrice = operation_setting.GetToolPrice(getWebSearchPriceKey(summary.ModelName))
 		dWebSearchQuota = decimal.NewFromFloat(summary.WebSearchPrice).
 			Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
 	}
@@ -171,7 +167,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	var dClaudeWebSearchQuota decimal.Decimal
 	summary.ClaudeWebSearchCallCount = ctx.GetInt("claude_web_search_requests")
 	if summary.ClaudeWebSearchCallCount > 0 {
-		summary.ClaudeWebSearchPrice = operation_setting.GetClaudeWebSearchPricePerThousand()
+		summary.ClaudeWebSearchPrice = operation_setting.GetToolPrice("claude_web_search")
 		dClaudeWebSearchQuota = decimal.NewFromFloat(summary.ClaudeWebSearchPrice).
 			Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit).
 			Mul(decimal.NewFromInt(int64(summary.ClaudeWebSearchCallCount)))
@@ -181,7 +177,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	if relayInfo.ResponsesUsageInfo != nil {
 		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists && fileSearchTool.CallCount > 0 {
 			summary.FileSearchCallCount = fileSearchTool.CallCount
-			summary.FileSearchPrice = operation_setting.GetFileSearchPricePerThousand()
+			summary.FileSearchPrice = operation_setting.GetToolPrice("file_search")
 			dFileSearchQuota = decimal.NewFromFloat(summary.FileSearchPrice).
 				Mul(decimal.NewFromInt(int64(fileSearchTool.CallCount))).
 				Div(decimal.NewFromInt(1000)).Mul(dGroupRatio).Mul(dQuotaPerUnit)
