@@ -53,5 +53,8 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
-      - name: Image digest
-        run: echo ${{ steps.meta.outputs.tags }}
+      - name: Output image info
+        run: |
+          echo "✅ Build completed!"
+          echo "📦 Images pushed:"
+          echo "${{ steps.meta.outputs.tags }}"
