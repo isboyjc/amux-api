@@ -37,9 +37,16 @@ version: '3.8'
 
 services:
   app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # 使用 GitHub Container Registry 镜像（推荐，完全免费）
+    # 格式: ghcr.io/你的github用户名/仓库名:latest
+    # 示例: ghcr.io/isboyjc/amux-api:latest
+    image: ghcr.io/yourusername/amux-api:latest
+    
+    # 如果要在 Dokploy 本地构建（需要 4GB+ 内存），取消下面注释
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    
     restart: always
     command: --log-dir /app/logs
     expose:
