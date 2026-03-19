@@ -191,7 +191,7 @@ const CustomRequestEditor = ({
               autosize={{ minRows: 8, maxRows: 20 }}
               className={`custom-request-textarea !rounded-lg font-mono text-sm ${!isValid ? '!border-red-500' : ''}`}
               style={{
-                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                fontFamily: '"Ubuntu Mono", Consolas, "Courier New", monospace',
                 lineHeight: '1.5',
               }}
             />

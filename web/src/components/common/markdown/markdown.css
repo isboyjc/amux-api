@@ -200,7 +200,7 @@
 /* 代码块样式增强 */
 pre {
   position: relative;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: 'Ubuntu Mono', Consolas, 'Courier New', monospace;
   transition: all 0.2s ease;
 }
 
@@ -355,7 +355,7 @@ pre:hover .copy-code-button {
   box-shadow: 0 1px 0 var(--semi-color-border);
   color: var(--semi-color-text-0);
   display: inline-block;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: 'Ubuntu Mono', Consolas, 'Courier New', monospace;
   font-size: 0.85em;
   font-weight: 700;
   line-height: 1;

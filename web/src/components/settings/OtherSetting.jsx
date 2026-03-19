@@ -369,7 +369,7 @@ const OtherSetting = () => {
                 )}
                 field={'Notice'}
                 onChange={handleInputChange}
-                style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                style={{ fontFamily: '"Ubuntu Mono", Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
               />
               <Button onClick={submitNotice} loading={loadingInput['Notice']}>
@@ -382,7 +382,7 @@ const OtherSetting = () => {
                 )}
                 field={LEGAL_USER_AGREEMENT_KEY}
                 onChange={handleInputChange}
-                style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                style={{ fontFamily: '"Ubuntu Mono", Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
                 helpText={t(
                   '填写用户协议内容后，用户注册时将被要求勾选已阅读用户协议',
@@ -401,7 +401,7 @@ const OtherSetting = () => {
                 )}
                 field={LEGAL_PRIVACY_POLICY_KEY}
                 onChange={handleInputChange}
-                style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                style={{ fontFamily: '"Ubuntu Mono", Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
                 helpText={t(
                   '填写隐私政策内容后，用户注册时将被要求勾选已阅读隐私政策',
@@ -451,7 +451,7 @@ const OtherSetting = () => {
                 )}
                 field={'HomePageContent'}
                 onChange={handleInputChange}
-                style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                style={{ fontFamily: '"Ubuntu Mono", Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
               />
               <Button
@@ -467,7 +467,7 @@ const OtherSetting = () => {
                 )}
                 field={'About'}
                 onChange={handleInputChange}
-                style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                style={{ fontFamily: '"Ubuntu Mono", Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
               />
               <Button onClick={submitAbout} loading={loadingInput['About']}>

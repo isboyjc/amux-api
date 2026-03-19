@@ -139,7 +139,7 @@ export default function SettingsSensitiveWords(props) {
                       SensitiveWords: value,
                     })
                   }
-                  style={{ fontFamily: 'JetBrains Mono, Consolas' }}
+                  style={{ fontFamily: '"Ubuntu Mono", Consolas' }}
                   autosize={{ minRows: 6, maxRows: 12 }}
                 />
               </Col>

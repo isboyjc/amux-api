@@ -71,7 +71,7 @@ const generateAvatarDataUrl = (username) => {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
       <circle cx="16" cy="16" r="16" fill="${bgColor}" />
-      <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="16" fill="#ffffff" font-family="sans-serif">${firstLetter}</text>
+      <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="16" fill="#ffffff" font-family="Ubuntu, sans-serif">${firstLetter}</text>
     </svg>
   `;
   return `data:image/svg+xml;base64,${encodeToBase64(svg)}`;

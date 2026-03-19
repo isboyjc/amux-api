@@ -134,6 +134,10 @@ export default {
       'semi-color-data-19': 'var(--semi-color-data-19)',
     },
     extend: {
+      fontFamily: {
+        sans: ['Ubuntu', 'Microsoft YaHei', 'sans-serif'],
+        mono: ['Ubuntu Mono', 'Consolas', 'Courier New', 'monospace'],
+      },
       borderRadius: {
         'semi-border-radius-extra-small':
           'var(--semi-border-radius-extra-small)',

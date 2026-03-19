@@ -25,10 +25,50 @@ body.sidebar-collapsed {
 }
 
 body {
-  font-family: Lato, 'Helvetica Neue', Arial, Helvetica, 'Microsoft YaHei',
-    sans-serif;
+  font-family: 'Ubuntu', 'Microsoft YaHei', sans-serif;
   color: var(--semi-color-text-0);
   background-color: var(--semi-color-bg-0);
+}
+
+/* 覆盖 Semi Design 组件字体 */
+[class*='semi-'],
+.semi-typography,
+.semi-typography-h1,
+.semi-typography-h2,
+.semi-typography-h3,
+.semi-typography-h4,
+.semi-typography-h5,
+.semi-typography-h6,
+.semi-typography-paragraph,
+.semi-typography-title,
+.semi-button,
+.semi-input,
+.semi-select,
+.semi-dropdown,
+.semi-modal,
+.semi-tooltip,
+.semi-popover,
+.semi-notification,
+.semi-toast,
+.semi-table,
+.semi-form,
+.semi-tag,
+.semi-badge,
+.semi-card,
+.semi-list,
+.semi-tree,
+.semi-tabs,
+.semi-collapse,
+.semi-descriptions,
+.semi-steps,
+.semi-navigation {
+  font-family: 'Ubuntu', 'Microsoft YaHei', sans-serif !important;
+}
+
+/* 保持代码字体不变 */
+[class*='semi-'] code,
+[class*='semi-'] pre {
+  font-family: 'Ubuntu Mono', Consolas, 'Courier New', monospace !important;
 }
 
 .app-layout {
@@ -42,8 +82,7 @@ body {
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: 'Ubuntu Mono', Consolas, 'Courier New', monospace;
 }
 
 /* ==================== 布局相关样式 ==================== */

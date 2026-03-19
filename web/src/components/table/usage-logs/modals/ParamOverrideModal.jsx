@@ -249,7 +249,7 @@ const ParamOverrideModal = ({
                       flex: 1,
                       minWidth: 0,
                       fontFamily:
-                        'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, monospace',
+                        '"Ubuntu Mono", Consolas, "Courier New", monospace',
                       fontSize: 12,
                       lineHeight: 1.6,
                       whiteSpace: 'pre-wrap',
