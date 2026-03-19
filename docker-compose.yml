@@ -1,96 +1,117 @@
-# New-API Docker Compose Configuration
-# 
-# Quick Start:
-#   1. docker-compose up -d
-#   2. Access at http://localhost:3000
+# ========================================
+# Amux API - Dokploy 部署配置
+# ========================================
 #
-# Using MySQL instead of PostgreSQL:
-#   1. Comment out the postgres service and SQL_DSN line 15
-#   2. Uncomment the mysql service and SQL_DSN line 16
-#   3. Uncomment mysql in depends_on (line 28)
-#   4. Uncomment mysql_data in volumes section (line 64)
+# 🎯 推荐方案：在 Dokploy 面板创建独立的 PostgreSQL 和 Redis
+#    优势：删除/重建应用不会影响数据库，数据更安全
 #
-# ⚠️  IMPORTANT: Change all default passwords before deploying to production!
+# 📋 部署步骤：
+#   1️⃣  在 Dokploy 创建 PostgreSQL 服务
+#       - Service Name: amux-postgres（或其他名称）
+#       - Database: amux
+#       - Username: amux
+#       - Password: 设置强密码并记住
+#
+#   2️⃣  在 Dokploy 创建 Redis 服务
+#       - Service Name: amux-redis（或其他名称）
+#
+#   3️⃣  创建本 Compose 服务
+#       - 连接 GitHub 仓库
+#       - Compose Path: docker-compose.yml
+#       - 设置以下环境变量：
+#
+#   4️⃣  必需的环境变量（在 Dokploy 环境变量面板设置）：
+#       SQL_DSN=postgresql://amux:你的密码@amux-postgres:5432/amux
+#       REDIS_CONN_STRING=redis://amux-redis:6379
+#       SESSION_SECRET=用 openssl rand -base64 48 生成
+#
+#   5️⃣  推荐的环境变量：
+#       CRYPTO_SECRET=用 openssl rand -base64 32 生成
+#
+#   6️⃣  点击 Deploy 部署！
+#
+# ⚠️  注意：服务名（amux-postgres、amux-redis）要替换成你在 Dokploy 中实际创建的名称
+# ========================================
 
-version: '3.4' # For compatibility with older Docker versions
+version: '3.8'
 
 services:
-  new-api:
-    image: calciumion/new-api:latest
-    container_name: new-api
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     restart: always
     command: --log-dir /app/logs
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     volumes:
-      - ./data:/data
-      - ./logs:/app/logs
+      - amux_data:/data
+      - amux_logs:/app/logs
     environment:
-      - SQL_DSN=postgresql://root:123456@postgres:5432/new-api # ⚠️ IMPORTANT: Change the password in production!
-#      - SQL_DSN=root:123456@tcp(mysql:3306)/new-api  # Point to the mysql service, uncomment if using MySQL
-      - REDIS_CONN_STRING=redis://redis
+      # ==================== 数据库配置 ====================
+      # PostgreSQL 连接字符串（必需）
+      # 格式: postgresql://用户名:密码@主机:端口/数据库名
+      # 示例: postgresql://amux:yourpass@amux-postgres:5432/amux
+      - SQL_DSN=${SQL_DSN}
+      
+      # ==================== 缓存配置 ====================
+      # Redis 连接字符串（必需，用于缓存和会话）
+      # 格式: redis://主机:端口 或 redis://:密码@主机:端口
+      # 示例: redis://amux-redis:6379
+      - REDIS_CONN_STRING=${REDIS_CONN_STRING}
+      
+      # ==================== 安全配置 ====================
+      # 会话加密密钥（必需，多机部署必须设置）
+      # 生成方式: openssl rand -base64 48
+      - SESSION_SECRET=${SESSION_SECRET}
+      
+      # Redis 数据加密密钥（推荐设置）
+      # 生成方式: openssl rand -base64 32
+      - CRYPTO_SECRET=${CRYPTO_SECRET:-}
+      
+      # ==================== 基础配置 ====================
+      # 时区设置
       - TZ=Asia/Shanghai
-      - ERROR_LOG_ENABLED=true # 是否启用错误日志记录 (Whether to enable error log recording)
-      - BATCH_UPDATE_ENABLED=true  # 是否启用批量更新 (Whether to enable batch update)
-#      - STREAMING_TIMEOUT=300  # 流模式无响应超时时间，单位秒，默认120秒，如果出现空补全可以尝试改为更大值 （Streaming timeout in seconds, default is 120s. Increase if experiencing empty completions）
-#      - SESSION_SECRET=random_string  # 多机部署时设置，必须修改这个随机字符串！！ （multi-node deployment, set this to a random string!!!!!!!）
-#      - SYNC_FREQUENCY=60  # Uncomment if regular database syncing is needed
-#      - GOOGLE_ANALYTICS_ID=G-XXXXXXXXXX  # Google Analytics 的测量 ID (Google Analytics Measurement ID)
-#      - UMAMI_WEBSITE_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # Umami 网站 ID (Umami Website ID)
-#      - UMAMI_SCRIPT_URL=https://analytics.umami.is/script.js  # Umami 脚本 URL，默认为官方地址 (Umami Script URL, defaults to official URL)
-
-    depends_on:
-      - redis
-      - postgres
-#      - mysql  # Uncomment if using MySQL
-    networks:
-      - new-api-network
+      
+      # 服务端口（默认 3000）
+      - PORT=3000
+      
+      # Gin 运行模式（release=生产模式，debug=调试模式）
+      - GIN_MODE=release
+      
+      # ==================== 性能优化 ====================
+      # 启用错误日志记录
+      - ERROR_LOG_ENABLED=true
+      
+      # 启用批量更新（提升数据库写入性能）
+      - BATCH_UPDATE_ENABLED=true
+      
+      # 启用内存缓存（提升响应速度）
+      - MEMORY_CACHE_ENABLED=true
+      
+      # 缓存同步频率（秒，默认 60）
+      - SYNC_FREQUENCY=60
+      
+      # ==================== 可选配置 ====================
+      # 流式响应超时时间（秒，默认 300）
+      # 如果出现空补全可以增大此值
+      - STREAMING_TIMEOUT=${STREAMING_TIMEOUT:-300}
+      
+      # 前端访问地址（用于回调、通知等）
+      # 示例: https://your-domain.com
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
-
-  redis:
-    image: redis:latest
-    container_name: redis
-    restart: always
-    networks:
-      - new-api-network
-
-  postgres:
-    image: postgres:15
-    container_name: postgres
-    restart: always
-    environment:
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
-      POSTGRES_DB: new-api
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    networks:
-      - new-api-network
-#    ports:
-#      - "5432:5432"  # Uncomment if you need to access PostgreSQL from outside Docker
-
-#  mysql:
-#    image: mysql:8.2
-#    container_name: mysql
-#    restart: always
-#    environment:
-#      MYSQL_ROOT_PASSWORD: 123456  # ⚠️ IMPORTANT: Change this password in production!
-#      MYSQL_DATABASE: new-api
-#    volumes:
-#      - mysql_data:/var/lib/mysql
-#    networks:
-#      - new-api-network
-#    ports:
-#      - "3306:3306"  # Uncomment if you need to access MySQL from outside Docker
+      start_period: 40s
 
 volumes:
-  pg_data:
-#  mysql_data:
+  amux_data:
+  amux_logs:
 
 networks:
-  new-api-network:
+  default:
+    name: amux-network
     driver: bridge
