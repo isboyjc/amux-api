@@ -293,6 +293,12 @@ func migrateDB() error {
 			return err
 		}
 	}
+	
+	// 确保常见的供应商在数据库中存在
+	EnsureCommonVendors()
+	// 一次性迁移：修复历史模型的 vendor_id
+	MigrateModelVendorIDs()
+	
 	return nil
 }
 
@@ -361,6 +367,7 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	
 	common.SysLog("database migrated")
 	return nil
 }

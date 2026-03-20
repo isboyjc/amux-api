@@ -1,7 +1,10 @@
 package model
 
 import (
+	"fmt"
 	"strings"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 // 简化的供应商映射规则
@@ -20,6 +23,7 @@ var defaultVendorRules = map[string]string{
 	"qwen":     "阿里巴巴",
 	"deepseek": "DeepSeek",
 	"abab":     "MiniMax",
+	"minimax":  "MiniMax",
 	"ernie":    "百度",
 	"spark":    "讯飞",
 	"hunyuan":  "腾讯",
@@ -125,4 +129,85 @@ func getDefaultVendorIcon(vendorName string) string {
 		return icon
 	}
 	return ""
+}
+
+// EnsureCommonVendors 确保常见的供应商在数据库中存在
+func EnsureCommonVendors() {
+	// 从 defaultVendorIcons 获取所有常见供应商列表
+	commonVendors := []string{
+		"OpenAI", "Anthropic", "Google", "Moonshot", "智谱", "阿里巴巴",
+		"DeepSeek", "MiniMax", "百度", "讯飞", "腾讯", "Cohere",
+		"Cloudflare", "360", "零一万物", "Jina", "Mistral", "xAI",
+		"Meta", "字节跳动", "快手", "即梦", "Vidu", "微软",
+	}
+
+	for _, vendorName := range commonVendors {
+		// 检查是否已存在
+		var existing Vendor
+		if err := DB.Where("name = ?", vendorName).First(&existing).Error; err == nil {
+			continue
+		}
+
+		// 不存在则创建
+		vendor := &Vendor{
+			Name:   vendorName,
+			Status: 1,
+			Icon:   getDefaultVendorIcon(vendorName),
+		}
+		_ = vendor.Insert()
+	}
+}
+
+// MigrateModelVendorIDs 一次性迁移：修复历史模型的 vendor_id
+// 通过 Option 表记录是否已执行，避免重复执行
+func MigrateModelVendorIDs() {
+	// 检查是否已执行过此迁移
+	migrationKey := "model_vendor_id_migration_v1"
+	var opt Option
+	if err := DB.Where(commonKeyCol+" = ?", migrationKey).First(&opt).Error; err == nil {
+		if opt.Value == "done" {
+			return
+		}
+	}
+
+	// 构建供应商名称到ID的映射
+	var vendors []Vendor
+	if err := DB.Find(&vendors).Error; err != nil {
+		return
+	}
+	vendorNameToID := make(map[string]int)
+	for _, v := range vendors {
+		vendorNameToID[v.Name] = v.Id
+	}
+
+	// 获取所有 vendor_id 为 0 的模型
+	var modelsWithoutVendor []Model
+	if err := DB.Where("vendor_id = ?", 0).Find(&modelsWithoutVendor).Error; err != nil {
+		return
+	}
+
+	// 更新模型的 vendor_id
+	updateCount := 0
+	for _, model := range modelsWithoutVendor {
+		modelLower := strings.ToLower(model.ModelName)
+		// 根据规则匹配供应商
+		for pattern, vendorName := range defaultVendorRules {
+			if strings.Contains(modelLower, pattern) {
+				if vendorID, ok := vendorNameToID[vendorName]; ok && vendorID > 0 {
+					// 更新模型的 vendor_id
+					if err := DB.Model(&Model{}).Where("id = ?", model.Id).Update("vendor_id", vendorID).Error; err == nil {
+						updateCount++
+					}
+				}
+				break
+			}
+		}
+	}
+
+	// 标记迁移已完成
+	_ = UpdateOption(migrationKey, "done")
+	
+	if updateCount > 0 {
+		common.SysLog(fmt.Sprintf("migrated vendor_id for %d models", updateCount))
+	}
 }
