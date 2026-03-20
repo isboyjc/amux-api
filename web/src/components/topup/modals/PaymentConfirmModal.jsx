@@ -36,14 +36,16 @@ const PaymentConfirmModal = ({
   renderAmount,
   payWay,
   payMethods,
-  // 新增：用于显示折扣明细
   amountNumber,
   discountRate,
+  stripeCurrencySymbol = '¥',
 }) => {
   const hasDiscount =
     discountRate && discountRate > 0 && discountRate < 1 && amountNumber > 0;
   const originalAmount = hasDiscount ? amountNumber / discountRate : 0;
   const discountAmount = hasDiscount ? originalAmount - amountNumber : 0;
+  
+  const currencySymbol = payWay === 'stripe' ? stripeCurrencySymbol : '¥';
   return (
     <Modal
       title={
@@ -97,7 +99,7 @@ const PaymentConfirmModal = ({
                     {t('原价')}：
                   </Text>
                   <Text delete className='text-slate-500 dark:text-slate-400'>
-                    {`${originalAmount.toFixed(2)} ${t('元')}`}
+                    {currencySymbol}{originalAmount.toFixed(2)}
                   </Text>
                 </div>
                 <div className='flex justify-between items-center'>
@@ -105,7 +107,7 @@ const PaymentConfirmModal = ({
                     {t('优惠')}：
                   </Text>
                   <Text className='text-emerald-600 dark:text-emerald-400'>
-                    {`- ${discountAmount.toFixed(2)} ${t('元')}`}
+                    - {currencySymbol}{discountAmount.toFixed(2)}
                   </Text>
                 </div>
               </>

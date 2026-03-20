@@ -63,6 +63,10 @@ const TopUp = () => {
   const [enableStripeTopUp, setEnableStripeTopUp] = useState(
     statusState?.status?.enable_stripe_topup || false,
   );
+  const [stripeUnitPrice, setStripeUnitPrice] = useState(8.0);
+  const [stripeCurrency, setStripeCurrency] = useState('CNY');
+  const [stripeCurrencySymbol, setStripeCurrencySymbol] = useState('¥');
+  const [stripeUseDynamicPrice, setStripeUseDynamicPrice] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
 
   // Creem 相关状态
@@ -498,6 +502,11 @@ const TopUp = () => {
           setMinTopUp(minTopUpValue);
           setTopUpCount(minTopUpValue);
 
+          setStripeUnitPrice(data.stripe_unit_price || 8.0);
+          setStripeCurrency(data.stripe_currency || 'CNY');
+          setStripeCurrencySymbol(data.stripe_currency_symbol || '¥');
+          setStripeUseDynamicPrice(data.stripe_use_dynamic_price || false);
+
           // 设置 Creem 产品
           try {
             const products = JSON.parse(data.creem_products || '[]');
@@ -511,8 +520,14 @@ const TopUp = () => {
             setPresetAmounts(generatePresetAmounts(minTopUpValue));
           }
 
-          // 初始化显示实付金额
-          getAmount(minTopUpValue);
+          // 设置默认支付方式
+          if (!payWay) {
+            if (enableStripeTopUp && !enableOnlineTopUp && !enableWaffoTopUp) {
+              setPayWay('stripe');
+            } else if (payMethods && payMethods.length > 0) {
+              setPayWay(payMethods[0].type);
+            }
+          }
         } catch (e) {
           setPayMethods([]);
         }
@@ -610,14 +625,29 @@ const TopUp = () => {
     }
   }, [statusState?.status]);
 
+  useEffect(() => {
+    if (payWay && topUpCount > 0) {
+      getAmount(topUpCount);
+    }
+  }, [payWay]);
+
   const renderAmount = () => {
-    return amount + ' ' + t('元');
+    let currencySymbol = '¥';
+    if (payWay === 'stripe') {
+      currencySymbol = stripeCurrencySymbol || '¥';
+    }
+    return currencySymbol + amount.toFixed(2);
   };
 
   const getAmount = async (value) => {
     if (value === undefined) {
       value = topUpCount;
     }
+    
+    if (payWay === 'stripe') {
+      return await getStripeAmount(value);
+    }
+    
     setAmountLoading(true);
     try {
       const res = await API.post('/api/user/amount', {
@@ -650,9 +680,15 @@ const TopUp = () => {
         amount: parseFloat(value),
       });
       if (res !== undefined) {
-        const { message, data } = res.data;
+        const { message, data, currency, currency_symbol } = res.data;
         if (message === 'success') {
           setAmount(parseFloat(data));
+          if (currency) {
+            setStripeCurrency(currency);
+          }
+          if (currency_symbol) {
+            setStripeCurrencySymbol(currency_symbol);
+          }
         } else {
           setAmount(0);
           Toast.error({ content: '错误：' + data, id: 'getAmount' });
@@ -742,6 +778,7 @@ const TopUp = () => {
         payMethods={payMethods}
         amountNumber={amount}
         discountRate={topupInfo?.discount?.[topUpCount] || 1.0}
+        stripeCurrencySymbol={stripeCurrencySymbol}
       />
 
       {/* 充值账单模态框 */}
@@ -826,6 +863,9 @@ const TopUp = () => {
           activeSubscriptions={activeSubscriptions}
           allSubscriptions={allSubscriptions}
           reloadSubscriptionSelf={getSubscriptionSelf}
+          stripeUnitPrice={stripeUnitPrice}
+          stripeCurrency={stripeCurrency}
+          stripeCurrencySymbol={stripeCurrencySymbol}
         />
         <InvitationCard
           t={t}

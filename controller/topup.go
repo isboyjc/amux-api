@@ -78,9 +78,14 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
+	enableStripe := setting.StripeApiSecret != "" && setting.StripeWebhookSecret != ""
+	if !setting.StripeUseDynamicPrice {
+		enableStripe = enableStripe && setting.StripePriceId != ""
+	}
+
 	data := gin.H{
 		"enable_online_topup": operation_setting.PayAddress != "" && operation_setting.EpayId != "" && operation_setting.EpayKey != "",
-		"enable_stripe_topup": setting.StripeApiSecret != "" && setting.StripeWebhookSecret != "" && setting.StripePriceId != "",
+		"enable_stripe_topup": enableStripe,
 		"enable_creem_topup":  setting.CreemApiKey != "" && setting.CreemProducts != "[]",
 		"enable_waffo_topup": enableWaffo,
 		"waffo_pay_methods": func() interface{} {
@@ -89,13 +94,17 @@ func GetTopUpInfo(c *gin.Context) {
 			}
 			return nil
 		}(),
-		"creem_products": setting.CreemProducts,
-		"pay_methods":         payMethods,
-		"min_topup":           operation_setting.MinTopUp,
-		"stripe_min_topup":    setting.StripeMinTopUp,
-		"waffo_min_topup":     setting.WaffoMinTopUp,
-		"amount_options":      operation_setting.GetPaymentSetting().AmountOptions,
-		"discount":            operation_setting.GetPaymentSetting().AmountDiscount,
+		"creem_products":          setting.CreemProducts,
+		"pay_methods":             payMethods,
+		"min_topup":               operation_setting.MinTopUp,
+		"stripe_min_topup":        setting.StripeMinTopUp,
+		"waffo_min_topup":         setting.WaffoMinTopUp,
+		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
+		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
+		"stripe_currency":         setting.StripeCurrency,
+		"stripe_currency_symbol":  getStripeCurrencySymbol(),
+		"stripe_unit_price":       setting.StripeUnitPrice,
+		"stripe_use_dynamic_price": setting.StripeUseDynamicPrice,
 	}
 	common.ApiSuccess(c, data)
 }

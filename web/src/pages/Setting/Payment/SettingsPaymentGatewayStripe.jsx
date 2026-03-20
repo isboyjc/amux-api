@@ -26,6 +26,7 @@ import {
   Col,
   Typography,
   Spin,
+  Select,
 } from '@douyinfe/semi-ui';
 const { Text } = Typography;
 import {
@@ -46,6 +47,10 @@ export default function SettingsPaymentGateway(props) {
     StripeUnitPrice: 8.0,
     StripeMinTopUp: 1,
     StripePromotionCodesEnabled: false,
+    StripeCurrency: 'CNY',
+    StripeUseDynamicPrice: false,
+    StripeDisableAdaptivePricing: false,
+    StripeProductName: 'new-api 充值',
   });
   const [originInputs, setOriginInputs] = useState({});
   const formApiRef = useRef(null);
@@ -68,6 +73,16 @@ export default function SettingsPaymentGateway(props) {
           props.options.StripePromotionCodesEnabled !== undefined
             ? props.options.StripePromotionCodesEnabled
             : false,
+        StripeCurrency: props.options.StripeCurrency || 'CNY',
+        StripeUseDynamicPrice:
+          props.options.StripeUseDynamicPrice !== undefined
+            ? props.options.StripeUseDynamicPrice
+            : false,
+        StripeDisableAdaptivePricing:
+          props.options.StripeDisableAdaptivePricing !== undefined
+            ? props.options.StripeDisableAdaptivePricing
+            : false,
+        StripeProductName: props.options.StripeProductName || '',
       };
       setInputs(currentInputs);
       setOriginInputs({ ...currentInputs });
@@ -85,6 +100,11 @@ export default function SettingsPaymentGateway(props) {
       return;
     }
 
+    if (!inputs.StripeUseDynamicPrice && !inputs.StripePriceId) {
+      showError(t('固定价格模式下必须填写商品价格 ID，或开启动态价格模式'));
+      return;
+    }
+
     setLoading(true);
     try {
       const options = [];
@@ -98,7 +118,7 @@ export default function SettingsPaymentGateway(props) {
           value: inputs.StripeWebhookSecret,
         });
       }
-      if (inputs.StripePriceId !== '') {
+      if (!inputs.StripeUseDynamicPrice && inputs.StripePriceId !== '') {
         options.push({ key: 'StripePriceId', value: inputs.StripePriceId });
       }
       if (
@@ -129,16 +149,72 @@ export default function SettingsPaymentGateway(props) {
           value: inputs.StripePromotionCodesEnabled ? 'true' : 'false',
         });
       }
+      if (inputs.StripeCurrency && inputs.StripeCurrency !== '') {
+        options.push({
+          key: 'StripeCurrency',
+          value: inputs.StripeCurrency,
+        });
+      }
+      if (
+        originInputs['StripeUseDynamicPrice'] !==
+          inputs.StripeUseDynamicPrice &&
+        inputs.StripeUseDynamicPrice !== undefined
+      ) {
+        options.push({
+          key: 'StripeUseDynamicPrice',
+          value: inputs.StripeUseDynamicPrice ? 'true' : 'false',
+        });
+      }
+      if (
+        originInputs['StripeDisableAdaptivePricing'] !==
+          inputs.StripeDisableAdaptivePricing &&
+        inputs.StripeDisableAdaptivePricing !== undefined
+      ) {
+        options.push({
+          key: 'StripeDisableAdaptivePricing',
+          value: inputs.StripeDisableAdaptivePricing ? 'true' : 'false',
+        });
+      }
+      if (originInputs['StripeProductName'] !== inputs.StripeProductName) {
+        options.push({
+          key: 'StripeProductName',
+          value: inputs.StripeProductName || '',
+        });
+      }
 
-      // 发送请求
-      const requestQueue = options.map((opt) =>
-        API.put('/api/option/', {
-          key: opt.key,
-          value: opt.value,
-        }),
+      // 优先保存核心配置，确保动态价格标志先生效
+      const criticalOptions = options.filter(opt => 
+        opt.key === 'StripeUseDynamicPrice' || opt.key === 'StripeCurrency'
+      );
+      const otherOptions = options.filter(opt => 
+        opt.key !== 'StripeUseDynamicPrice' && opt.key !== 'StripeCurrency'
       );
 
-      const results = await Promise.all(requestQueue);
+      let results = [];
+
+      // 先保存动态价格配置
+      if (criticalOptions.length > 0) {
+        const criticalQueue = criticalOptions.map((opt) =>
+          API.put('/api/option/', {
+            key: opt.key,
+            value: opt.value,
+          }),
+        );
+        const criticalResults = await Promise.all(criticalQueue);
+        results = results.concat(criticalResults);
+      }
+
+      // 再保存其他配置
+      if (otherOptions.length > 0) {
+        const otherQueue = otherOptions.map((opt) =>
+          API.put('/api/option/', {
+            key: opt.key,
+            value: opt.value,
+          }),
+        );
+        const otherResults = await Promise.all(otherQueue);
+        results = results.concat(otherResults);
+      }
 
       // 检查所有请求是否成功
       const errorResults = results.filter((res) => !res.data.success);
@@ -218,6 +294,57 @@ export default function SettingsPaymentGateway(props) {
                 field='StripePriceId'
                 label={t('商品价格 ID')}
                 placeholder={t('price_xxx 的商品价格 ID，新建产品后可获得')}
+                disabled={inputs.StripeUseDynamicPrice}
+                extraText={
+                  inputs.StripeUseDynamicPrice
+                    ? t('动态价格模式下无需填写')
+                    : t('固定价格模式下必填')
+                }
+              />
+            </Col>
+          </Row>
+          <Row
+            gutter={{ xs: 8, sm: 16, md: 24, lg: 24, xl: 24, xxl: 24 }}
+            style={{ marginTop: 16 }}
+          >
+            <Col xs={24} sm={24} md={6} lg={6} xl={6}>
+              <Form.Select
+                field='StripeCurrency'
+                label={t('Stripe 支付货币')}
+              >
+                <Select.Option value='USD'>{t('美元 (USD)')}</Select.Option>
+                <Select.Option value='CNY'>{t('人民币 (CNY)')}</Select.Option>
+              </Form.Select>
+            </Col>
+            <Col xs={24} sm={24} md={6} lg={6} xl={6}>
+              <Form.InputNumber
+                field='StripeUnitPrice'
+                precision={2}
+                label={
+                  inputs.StripeCurrency === 'USD'
+                    ? t('充值价格（x$/美元）')
+                    : t('充值价格（x元/美元）')
+                }
+                placeholder={
+                  inputs.StripeCurrency === 'USD'
+                    ? t('例如：1，即 1$/美元')
+                    : t('例如：7.3，即 7.3元/美元')
+                }
+              />
+            </Col>
+            <Col xs={24} sm={24} md={6} lg={6} xl={6}>
+              <Form.InputNumber
+                field='StripeMinTopUp'
+                label={t('最低充值美元数量')}
+                placeholder={t('例如：2，即最低充值 2 美元')}
+              />
+            </Col>
+            <Col xs={24} sm={24} md={6} lg={6} xl={6}>
+              <Form.Input
+                field='StripeProductName'
+                label={t('产品名称（可选）')}
+                placeholder={t('留空则使用：系统名称 Credits')}
+                extraText={t('用于在 Stripe 后台区分不同项目的流水')}
               />
             </Col>
           </Row>
@@ -226,18 +353,27 @@ export default function SettingsPaymentGateway(props) {
             style={{ marginTop: 16 }}
           >
             <Col xs={24} sm={24} md={8} lg={8} xl={8}>
-              <Form.InputNumber
-                field='StripeUnitPrice'
-                precision={2}
-                label={t('充值价格（x元/美金）')}
-                placeholder={t('例如：7，就是7元/美金')}
+              <Form.Switch
+                field='StripeUseDynamicPrice'
+                size='default'
+                checkedText='｜'
+                uncheckedText='〇'
+                label={t('使用动态价格（支持折扣）')}
+                extraText={t(
+                  '开启后支持折扣功能，但不使用上方的固定价格 ID',
+                )}
               />
             </Col>
             <Col xs={24} sm={24} md={8} lg={8} xl={8}>
-              <Form.InputNumber
-                field='StripeMinTopUp'
-                label={t('最低充值美元数量')}
-                placeholder={t('例如：2，就是最低充值2$')}
+              <Form.Switch
+                field='StripeDisableAdaptivePricing'
+                size='default'
+                checkedText='｜'
+                uncheckedText='〇'
+                label={t('禁用多货币展示')}
+                extraText={t(
+                  '开启后用户只能用配置的货币支付，不显示其他货币选项',
+                )}
               />
             </Col>
             <Col xs={24} sm={24} md={8} lg={8} xl={8}>
