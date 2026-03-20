@@ -71,19 +71,20 @@ export default function SettingsPaymentGateway(props) {
             : 1,
         StripePromotionCodesEnabled:
           props.options.StripePromotionCodesEnabled !== undefined
-            ? props.options.StripePromotionCodesEnabled
+            ? props.options.StripePromotionCodesEnabled === true || props.options.StripePromotionCodesEnabled === 'true'
             : false,
         StripeCurrency: props.options.StripeCurrency || 'CNY',
         StripeUseDynamicPrice:
           props.options.StripeUseDynamicPrice !== undefined
-            ? props.options.StripeUseDynamicPrice
+            ? props.options.StripeUseDynamicPrice === true || props.options.StripeUseDynamicPrice === 'true'
             : false,
         StripeDisableAdaptivePricing:
           props.options.StripeDisableAdaptivePricing !== undefined
-            ? props.options.StripeDisableAdaptivePricing
+            ? props.options.StripeDisableAdaptivePricing === true || props.options.StripeDisableAdaptivePricing === 'true'
             : false,
         StripeProductName: props.options.StripeProductName || '',
       };
+      
       setInputs(currentInputs);
       setOriginInputs({ ...currentInputs });
       formApiRef.current.setValues(currentInputs);
@@ -91,7 +92,14 @@ export default function SettingsPaymentGateway(props) {
   }, [props.options]);
 
   const handleFormChange = (values) => {
-    setInputs(values);
+    setInputs({...values});
+    
+    // 开启动态价格时，异步清空 Price ID
+    if (values.StripeUseDynamicPrice && values.StripePriceId) {
+      setTimeout(() => {
+        formApiRef.current?.setValue('StripePriceId', '');
+      }, 0);
+    }
   };
 
   const submitStripeSetting = async () => {
@@ -118,8 +126,12 @@ export default function SettingsPaymentGateway(props) {
           value: inputs.StripeWebhookSecret,
         });
       }
-      if (!inputs.StripeUseDynamicPrice && inputs.StripePriceId !== '') {
-        options.push({ key: 'StripePriceId', value: inputs.StripePriceId });
+      // 始终保存 StripePriceId，包括清空的情况
+      if (inputs.StripePriceId !== undefined) {
+        options.push({ 
+          key: 'StripePriceId', 
+          value: inputs.StripePriceId || '' 
+        });
       }
       if (
         inputs.StripeUnitPrice !== undefined &&
@@ -139,82 +151,50 @@ export default function SettingsPaymentGateway(props) {
           value: inputs.StripeMinTopUp.toString(),
         });
       }
-      if (
-        originInputs['StripePromotionCodesEnabled'] !==
-          inputs.StripePromotionCodesEnabled &&
-        inputs.StripePromotionCodesEnabled !== undefined
-      ) {
+      
+      // Boolean 字段：始终保存，确保开关状态同步
+      if (inputs.StripePromotionCodesEnabled !== undefined) {
         options.push({
           key: 'StripePromotionCodesEnabled',
           value: inputs.StripePromotionCodesEnabled ? 'true' : 'false',
         });
       }
+      if (inputs.StripeUseDynamicPrice !== undefined) {
+        options.push({
+          key: 'StripeUseDynamicPrice',
+          value: inputs.StripeUseDynamicPrice ? 'true' : 'false',
+        });
+      }
+      if (inputs.StripeDisableAdaptivePricing !== undefined) {
+        options.push({
+          key: 'StripeDisableAdaptivePricing',
+          value: inputs.StripeDisableAdaptivePricing ? 'true' : 'false',
+        });
+      }
+      
+      // 其他字段
       if (inputs.StripeCurrency && inputs.StripeCurrency !== '') {
         options.push({
           key: 'StripeCurrency',
           value: inputs.StripeCurrency,
         });
       }
-      if (
-        originInputs['StripeUseDynamicPrice'] !==
-          inputs.StripeUseDynamicPrice &&
-        inputs.StripeUseDynamicPrice !== undefined
-      ) {
-        options.push({
-          key: 'StripeUseDynamicPrice',
-          value: inputs.StripeUseDynamicPrice ? 'true' : 'false',
-        });
-      }
-      if (
-        originInputs['StripeDisableAdaptivePricing'] !==
-          inputs.StripeDisableAdaptivePricing &&
-        inputs.StripeDisableAdaptivePricing !== undefined
-      ) {
-        options.push({
-          key: 'StripeDisableAdaptivePricing',
-          value: inputs.StripeDisableAdaptivePricing ? 'true' : 'false',
-        });
-      }
-      if (originInputs['StripeProductName'] !== inputs.StripeProductName) {
+      if (inputs.StripeProductName !== undefined) {
         options.push({
           key: 'StripeProductName',
           value: inputs.StripeProductName || '',
         });
       }
 
-      // 优先保存核心配置，确保动态价格标志先生效
-      const criticalOptions = options.filter(opt => 
-        opt.key === 'StripeUseDynamicPrice' || opt.key === 'StripeCurrency'
+      // 并发保存所有配置
+      const queue = options.map((opt) =>
+        API.put('/api/option/', {
+          key: opt.key,
+          value: opt.value,
+        }),
       );
-      const otherOptions = options.filter(opt => 
-        opt.key !== 'StripeUseDynamicPrice' && opt.key !== 'StripeCurrency'
-      );
-
-      let results = [];
-
-      // 先保存动态价格配置
-      if (criticalOptions.length > 0) {
-        const criticalQueue = criticalOptions.map((opt) =>
-          API.put('/api/option/', {
-            key: opt.key,
-            value: opt.value,
-          }),
-        );
-        const criticalResults = await Promise.all(criticalQueue);
-        results = results.concat(criticalResults);
-      }
-
-      // 再保存其他配置
-      if (otherOptions.length > 0) {
-        const otherQueue = otherOptions.map((opt) =>
-          API.put('/api/option/', {
-            key: opt.key,
-            value: opt.value,
-          }),
-        );
-        const otherResults = await Promise.all(otherQueue);
-        results = results.concat(otherResults);
-      }
+      
+      const results = await Promise.all(queue);
 
       // 检查所有请求是否成功
       const errorResults = results.filter((res) => !res.data.success);
