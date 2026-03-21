@@ -34,6 +34,7 @@ import {
   Tooltip,
   Tabs,
   TabPane,
+  Badge,
 } from '@douyinfe/semi-ui';
 import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si';
 import {
@@ -594,6 +595,54 @@ const RechargeCard = ({
             }
           />
         </Form>
+      </Card>
+
+      {/* 充值说明 */}
+      <Card
+        className='!rounded-xl w-full'
+        title={<Text type='tertiary'>{t('充值说明')}</Text>}
+      >
+        <div className='space-y-3'>
+          <div className='flex items-start gap-2'>
+            <Badge dot type='warning' />
+            <Text type='tertiary' className='text-sm'>
+              {t('充值说明1')}
+            </Text>
+          </div>
+
+          <div className='flex items-start gap-2'>
+            <Badge dot type='primary' />
+            <Text type='tertiary' className='text-sm'>
+              {t('充值说明2')}
+            </Text>
+          </div>
+
+          <div className='flex items-start gap-2'>
+            <Badge dot type='primary' />
+            <Text type='tertiary' className='text-sm'>
+              {t('充值说明3')}
+            </Text>
+          </div>
+
+          <div className='flex items-start gap-2'>
+            <Badge dot type='primary' />
+            <Text type='tertiary' className='text-sm'>
+              {t('充值说明4')}
+            </Text>
+          </div>
+
+          <div className='flex items-start gap-2'>
+            <Badge dot type='primary' />
+            <div className='flex flex-col gap-1'>
+              <Text type='tertiary' className='text-sm'>
+                {t('充值说明5')}
+              </Text>
+              <Text type='secondary' className='text-sm'>
+                {t('充值说明联系方式')}
+              </Text>
+            </div>
+          </div>
+        </div>
       </Card>
     </Space>
   );
