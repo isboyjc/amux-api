@@ -27,7 +27,12 @@ func GetTopUpInfo(c *gin.Context) {
 	payMethods := operation_setting.PayMethods
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
-	if setting.StripeApiSecret != "" && setting.StripeWebhookSecret != "" && setting.StripePriceId != "" {
+	stripeEnabled := setting.StripeApiSecret != "" && setting.StripeWebhookSecret != ""
+	if !setting.StripeUseDynamicPrice {
+		stripeEnabled = stripeEnabled && setting.StripePriceId != ""
+	}
+	
+	if stripeEnabled {
 		// 检查是否已经包含 Stripe
 		hasStripe := false
 		for _, method := range payMethods {
