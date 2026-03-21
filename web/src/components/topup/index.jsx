@@ -786,6 +786,7 @@ const TopUp = () => {
         visible={openHistory}
         onCancel={handleHistoryCancel}
         t={t}
+        stripeCurrencySymbol={stripeCurrencySymbol}
       />
 
       {/* Creem 充值确认模态框 */}
@@ -874,6 +875,7 @@ const TopUp = () => {
           setOpenTransfer={setOpenTransfer}
           affLink={affLink}
           handleAffLinkClick={handleAffLinkClick}
+          stripeCurrencySymbol={stripeCurrencySymbol}
         />
       </div>
     </div>

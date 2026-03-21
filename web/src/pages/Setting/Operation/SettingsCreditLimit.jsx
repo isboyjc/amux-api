@@ -32,10 +32,12 @@ export default function SettingsCreditLimit(props) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({
-    QuotaForNewUser: '',
-    PreConsumedQuota: '',
-    QuotaForInviter: '',
-    QuotaForInvitee: '',
+    QuotaForNewUser: 0,
+    PreConsumedQuota: 0,
+    QuotaForInviter: 0,
+    QuotaForInvitee: 0,
+    AffRebateRatio: 0,
+    AffShowInvitees: false,
     'quota_setting.enable_free_model_pre_consume': true,
   });
   const refForm = useRef();
@@ -148,8 +150,8 @@ export default function SettingsCreditLimit(props) {
                 />
               </Col>
             </Row>
-            <Row>
-              <Col xs={24} sm={12} md={8} lg={8} xl={6}>
+            <Row gutter={16}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
                   label={t('新用户使用邀请码奖励额度')}
                   field={'QuotaForInvitee'}
@@ -162,6 +164,42 @@ export default function SettingsCreditLimit(props) {
                     setInputs({
                       ...inputs,
                       QuotaForInvitee: String(value),
+                    })
+                  }
+                />
+              </Col>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('充值返现比例')}
+                  field={'AffRebateRatio'}
+                  step={1}
+                  min={0}
+                  max={100}
+                  precision={1}
+                  suffix={'%'}
+                  extraText={t('被邀请用户充值时，返现给邀请者的比例')}
+                  placeholder={t('例如：10 (表示10%)')}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      AffRebateRatio: String(value),
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row>
+              <Col>
+                <Form.Switch
+                  label={t('允许查看受邀用户列表')}
+                  field={'AffShowInvitees'}
+                  extraText={t(
+                    '开启后，用户可以在充值页面查看自己邀请的用户列表及充值明细',
+                  )}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      AffShowInvitees: value,
                     })
                   }
                 />

@@ -1037,3 +1037,142 @@ func RootUserExists() bool {
 	}
 	return true
 }
+
+// InviteeInfo 受邀请用户信息
+type InviteeInfo struct {
+	Id          int     `json:"id"`
+	Username    string  `json:"username"`
+	DisplayName string  `json:"display_name"`
+	TopupAmount float64 `json:"topup_amount"` // 充值总金额（暂时为0，预留）
+}
+
+// GetInvitees 获取某用户邀请的用户列表（分页）
+func GetInvitees(inviterId int, pageInfo *common.PageInfo) (invitees []*InviteeInfo, total int64, err error) {
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, 0, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// 获取总数
+	err = tx.Model(&User{}).Where("inviter_id = ?", inviterId).Count(&total).Error
+	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	// 查询受邀请用户列表
+	var users []*User
+	err = tx.Select("id, username, display_name").
+		Where("inviter_id = ?", inviterId).
+		Order("id desc").
+		Limit(pageInfo.GetPageSize()).
+		Offset(pageInfo.GetStartIdx()).
+		Find(&users).Error
+	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	// 批量查询所有用户的充值金额（避免N+1问题）
+	userIds := make([]int, len(users))
+	for i, user := range users {
+		userIds[i] = user.Id
+	}
+
+	// 一次性查询所有用户的充值总额
+	var topupSums []struct {
+		UserId      int
+		TotalMoney  float64
+	}
+	if len(userIds) > 0 {
+		err = tx.Model(&TopUp{}).
+			Select("user_id, COALESCE(SUM(money), 0) as total_money").
+			Where("user_id IN ? AND status = ?", userIds, common.TopUpStatusSuccess).
+			Group("user_id").
+			Scan(&topupSums).Error
+		if err != nil {
+			tx.Rollback()
+			return nil, 0, err
+		}
+	}
+
+	// 构建userId到充值金额的映射
+	topupMap := make(map[int]float64)
+	for _, sum := range topupSums {
+		topupMap[sum.UserId] = sum.TotalMoney
+	}
+
+	// 转换为InviteeInfo格式
+	invitees = make([]*InviteeInfo, len(users))
+	for i, user := range users {
+		invitees[i] = &InviteeInfo{
+			Id:          user.Id,
+			Username:    user.Username,
+			DisplayName: user.DisplayName,
+			TopupAmount: topupMap[user.Id], // 默认为0.0
+		}
+	}
+
+	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
+
+	return invitees, total, nil
+}
+
+// GetInviteeTopups 获取受邀用户的充值明细（需验证邀请关系）
+func GetInviteeTopups(inviterId int, inviteeId int, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
+	// 首先验证邀请关系
+	var user User
+	err = DB.Select("inviter_id").Where("id = ?", inviteeId).First(&user).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, 0, errors.New("user not found")
+		}
+		return nil, 0, err
+	}
+	if user.InviterId != inviterId {
+		return nil, 0, errors.New("permission denied")
+	}
+
+	// 查询该用户的充值记录（只返回成功的订单）
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, 0, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	query := tx.Model(&TopUp{}).Where("user_id = ? AND status = ?", inviteeId, common.TopUpStatusSuccess)
+
+	// 获取总数
+	err = query.Count(&total).Error
+	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	// 获取分页数据
+	err = query.Order("complete_time desc, id desc").
+		Limit(pageInfo.GetPageSize()).
+		Offset(pageInfo.GetStartIdx()).
+		Find(&topups).Error
+	if err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
+
+	return topups, total, nil
+}

@@ -1187,3 +1187,52 @@ func UpdateUserSetting(c *gin.Context) {
 
 	common.ApiSuccessI18n(c, i18n.MsgSettingSaved, nil)
 }
+
+// GetInvitees 获取当前用户邀请的用户列表
+func GetInvitees(c *gin.Context) {
+	// 检查是否开启了受邀用户列表功能
+	if !common.AffShowInvitees {
+		common.ApiErrorI18n(c, i18n.MsgFeatureDisabled)
+		return
+	}
+
+	userId := c.GetInt("id")
+	pageInfo := common.GetPageQuery(c)
+
+	invitees, total, err := model.GetInvitees(userId, pageInfo)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(invitees)
+	common.ApiSuccess(c, pageInfo)
+}
+
+// GetInviteeTopups 获取受邀用户的充值明细
+func GetInviteeTopups(c *gin.Context) {
+	// 检查是否开启了受邀用户列表功能
+	if !common.AffShowInvitees {
+		common.ApiErrorI18n(c, i18n.MsgFeatureDisabled)
+		return
+	}
+
+	inviterId := c.GetInt("id")
+	inviteeId, err := strconv.Atoi(c.Param("invitee_id"))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	pageInfo := common.GetPageQuery(c)
+	topups, total, err := model.GetInviteeTopups(inviterId, inviteeId, pageInfo)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(topups)
+	common.ApiSuccess(c, pageInfo)
+}

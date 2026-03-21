@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import {
   Modal,
   Table,
@@ -37,6 +37,7 @@ import { IconSearch } from '@douyinfe/semi-icons';
 import { API, timestamp2string } from '../../../helpers';
 import { isAdmin } from '../../../helpers/utils';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { StatusContext } from '../../../context/Status';
 const { Text } = Typography;
 
 // 状态映射配置
@@ -56,7 +57,8 @@ const PAYMENT_METHOD_MAP = {
   wxpay: '微信',
 };
 
-const TopupHistoryModal = ({ visible, onCancel, t }) => {
+const TopupHistoryModal = ({ visible, onCancel, t, stripeCurrencySymbol = '¥' }) => {
+  const [statusState] = useContext(StatusContext);
   const [loading, setLoading] = useState(false);
   const [topups, setTopups] = useState([]);
   const [total, setTotal] = useState(0);
@@ -64,6 +66,9 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
   const [pageSize, setPageSize] = useState(10);
   const [keyword, setKeyword] = useState('');
   const isMobile = useIsMobile();
+  
+  // 从 StatusContext 获取币种符号，优先使用全局配置
+  const actualCurrencySymbol = statusState?.status?.stripe_currency_symbol || stripeCurrencySymbol;
 
   const loadTopups = async (currentPage, currentPageSize) => {
     setLoading(true);
@@ -197,7 +202,10 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         title: t('支付金额'),
         dataIndex: 'money',
         key: 'money',
-        render: (money) => <Text type='danger'>¥{money.toFixed(2)}</Text>,
+        render: (money, record) => {
+          const symbol = record.payment_method === 'stripe' ? actualCurrencySymbol : '¥';
+          return <Text type='danger'>{symbol}{money.toFixed(2)}</Text>;
+        },
       },
       {
         title: t('状态'),

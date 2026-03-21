@@ -7,20 +7,22 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type TopUp struct {
 	Id               int     `json:"id"`
-	UserId           int     `json:"user_id" gorm:"index"`
+	UserId           int     `json:"user_id" gorm:"index:idx_user_status,priority:1;index"`
 	Amount           int64   `json:"amount"`
 	Money            float64 `json:"money"`
 	TradeNo          string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod    string  `json:"payment_method" gorm:"type:varchar(50)"`
 	CreateTime       int64   `json:"create_time"`
 	CompleteTime     int64   `json:"complete_time"`
-	Status           string  `json:"status"`
+	Status           string  `json:"status" gorm:"index:idx_user_status,priority:2"`
 }
 
 func (topUp *TopUp) Insert() error {
@@ -100,6 +102,9 @@ func Recharge(referenceId string, customerId string) (err error) {
 	}
 
 	RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%.2f", logger.FormatQuota(int(quota)), topUp.Money))
+
+	// 处理邀请返现（基于实付金额）
+	ProcessAffiliateRebate(topUp.UserId, topUp.Money)
 
 	return nil
 }
@@ -298,6 +303,10 @@ func ManualCompleteTopUp(tradeNo string) error {
 
 	// 事务外记录日志，避免阻塞
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney))
+	
+	// 处理邀请返现（基于实付金额）
+	ProcessAffiliateRebate(userId, payMoney)
+	
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string) (err error) {
@@ -368,6 +377,9 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 
 	RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("使用Creem充值成功，充值额度: %v，支付金额：%.2f", quota, topUp.Money))
 
+	// 处理邀请返现（基于实付金额）
+	ProcessAffiliateRebate(topUp.UserId, topUp.Money)
+
 	return nil
 }
 
@@ -425,7 +437,107 @@ func RechargeWaffo(tradeNo string) (err error) {
 
 	if quotaToAdd > 0 {
 		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
+		
+		// 处理邀请返现（基于实付金额）
+		ProcessAffiliateRebate(topUp.UserId, topUp.Money)
 	}
 
 	return nil
+}
+
+// ProcessAffiliateRebate 处理充值返现（异步）
+// 当用户充值成功后，如果该用户有邀请者且系统启用了返现功能，
+// 则按照配置的返现比例给邀请者增加AffQuota
+// 参数：
+//   userId: 充值用户ID
+//   topupMoney: 实付金额（不是到账额度，而是用户实际支付的金额）
+func ProcessAffiliateRebate(userId int, topupMoney float64) {
+	// 检查是否启用返现
+	if common.AffRebateRatio <= 0 {
+		return
+	}
+	
+	// 边界检查
+	if topupMoney <= 0 {
+		return
+	}
+
+	gopool.Go(func() {
+		// 查询用户的邀请者ID
+		var user User
+		err := DB.Select("inviter_id, username").Where("id = ?", userId).First(&user).Error
+		if err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				common.SysError(fmt.Sprintf("充值返现查询用户失败 userId=%d: %v", userId, err))
+			}
+			return
+		}
+		if user.InviterId == 0 {
+			// 没有邀请者，正常情况，不记录日志
+			return
+		}
+
+		// 计算返现额度：实付金额 * 返现比例 / 100，然后转换为 quota
+		// 例如：实付 $95，返现比例 10%，则返现 $9.5 等值的 quota
+		dTopupMoney := decimal.NewFromFloat(topupMoney)
+		dRebateRatio := decimal.NewFromFloat(common.AffRebateRatio)
+		dHundred := decimal.NewFromInt(100)
+		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+		
+		// 返现金额（美元）= 实付金额 * 返现比例 / 100
+		rebateMoney := dTopupMoney.Mul(dRebateRatio).Div(dHundred)
+		// 返现额度（quota）= 返现金额 * QuotaPerUnit
+		rebateQuota := int(rebateMoney.Mul(dQuotaPerUnit).IntPart())
+
+		if rebateQuota <= 0 {
+			// 返现额度为0，不处理（可能是因为充值额度很小或返现比例太低）
+			return
+		}
+		
+		// 可选：设置返现最小阈值，避免产生过小的返现（如1 token）
+		// const minRebateQuota = 100 // 最小返现100 tokens
+		// if rebateQuota < minRebateQuota {
+		//     return
+		// }
+
+		// 使用行锁增加邀请者的AffQuota和AffHistoryQuota（防止并发问题）
+		tx := DB.Begin()
+		if tx.Error != nil {
+			common.SysError("充值返现事务失败: " + tx.Error.Error())
+			return
+		}
+
+		// 使用FOR UPDATE行锁
+		var inviter User
+		err = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id, aff_quota, aff_history").
+			Where("id = ?", user.InviterId).
+			First(&inviter).Error
+		if err != nil {
+			tx.Rollback()
+			common.SysError("充值返现查询邀请者失败: " + err.Error())
+			return
+		}
+
+		// 更新邀请者的额度（注意：数据库字段是 aff_history，不是 aff_history_quota）
+		err = tx.Model(&User{}).Where("id = ?", user.InviterId).Updates(map[string]interface{}{
+			"aff_quota":   gorm.Expr("aff_quota + ?", rebateQuota),
+			"aff_history": gorm.Expr("aff_history + ?", rebateQuota),
+		}).Error
+
+		if err != nil {
+			tx.Rollback()
+			common.SysError("充值返现失败: " + err.Error())
+			return
+		}
+
+		if err = tx.Commit().Error; err != nil {
+			common.SysError("充值返现提交失败: " + err.Error())
+			return
+		}
+
+		// 记录返现日志
+		RecordLog(user.InviterId, LogTypeTopup, fmt.Sprintf("邀请用户充值返现 %s (被邀用户: %s, 返现比例: %.1f%%)", logger.LogQuota(rebateQuota), user.Username, common.AffRebateRatio))
+		common.SysLog(fmt.Sprintf("充值返现成功: 用户 %d (%s) 充值，邀请者 %d 获得 %s (比例: %.1f%%)", userId, user.Username, user.InviterId, logger.LogQuota(rebateQuota), common.AffRebateRatio))
+	})
 }

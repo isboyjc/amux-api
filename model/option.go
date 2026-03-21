@@ -127,6 +127,8 @@ func InitOptionMap() {
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
 	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
 	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
+	common.OptionMap["AffRebateRatio"] = strconv.FormatFloat(common.AffRebateRatio, 'f', -1, 64)
+	common.OptionMap["AffShowInvitees"] = strconv.FormatBool(common.AffShowInvitees)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
 	common.OptionMap["ModelRequestRateLimitCount"] = strconv.Itoa(setting.ModelRequestRateLimitCount)
@@ -460,6 +462,16 @@ func updateOptionMap(key string, value string) (err error) {
 		common.QuotaForInviter, _ = strconv.Atoi(value)
 	case "QuotaForInvitee":
 		common.QuotaForInvitee, _ = strconv.Atoi(value)
+	case "AffRebateRatio":
+		ratio, _ := strconv.ParseFloat(value, 64)
+		if ratio < 0 {
+			ratio = 0
+		} else if ratio > 100 {
+			ratio = 100
+		}
+		common.AffRebateRatio = ratio
+	case "AffShowInvitees":
+		common.AffShowInvitees, _ = strconv.ParseBool(value)
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":

@@ -91,6 +91,14 @@ func GetStatus(c *gin.Context) {
 		"usd_exchange_rate": operation_setting.USDExchangeRate,
 		"price":             operation_setting.Price,
 		"stripe_unit_price": setting.StripeUnitPrice,
+		"stripe_currency":   setting.StripeCurrency,
+		"stripe_currency_symbol": func() string {
+			if setting.StripeCurrency == "USD" {
+				return "$"
+			}
+			return "¥"
+		}(),
+		"enable_stripe_topup": setting.StripeApiSecret != "" && setting.StripeWebhookSecret != "",
 
 		// 面板启用开关
 		"api_info_enabled":      cs.ApiInfoEnabled,
@@ -116,6 +124,8 @@ func GetStatus(c *gin.Context) {
 		"user_agreement_enabled":      legalSetting.UserAgreement != "",
 		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
+		"AffShowInvitees":             common.OptionMap["AffShowInvitees"],
+		"AffRebateRatio":              common.OptionMap["AffRebateRatio"],
 		"_qn":                         "new-api",
 	}
 

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import {
   Avatar,
   Typography,
@@ -26,8 +26,13 @@ import {
   Input,
   Badge,
   Space,
+  Table,
+  Spin,
 } from '@douyinfe/semi-ui';
-import { Copy, Users, BarChart2, TrendingUp, Gift, Zap } from 'lucide-react';
+import { Copy, Users, BarChart2, TrendingUp, Gift, Zap, FileText } from 'lucide-react';
+import { API, showError } from '../../helpers';
+import InviteeTopupDetailModal from './modals/InviteeTopupDetailModal';
+import { StatusContext } from '../../context/Status';
 
 const { Text } = Typography;
 
@@ -38,7 +43,111 @@ const InvitationCard = ({
   setOpenTransfer,
   affLink,
   handleAffLinkClick,
+  stripeCurrencySymbol = '¥',
 }) => {
+  const [statusState] = useContext(StatusContext);
+  const [invitees, setInvitees] = useState([]);
+  const [inviteesLoading, setInviteesLoading] = useState(false);
+  const [inviteesTotal, setInviteesTotal] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [detailModalVisible, setDetailModalVisible] = useState(false);
+  const [selectedInvitee, setSelectedInvitee] = useState(null);
+  
+  // 从配置中获取是否允许查看受邀用户列表
+  const affShowInvitees = statusState?.status?.AffShowInvitees === 'true';
+  const affRebateRatio = parseFloat(statusState?.status?.AffRebateRatio || '0');
+  
+  // 从 StatusContext 获取 Stripe 币种符号（优先），否则使用 props 传入的
+  const actualStripeCurrencySymbol = statusState?.status?.stripe_currency_symbol || stripeCurrencySymbol;
+  const enableStripeTopup = statusState?.status?.enable_stripe_topup || false;
+
+  // 加载受邀请用户列表
+  const loadInvitees = async (page = 1, size = 10) => {
+    try {
+      setInviteesLoading(true);
+      const res = await API.get('/api/user/invitees', {
+        params: {
+          page: page,
+          page_size: size,
+        },
+      });
+      const { success, message, data } = res.data;
+      if (success) {
+        setInvitees(data.items || []);
+        setInviteesTotal(data.total || 0);
+      } else {
+        showError(message);
+        setInvitees([]);
+        setInviteesTotal(0);
+      }
+    } catch (error) {
+      console.error('加载受邀请用户失败:', error);
+      showError(t('加载失败'));
+      setInvitees([]);
+      setInviteesTotal(0);
+    } finally {
+      setInviteesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (affShowInvitees && userState?.user?.aff_count > 0) {
+      loadInvitees(currentPage, pageSize);
+    }
+  }, [affShowInvitees, userState?.user?.aff_count]);
+
+  const handlePageChange = (page) => {
+    setCurrentPage(page);
+    loadInvitees(page, pageSize);
+  };
+
+  const handleViewDetail = (record) => {
+    setSelectedInvitee(record);
+    setDetailModalVisible(true);
+  };
+
+  const columns = [
+    {
+      title: t('ID'),
+      dataIndex: 'id',
+      key: 'id',
+      width: 80,
+    },
+    {
+      title: t('用户名'),
+      dataIndex: 'username',
+      key: 'username',
+      render: (text, record) => record.display_name || text,
+    },
+    {
+      title: t('充值金额'),
+      dataIndex: 'topup_amount',
+      key: 'topup_amount',
+      width: 150,
+      render: (amount, record) => {
+        // 累计金额使用系统默认币种（根据是否启用Stripe判断）
+        const symbol = enableStripeTopup ? actualStripeCurrencySymbol : '¥';
+        return `${symbol}${amount?.toFixed(2) || '0.00'}`;
+      },
+    },
+    {
+      title: t('操作'),
+      key: 'action',
+      width: 120,
+      render: (text, record) => (
+        <Button
+          size='small'
+          type='tertiary'
+          icon={<FileText size={14} />}
+          onClick={() => handleViewDetail(record)}
+        >
+          {t('查看明细')}
+        </Button>
+      ),
+    },
+  ];
+
   return (
     <Card className='!rounded-2xl shadow-sm border-0'>
       {/* 卡片头部 */}
@@ -193,6 +302,49 @@ const InvitationCard = ({
           />
         </Card>
 
+        {/* 受邀请用户列表 */}
+        {affShowInvitees && userState?.user?.aff_count > 0 && (
+          <Card
+            className='!rounded-xl w-full'
+            title={
+              <div className='flex items-center justify-between w-full'>
+                <div className='flex items-center gap-2'>
+                  <Users size={16} />
+                  <Text type='tertiary'>
+                    {t('受邀用户')} ({inviteesTotal})
+                  </Text>
+                </div>
+                {affRebateRatio > 0 && (
+                  <Badge
+                    count={`${t('返现比例')}：${affRebateRatio.toFixed(1)}%`}
+                    type='primary'
+                  />
+                )}
+              </div>
+            }
+          >
+            <Spin spinning={inviteesLoading}>
+              <Table
+                columns={columns}
+                dataSource={invitees}
+                pagination={{
+                  currentPage: currentPage,
+                  pageSize: pageSize,
+                  total: inviteesTotal,
+                  onPageChange: handlePageChange,
+                  showSizeChanger: false,
+                }}
+                size='small'
+                empty={
+                  <div className='py-8'>
+                    <Text type='tertiary'>{t('暂无受邀用户')}</Text>
+                  </div>
+                }
+              />
+            </Spin>
+          </Card>
+        )}
+
         {/* 奖励说明 */}
         <Card
           className='!rounded-xl w-full'
@@ -202,9 +354,17 @@ const InvitationCard = ({
             <div className='flex items-start gap-2'>
               <Badge dot type='success' />
               <Text type='tertiary' className='text-sm'>
-                {t('邀请好友注册，好友充值后您可获得相应奖励')}
+                {t('邀请好友注册可获得注册奖励')}
               </Text>
             </div>
+            {affRebateRatio > 0 && (
+              <div className='flex items-start gap-2'>
+                <Badge dot type='primary' />
+                <Text type='tertiary' className='text-sm'>
+                  {t('好友充值时，您可获得充值金额')} {affRebateRatio.toFixed(1)}% {t('的返现奖励')}
+                </Text>
+              </div>
+            )}
 
             <div className='flex items-start gap-2'>
               <Badge dot type='success' />
@@ -222,6 +382,16 @@ const InvitationCard = ({
           </div>
         </Card>
       </Space>
+
+      {/* 充值明细弹框 */}
+      <InviteeTopupDetailModal
+        t={t}
+        visible={detailModalVisible}
+        onCancel={() => setDetailModalVisible(false)}
+        inviteeId={selectedInvitee?.id}
+        inviteeName={selectedInvitee?.display_name || selectedInvitee?.username}
+        stripeCurrencySymbol={actualStripeCurrencySymbol}
+      />
     </Card>
   );
 };
