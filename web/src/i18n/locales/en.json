@@ -2846,7 +2846,7 @@
     "充值说明2": "Recharge 1$:1$, transparent billing, Stripe supports Alipay, WeChat Pay, UnionPay, credit cards, and more",
     "充值说明3": "Recommended to select USD settlement in Stripe payment panel. CNY settlement does not support Alipay and Stripe exchange rates are slightly higher",
     "充值说明4": "Don't recharge too much at first. Low-price channels are very durable, high-price channels are more stable. Unlike other sites where large deposits are consumed quickly",
-    "充值说明5": "Invoice is not available for online payment. For invoice, please contact customer service",
+    "充值说明5": "Invoice is not available for online payment. For invoice or corporate recharge, please contact customer service",
     "充值说明联系方式": "WeChat: coterie_a, Email: support@amux.ai",
     "账户已删除！": "Account has been deleted!",
     "账户已锁定": "Account locked",

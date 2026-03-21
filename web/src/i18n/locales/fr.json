@@ -2805,7 +2805,7 @@
     "充值说明2": "Recharge 1$:1$, facturation transparente, Stripe supporte Alipay, WeChat Pay, UnionPay, cartes de crédit et plus",
     "充值说明3": "Recommandé de sélectionner le règlement en USD dans le panneau de paiement Stripe. Le règlement en CNY ne supporte pas Alipay et les taux de change Stripe sont légèrement plus élevés",
     "充值说明4": "Ne rechargez pas trop la première fois. Les canaux à bas prix sont très durables, les canaux à prix élevé sont plus stables. Contrairement aux autres sites où de gros dépôts sont consommés rapidement",
-    "充值说明5": "Facturation non disponible pour les paiements en ligne. Pour une facture, veuillez contacter le service client",
+    "充值说明5": "Facturation non disponible pour les paiements en ligne. Pour une facture ou recharge d'entreprise, veuillez contacter le service client",
     "充值说明联系方式": "WeChat : coterie_a, Email : support@amux.ai",
     "账户已删除！": "Le compte a été supprimé !",
     "账户已锁定": "Compte verrouillé",
