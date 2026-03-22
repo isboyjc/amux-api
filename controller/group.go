@@ -32,6 +32,11 @@ func GetUserGroups(c *gin.Context) {
 	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
+			// 完全过滤掉用户自己的等级分组，避免在创建令牌时选择用户等级作为令牌分组
+			// 用户等级分组应该只用于标识用户权限等级，不应该作为令牌的渠道分组
+			if groupName == userGroup {
+				continue
+			}
 			usableGroups[groupName] = map[string]interface{}{
 				"ratio": service.GetUserGroupRatio(userGroup, groupName),
 				"desc":  desc,

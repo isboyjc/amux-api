@@ -282,6 +282,13 @@ func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uin
 	return DB.Model(&Ability{}).Where("tag = ?", tag).Updates(ability).Error
 }
 
+// GroupHasAbility checks if a group has any enabled abilities
+func GroupHasAbility(group string) bool {
+	var count int64
+	DB.Model(&Ability{}).Where(commonGroupCol+" = ? AND enabled = ?", group, true).Count(&count)
+	return count > 0
+}
+
 var fixLock = sync.Mutex{}
 
 func FixAbility() (int, int, error) {

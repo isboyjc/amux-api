@@ -3351,6 +3351,20 @@
     "输入价格：{{symbol}}{{price}} / 1M tokens": "Input Price: {{symbol}}{{price}} / 1M tokens",
     "输出价格 {{symbol}}{{price}} / 1M tokens": "Output Price {{symbol}}{{price}} / 1M tokens",
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Output Price: {{symbol}}{{price}} / 1M tokens",
-    "输出价格：{{symbol}}{{total}} / 1M tokens": "Output Price: {{symbol}}{{total}} / 1M tokens"
+    "输出价格：{{symbol}}{{total}} / 1M tokens": "Output Price: {{symbol}}{{total}} / 1M tokens",
+    "用户自动升级设置": "User Auto Upgrade Settings",
+    "启用自动升级": "Enable Auto Upgrade",
+    "启用后，用户充值达到设定金额时将自动升级到对应分组": "When enabled, users will be automatically upgraded to the corresponding group when their cumulative top-up reaches the specified amount",
+    "升级规则配置": "Upgrade Rules Configuration",
+    "从分组": "From Group",
+    "升级到": "Upgrade To",
+    "当累计充值 ≥": "When cumulative top-up ≥",
+    "+ 添加升级规则": "+ Add Upgrade Rule",
+    "规则按顺序匹配，用户充值成功后会自动检查是否满足升级条件。支持链式升级（如 default → vip → svip）。": "Rules are matched in order. After a successful top-up, the system automatically checks if the upgrade conditions are met. Supports chain upgrades (e.g., default → vip → svip).",
+    "保存用户自动升级设置": "Save User Auto Upgrade Settings",
+    "选择或输入源分组": "Select or enter source group",
+    "选择或输入目标分组": "Select or enter target group",
+    "充值金额阈值": "Top-up Amount Threshold",
+    "加载分组列表失败，请检查网络或刷新页面": "Failed to load group list. Please check network or refresh page"
   }
 }

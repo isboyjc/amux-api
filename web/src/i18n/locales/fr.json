@@ -3314,6 +3314,20 @@
     "输入价格：{{symbol}}{{price}} / 1M tokens": "Prix d'entrée : {{symbol}}{{price}} / 1M tokens",
     "输出价格 {{symbol}}{{price}} / 1M tokens": "Prix de sortie {{symbol}}{{price}} / 1M tokens",
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Prix de sortie : {{symbol}}{{price}} / 1M tokens",
-    "输出价格：{{symbol}}{{total}} / 1M tokens": "Prix de sortie : {{symbol}}{{total}} / 1M tokens"
+    "输出价格：{{symbol}}{{total}} / 1M tokens": "Prix de sortie : {{symbol}}{{total}} / 1M tokens",
+    "用户自动升级设置": "Paramètres de mise à niveau automatique de l'utilisateur",
+    "启用自动升级": "Activer la mise à niveau automatique",
+    "启用后，用户充值达到设定金额时将自动升级到对应分组": "Une fois activé, les utilisateurs seront automatiquement mis à niveau vers le groupe correspondant lorsque leur recharge cumulative atteindra le montant spécifié",
+    "升级规则配置": "Configuration des règles de mise à niveau",
+    "从分组": "Depuis le groupe",
+    "升级到": "Mettre à niveau vers",
+    "当累计充值 ≥": "Lorsque la recharge cumulative ≥",
+    "+ 添加升级规则": "+ Ajouter une règle de mise à niveau",
+    "规则按顺序匹配，用户充值成功后会自动检查是否满足升级条件。支持链式升级（如 default → vip → svip）。": "Les règles sont appariées dans l'ordre. Après une recharge réussie, le système vérifie automatiquement si les conditions de mise à niveau sont remplies. Prend en charge les mises à niveau en chaîne (par exemple, default → vip → svip).",
+    "保存用户自动升级设置": "Enregistrer les paramètres de mise à niveau automatique",
+    "选择或输入源分组": "Sélectionner ou saisir le groupe source",
+    "选择或输入目标分组": "Sélectionner ou saisir le groupe cible",
+    "充值金额阈值": "Seuil du montant de recharge",
+    "加载分组列表失败，请检查网络或刷新页面": "Échec du chargement de la liste des groupes. Veuillez vérifier le réseau ou actualiser la page"
   }
 }

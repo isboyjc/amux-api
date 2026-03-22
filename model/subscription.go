@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/hot"
 	"gorm.io/gorm"
 )
@@ -567,6 +568,13 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string) error {
 	if logUserId > 0 {
 		msg := fmt.Sprintf("订阅购买成功，套餐: %s，支付金额: %.2f，支付方式: %s", logPlanTitle, logMoney, logPaymentMethod)
 		RecordLog(logUserId, LogTypeTopup, msg)
+
+		// 检查并自动升级用户分组
+		gopool.Go(func() {
+			if err := CheckAndUpgradeUserGroup(logUserId); err != nil {
+				common.SysLog(fmt.Sprintf("自动升级用户分组失败 userId=%d: %v", logUserId, err))
+			}
+		})
 	}
 	return nil
 }

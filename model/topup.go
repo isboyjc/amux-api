@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/shopspring/decimal"
@@ -105,6 +106,13 @@ func Recharge(referenceId string, customerId string) (err error) {
 
 	// 处理邀请返现（基于实付金额）
 	ProcessAffiliateRebate(topUp.UserId, topUp.Money)
+
+	// 检查并自动升级用户分组
+	gopool.Go(func() {
+		if err := CheckAndUpgradeUserGroup(topUp.UserId); err != nil {
+			common.SysLog(fmt.Sprintf("自动升级用户分组失败 userId=%d: %v", topUp.UserId, err))
+		}
+	})
 
 	return nil
 }
@@ -306,6 +314,13 @@ func ManualCompleteTopUp(tradeNo string) error {
 	
 	// 处理邀请返现（基于实付金额）
 	ProcessAffiliateRebate(userId, payMoney)
+
+	// 检查并自动升级用户分组
+	gopool.Go(func() {
+		if err := CheckAndUpgradeUserGroup(userId); err != nil {
+			common.SysLog(fmt.Sprintf("自动升级用户分组失败 userId=%d: %v", userId, err))
+		}
+	})
 	
 	return nil
 }
@@ -380,6 +395,13 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	// 处理邀请返现（基于实付金额）
 	ProcessAffiliateRebate(topUp.UserId, topUp.Money)
 
+	// 检查并自动升级用户分组
+	gopool.Go(func() {
+		if err := CheckAndUpgradeUserGroup(topUp.UserId); err != nil {
+			common.SysLog(fmt.Sprintf("自动升级用户分组失败 userId=%d: %v", topUp.UserId, err))
+		}
+	})
+
 	return nil
 }
 
@@ -440,6 +462,74 @@ func RechargeWaffo(tradeNo string) (err error) {
 		
 		// 处理邀请返现（基于实付金额）
 		ProcessAffiliateRebate(topUp.UserId, topUp.Money)
+
+		// 检查并自动升级用户分组
+		gopool.Go(func() {
+			if err := CheckAndUpgradeUserGroup(topUp.UserId); err != nil {
+				common.SysLog(fmt.Sprintf("自动升级用户分组失败 userId=%d: %v", topUp.UserId, err))
+			}
+		})
+	}
+
+	return nil
+}
+
+// GetUserTotalTopupAmount 获取用户累计充值金额（仅统计成功的订单）
+func GetUserTotalTopupAmount(userId int) (float64, error) {
+	var totalAmount float64
+	err := DB.Model(&TopUp{}).
+		Where("user_id = ? AND status = ?", userId, common.TopUpStatusSuccess).
+		Select("COALESCE(SUM(money), 0)").
+		Scan(&totalAmount).Error
+	return totalAmount, err
+}
+
+// CheckAndUpgradeUserGroup 检查用户充值金额并自动升级分组
+// 根据配置的升级规则，当用户累计充值达到阈值时自动升级用户分组
+func CheckAndUpgradeUserGroup(userId int) error {
+	// 检查是否启用自动升级
+	if !operation_setting.IsAutoUpgradeEnabled() {
+		return nil
+	}
+
+	// 获取升级规则
+	rules := operation_setting.GetUpgradeRules()
+	if len(rules) == 0 {
+		return nil
+	}
+
+	// 获取用户累计充值金额
+	totalAmount, err := GetUserTotalTopupAmount(userId)
+	if err != nil {
+		return err
+	}
+
+	// 获取当前用户
+	user, err := GetUserById(userId, true)
+	if err != nil {
+		return err
+	}
+
+	// 遍历升级规则，找到适用的规则
+	for _, rule := range rules {
+		// 检查是否满足升级条件：
+		// 1. 当前分组匹配源分组
+		// 2. 累计充值金额达到或超过阈值
+		if user.Group == rule.FromGroup && totalAmount >= rule.Threshold {
+			// 执行升级
+			user.Group = rule.ToGroup
+			err = user.Update(false)
+			if err != nil {
+				return err
+			}
+
+			// 记录升级日志
+			RecordLog(userId, LogTypeSystem, fmt.Sprintf("充值累计达到 %.2f 元，自动升级到 %s 分组", totalAmount, rule.ToGroup))
+			common.SysLog(fmt.Sprintf("用户 %d (%s) 充值累计 %.2f 元，自动从 %s 升级到 %s", userId, user.Username, totalAmount, rule.FromGroup, rule.ToGroup))
+
+			// 升级后继续检查是否还能继续升级（支持 default -> vip -> svip 这样的链式升级）
+			return CheckAndUpgradeUserGroup(userId)
+		}
 	}
 
 	return nil

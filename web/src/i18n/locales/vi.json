@@ -3864,6 +3864,20 @@
     "补全倍率 {{completionRatio}}": "Tỷ lệ hoàn thành {{completionRatio}}",
     "输出价格 {{symbol}}{{price}} / 1M tokens": "Giá đầu ra {{symbol}}{{price}} / 1M tokens",
     "输出价格：{{symbol}}{{price}} / 1M tokens": "Giá đầu ra: {{symbol}}{{price}} / 1M tokens",
-    "输出价格：{{symbol}}{{total}} / 1M tokens": "Giá đầu ra: {{symbol}}{{total}} / 1M tokens"
+    "输出价格：{{symbol}}{{total}} / 1M tokens": "Giá đầu ra: {{symbol}}{{total}} / 1M tokens",
+    "用户自动升级设置": "Cài đặt nâng cấp tự động người dùng",
+    "启用自动升级": "Bật nâng cấp tự động",
+    "启用后，用户充值达到设定金额时将自动升级到对应分组": "Khi được bật, người dùng sẽ tự động được nâng cấp lên nhóm tương ứng khi số tiền nạp tích lũy đạt đến số tiền đã chỉ định",
+    "升级规则配置": "Cấu hình quy tắc nâng cấp",
+    "从分组": "Từ nhóm",
+    "升级到": "Nâng cấp lên",
+    "当累计充值 ≥": "Khi nạp tích lũy ≥",
+    "+ 添加升级规则": "+ Thêm quy tắc nâng cấp",
+    "规则按顺序匹配，用户充值成功后会自动检查是否满足升级条件。支持链式升级（如 default → vip → svip）。": "Các quy tắc được khớp theo thứ tự. Sau khi nạp tiền thành công, hệ thống tự động kiểm tra xem các điều kiện nâng cấp có được đáp ứng hay không. Hỗ trợ nâng cấp chuỗi (ví dụ: default → vip → svip).",
+    "保存用户自动升级设置": "Lưu cài đặt nâng cấp tự động người dùng",
+    "选择或输入源分组": "Chọn hoặc nhập nhóm nguồn",
+    "选择或输入目标分组": "Chọn hoặc nhập nhóm đích",
+    "充值金额阈值": "Ngưỡng số tiền nạp",
+    "加载分组列表失败，请检查网络或刷新页面": "Không tải được danh sách nhóm. Vui lòng kiểm tra mạng hoặc làm mới trang"
   }
 }
