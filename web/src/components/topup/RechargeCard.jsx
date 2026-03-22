@@ -620,13 +620,6 @@ const RechargeCard = ({
           <div className='flex items-start gap-2'>
             <Badge dot type='primary' />
             <Text type='tertiary' className='text-sm'>
-              {t('充值说明3')}
-            </Text>
-          </div>
-
-          <div className='flex items-start gap-2'>
-            <Badge dot type='primary' />
-            <Text type='tertiary' className='text-sm'>
               {t('充值说明4')}
             </Text>
           </div>
