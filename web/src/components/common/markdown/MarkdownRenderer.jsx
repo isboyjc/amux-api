@@ -414,6 +414,7 @@ function _MarkdownContent(props) {
     <ReactMarkdown
       remarkPlugins={[RemarkMath, RemarkGfm, RemarkBreaks]}
       rehypePlugins={rehypePluginsBase}
+      urlTransform={(url) => url}
       components={{
         pre: PreCode,
         code: CustomCode,
@@ -427,6 +428,34 @@ function _MarkdownContent(props) {
             }}
           />
         ),
+        img: (imgProps) => {
+          return (
+            <img
+              {...imgProps}
+              style={{
+                maxWidth: '100%',
+                height: 'auto',
+                borderRadius: '8px',
+                margin: '12px 0',
+                display: 'block',
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
+              }}
+              onError={(e) => {
+                console.error('Image load error:', e);
+                e.target.style.display = 'none';
+                if (e.target.nextSibling) {
+                  e.target.nextSibling.style.display = 'block';
+                } else {
+                  const errorDiv = document.createElement('div');
+                  errorDiv.style.cssText =
+                    'color: red; padding: 8px; background: #fee; border: 1px solid #fcc; border-radius: 4px; margin: 12px 0;';
+                  errorDiv.textContent = t('图片加载失败');
+                  e.target.parentNode.appendChild(errorDiv);
+                }
+              }}
+            />
+          );
+        },
         a: (aProps) => {
           const href = aProps.href || '';
           if (/\.(aac|mp3|opus|wav)$/.test(href)) {
