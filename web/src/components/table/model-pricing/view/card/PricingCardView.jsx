@@ -39,6 +39,7 @@ import {
   calculateModelPrice,
   formatPriceInfo,
   getLobeHubIcon,
+  getModelPriceItems,
 } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
@@ -250,6 +251,24 @@ const PricingCardView = ({
             quotaDisplayType: siteDisplayType,
           });
 
+          // 计算原价（倍率为1）用于对比
+          const originalPriceData = calculateModelPrice({
+            record: model,
+            selectedGroup: 'all',
+            groupRatio: { all: 1 },
+            tokenUnit,
+            displayPrice,
+            currency,
+            quotaDisplayType: siteDisplayType,
+          });
+
+          // 计算价格变化百分比（仅当倍率不为1时显示）
+          const shouldShowComparison = priceData.usedGroupRatio !== 1 && priceData.usedGroupRatio !== undefined;
+          let priceChangePercent = 0;
+          if (shouldShowComparison && priceData.usedGroupRatio) {
+            priceChangePercent = ((priceData.usedGroupRatio - 1) * 100);
+          }
+
           return (
             <Card
               key={modelKey || index}
@@ -267,7 +286,47 @@ const PricingCardView = ({
                         {model.model_name}
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
-                        {formatPriceInfo(priceData, t, siteDisplayType)}
+                        {/* 价格信息（当前价格 + 官方价格对比） */}
+                        <div className='flex flex-col gap-0.5'>
+                          {(() => {
+                            const currentPriceItems = getModelPriceItems(priceData, t, siteDisplayType);
+                            const originalPriceItems = shouldShowComparison 
+                              ? getModelPriceItems(originalPriceData, t, siteDisplayType)
+                              : [];
+                            
+                            return currentPriceItems.map((item, index) => {
+                              const originalItem = originalPriceItems[index];
+                              return (
+                                <span key={item.key} style={{ color: 'var(--semi-color-text-1)' }}>
+                                  {item.label} {item.value}
+                                  {shouldShowComparison && originalItem && (
+                                    <span className='text-gray-400 line-through text-[10px] ml-1'>
+                                      ({originalItem.value})
+                                    </span>
+                                  )}
+                                  {item.suffix}
+                                </span>
+                              );
+                            });
+                          })()}
+                        </div>
+                        {/* 折扣标签 */}
+                        {shouldShowComparison && (
+                          <div className='mt-1'>
+                            <Tag
+                              size='small'
+                              color={priceChangePercent > 0 ? 'red' : 'green'}
+                              style={{ 
+                                fontSize: '10px', 
+                                padding: '2px 8px',
+                                fontWeight: '600',
+                              }}
+                            >
+                              {priceChangePercent > 0 ? '↑' : '↓'}{' '}
+                              {Math.abs(priceChangePercent).toFixed(0)}%
+                            </Tag>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

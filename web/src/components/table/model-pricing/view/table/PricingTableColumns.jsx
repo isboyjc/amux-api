@@ -229,9 +229,8 @@ export const getPricingTableColumns = ({
   };
 
   const priceColumn = {
-    title: siteDisplayType === 'TOKENS' ? t('计费摘要') : t('模型价格'),
+    title: siteDisplayType === 'TOKENS' ? t('当前计费') : t('当前价格'),
     dataIndex: 'model_price',
-    ...(isMobile ? {} : { fixed: 'right' }),
     render: (text, record, index) => {
       const priceData = getPriceData(record);
       const priceItems = getModelPriceItems(priceData, t, siteDisplayType);
@@ -249,11 +248,77 @@ export const getPricingTableColumns = ({
     },
   };
 
+  const originalPriceColumn = {
+    title: siteDisplayType === 'TOKENS' ? t('官方计费') : t('官方价格'),
+    dataIndex: 'original_price',
+    render: (text, record, index) => {
+      const priceData = getPriceData(record);
+      
+      // 只有当倍率不为1时才显示
+      if (priceData.usedGroupRatio === 1 || priceData.usedGroupRatio === undefined) {
+        return '-';
+      }
+
+      const originalPriceData = calculateModelPrice({
+        record,
+        selectedGroup: 'all',
+        groupRatio: { all: 1 },
+        tokenUnit,
+        displayPrice,
+        currency,
+        quotaDisplayType: siteDisplayType,
+      });
+
+      const priceItems = getModelPriceItems(originalPriceData, t, siteDisplayType);
+
+      return (
+        <div className='space-y-1'>
+          {priceItems.map((item) => (
+            <div key={item.key} className='text-gray-400 line-through text-xs'>
+              {item.label} {item.value}
+              {item.suffix}
+            </div>
+          ))}
+        </div>
+      );
+    },
+  };
+
+  const discountColumn = {
+    title: t('折扣'),
+    dataIndex: 'discount',
+    width: 100,
+    ...(isMobile ? {} : { fixed: 'right' }),
+    render: (text, record, index) => {
+      const priceData = getPriceData(record);
+      
+      // 只有当倍率不为1时才显示
+      if (priceData.usedGroupRatio === 1 || priceData.usedGroupRatio === undefined) {
+        return '-';
+      }
+
+      const priceChangePercent = ((priceData.usedGroupRatio - 1) * 100);
+
+      return (
+        <Tag
+          size='large'
+          color={priceChangePercent > 0 ? 'red' : 'green'}
+          style={{ fontWeight: '600' }}
+        >
+          {priceChangePercent > 0 ? '↑' : '↓'}{' '}
+          {Math.abs(priceChangePercent).toFixed(0)}%
+        </Tag>
+      );
+    },
+  };
+
   const columns = [...baseColumns];
   columns.push(endpointColumn);
   if (showRatio) {
     columns.push(ratioColumn);
   }
   columns.push(priceColumn);
+  columns.push(originalPriceColumn);
+  columns.push(discountColumn);
   return columns;
 };

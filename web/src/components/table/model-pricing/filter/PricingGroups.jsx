@@ -41,7 +41,7 @@ const PricingGroups = ({
 }) => {
   const groups = [
     'all',
-    ...Object.keys(usableGroup).filter((key) => key !== ''),
+    ...Object.keys(usableGroup).filter((key) => key !== '' && key !== 'default' && key !== 'vip' && key !== 'auto'),
   ];
 
   const items = groups.map((g) => {

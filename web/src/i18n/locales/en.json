@@ -3406,6 +3406,10 @@
     "充值金额阈值": "Top-up Amount Threshold",
     "加载分组列表失败，请检查网络或刷新页面": "Failed to load group list. Please check network or refresh page",
     "例如：gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$": "Example: gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$",
-    "支持精确匹配；使用 regex: 开头可按正则匹配。": "Supports exact matching. Use a regex: prefix for regex matching."
+    "支持精确匹配；使用 regex: 开头可按正则匹配。": "Supports exact matching. Use a regex: prefix for regex matching.",
+    "折扣": "Discount",
+    "当前价格": "Current Price",
+    "官方价格": "Official Price",
+    "官方计费": "Official Billing"
   }
 }

@@ -3018,6 +3018,10 @@
     "输入价格：{{symbol}}{{price}} / 1M tokens": "輸入價格：{{symbol}}{{price}} / 1M tokens",
     "输出价格 {{symbol}}{{price}} / 1M tokens": "輸出價格 {{symbol}}{{price}} / 1M tokens",
     "输出价格：{{symbol}}{{price}} / 1M tokens": "輸出價格：{{symbol}}{{price}} / 1M tokens",
-    "输出价格：{{symbol}}{{total}} / 1M tokens": "輸出價格：{{symbol}}{{total}} / 1M tokens"
+    "输出价格：{{symbol}}{{total}} / 1M tokens": "輸出價格：{{symbol}}{{total}} / 1M tokens",
+    "折扣": "折扣",
+    "当前价格": "當前價格",
+    "官方价格": "官方價格",
+    "官方计费": "官方計費"
   }
 }
