@@ -1065,56 +1065,38 @@ func GetInvitees(inviterId int, pageInfo *common.PageInfo) (invitees []*InviteeI
 		return nil, 0, err
 	}
 
-	// 查询受邀请用户列表
-	var users []*User
-	err = tx.Select("id, username, display_name").
-		Where("inviter_id = ?", inviterId).
-		Order("id desc").
+	// 使用子查询按充值金额排序
+	// 查询受邀用户及其充值金额（使用 LEFT JOIN 确保所有用户都显示）
+	type UserWithTopup struct {
+		Id          int
+		Username    string
+		DisplayName string
+		TopupAmount float64
+	}
+	var usersWithTopup []*UserWithTopup
+	
+	err = tx.Table("users").
+		Select("users.id, users.username, users.display_name, COALESCE(SUM(top_ups.money), 0) as topup_amount").
+		Joins("LEFT JOIN top_ups ON users.id = top_ups.user_id AND top_ups.status = ?", common.TopUpStatusSuccess).
+		Where("users.inviter_id = ?", inviterId).
+		Group("users.id, users.username, users.display_name").
+		Order("topup_amount DESC, users.id DESC").
 		Limit(pageInfo.GetPageSize()).
 		Offset(pageInfo.GetStartIdx()).
-		Find(&users).Error
+		Scan(&usersWithTopup).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
-	// 批量查询所有用户的充值金额（避免N+1问题）
-	userIds := make([]int, len(users))
-	for i, user := range users {
-		userIds[i] = user.Id
-	}
-
-	// 一次性查询所有用户的充值总额
-	var topupSums []struct {
-		UserId      int
-		TotalMoney  float64
-	}
-	if len(userIds) > 0 {
-		err = tx.Model(&TopUp{}).
-			Select("user_id, COALESCE(SUM(money), 0) as total_money").
-			Where("user_id IN ? AND status = ?", userIds, common.TopUpStatusSuccess).
-			Group("user_id").
-			Scan(&topupSums).Error
-		if err != nil {
-			tx.Rollback()
-			return nil, 0, err
-		}
-	}
-
-	// 构建userId到充值金额的映射
-	topupMap := make(map[int]float64)
-	for _, sum := range topupSums {
-		topupMap[sum.UserId] = sum.TotalMoney
-	}
-
 	// 转换为InviteeInfo格式
-	invitees = make([]*InviteeInfo, len(users))
-	for i, user := range users {
+	invitees = make([]*InviteeInfo, len(usersWithTopup))
+	for i, user := range usersWithTopup {
 		invitees[i] = &InviteeInfo{
 			Id:          user.Id,
 			Username:    user.Username,
 			DisplayName: user.DisplayName,
-			TopupAmount: topupMap[user.Id], // 默认为0.0
+			TopupAmount: user.TopupAmount,
 		}
 	}
 
