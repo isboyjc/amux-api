@@ -64,6 +64,9 @@ const PricingCardView = ({
   setCurrentPage,
   selectedGroup,
   groupRatio,
+  defaultGroupRatio = {},
+  vipGroupRatio = {},
+  userGroup = '',
   copyText,
   setModalImageUrl,
   setIsModalOpenurl,
@@ -262,7 +265,44 @@ const PricingCardView = ({
             quotaDisplayType: siteDisplayType,
           });
 
-          // 计算价格变化百分比（仅当倍率不为1时显示）
+          // 获取该模型的折扣信息
+          const modelEnableGroups = Array.isArray(model.enable_groups) ? model.enable_groups : [];
+          const availableGroups = modelEnableGroups.filter(
+            (g) => g !== '' && g !== 'default' && g !== 'vip' && g !== 'auto'
+          );
+          
+          // 当选中特定分组时，只显示该分组的折扣；选择全部分组时，显示所有分组的折扣
+          const groupsToShow = selectedGroup === 'all' 
+            ? availableGroups 
+            : availableGroups.filter((g) => g === selectedGroup);
+          
+          const groupDiscounts = groupsToShow.map((group) => {
+            const defaultRatio = defaultGroupRatio[group] || 1;
+            const vipRatio = vipGroupRatio[group] || defaultRatio;
+            const currentRatio = groupRatio[group] || defaultRatio;
+            
+            const defaultChangePercent = ((defaultRatio - 1) * 100);
+            const vipChangePercent = ((vipRatio - 1) * 100);
+            
+            // 显示当前用户分组的折扣
+            const showCurrentDiscount = currentRatio !== 1;
+            // 仅 default 用户且 VIP 有更优惠时显示 VIP 折扣
+            const showVipDiscount = userGroup === 'default' && vipRatio < defaultRatio;
+            
+            return {
+              group,
+              currentRatio,
+              defaultRatio,
+              vipRatio,
+              currentChangePercent: ((currentRatio - 1) * 100),
+              defaultChangePercent,
+              vipChangePercent,
+              showCurrentDiscount,
+              showVipDiscount,
+            };
+          }).filter((item) => item.showCurrentDiscount || item.showVipDiscount);
+
+          // 计算当前分组的价格变化
           const shouldShowComparison = priceData.usedGroupRatio !== 1 && priceData.usedGroupRatio !== undefined;
           let priceChangePercent = 0;
           if (shouldShowComparison && priceData.usedGroupRatio) {
@@ -310,21 +350,66 @@ const PricingCardView = ({
                             });
                           })()}
                         </div>
-                        {/* 折扣标签 */}
-                        {shouldShowComparison && (
-                          <div className='mt-1'>
-                            <Tag
-                              size='small'
-                              color={priceChangePercent > 0 ? 'red' : 'green'}
-                              style={{ 
-                                fontSize: '10px', 
-                                padding: '2px 8px',
-                                fontWeight: '600',
-                              }}
-                            >
-                              {priceChangePercent > 0 ? '↑' : '↓'}{' '}
-                              {Math.abs(priceChangePercent).toFixed(0)}%
-                            </Tag>
+                        {/* 所有分组的折扣标签 */}
+                        {groupDiscounts.length > 0 && (
+                          <div className='flex flex-wrap gap-1 mt-1.5'>
+                            {groupDiscounts.map((item) => (
+                              <React.Fragment key={item.group}>
+                                {/* 当前用户分组的折扣 */}
+                                {item.showCurrentDiscount && (
+                                  <Tag
+                                    size='small'
+                                    color={item.currentChangePercent > 0 ? 'red' : 'green'}
+                                    style={{ 
+                                      fontSize: '10px', 
+                                      padding: '2px 6px',
+                                      fontWeight: '600',
+                                    }}
+                                  >
+                                    {item.group}: {item.currentChangePercent > 0 ? '↑' : '↓'}{' '}
+                                    {Math.abs(item.currentChangePercent).toFixed(0)}%
+                                  </Tag>
+                                )}
+                                {/* VIP 折扣对比（仅 default 用户且 VIP 有更优惠时显示） */}
+                                {item.showVipDiscount && (
+                                  <Tag
+                                    size='small'
+                                    color={item.vipChangePercent > 0 ? 'orange' : 'cyan'}
+                                    style={{
+                                      fontSize: '10px',
+                                      padding: '0',
+                                      fontWeight: '600',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    <span
+                                      style={{
+                                        backgroundColor: 'var(--semi-color-fill-1)',
+                                        color: 'var(--semi-color-text-0)',
+                                        padding: '2px 4px',
+                                        fontSize: '8px',
+                                        fontWeight: '700',
+                                        letterSpacing: '0.3px',
+                                      }}
+                                    >
+                                      VIP
+                                    </span>
+                                    <span
+                                      style={{
+                                        padding: '2px 6px',
+                                        fontSize: '10px',
+                                        fontWeight: '600',
+                                      }}
+                                    >
+                                      {item.group}: {item.vipChangePercent > 0 ? '↑' : '↓'}{' '}
+                                      {Math.abs(item.vipChangePercent).toFixed(0)}%
+                                    </span>
+                                  </Tag>
+                                )}
+                              </React.Fragment>
+                            ))}
                           </div>
                         )}
                       </div>

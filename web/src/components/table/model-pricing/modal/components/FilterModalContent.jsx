@@ -103,6 +103,8 @@ const FilterModalContent = ({ sidebarProps, t }) => {
         setFilterGroup={setFilterGroup}
         usableGroup={categoryProps.usableGroup}
         groupRatio={categoryProps.groupRatio}
+        defaultGroupRatio={categoryProps.defaultGroupRatio}
+        vipGroupRatio={categoryProps.vipGroupRatio}
         models={groupCountModels}
         loading={loading}
         t={t}

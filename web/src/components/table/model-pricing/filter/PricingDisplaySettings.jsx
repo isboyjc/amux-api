@@ -38,14 +38,6 @@ const PricingDisplaySettings = ({
   const supportsCurrencyDisplay = siteDisplayType !== 'TOKENS';
 
   const items = [
-    ...(supportsCurrencyDisplay
-      ? [
-          {
-            value: 'recharge',
-            label: t('充值价格显示'),
-          },
-        ]
-      : []),
     {
       value: 'ratio',
       label: t('显示倍率'),
@@ -85,7 +77,6 @@ const PricingDisplaySettings = ({
 
   const getActiveValues = () => {
     const activeValues = [];
-    if (supportsCurrencyDisplay && showWithRecharge) activeValues.push('recharge');
     if (showRatio) activeValues.push('ratio');
     if (viewMode === 'table') activeValues.push('tableView');
     if (tokenUnit === 'K') activeValues.push('tokenUnit');
@@ -105,7 +96,7 @@ const PricingDisplaySettings = ({
         t={t}
       />
 
-      {supportsCurrencyDisplay && showWithRecharge && (
+      {supportsCurrencyDisplay && (
         <SelectableButtonGroup
           title={t('货币单位')}
           items={currencyItems}

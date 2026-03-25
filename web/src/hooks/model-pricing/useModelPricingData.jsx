@@ -48,6 +48,9 @@ export const useModelPricingData = () => {
   const [vendorsMap, setVendorsMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [groupRatio, setGroupRatio] = useState({});
+  const [defaultGroupRatio, setDefaultGroupRatio] = useState({});
+  const [vipGroupRatio, setVipGroupRatio] = useState({});
+  const [userGroup, setUserGroup] = useState('');
   const [usableGroup, setUsableGroup] = useState({});
   const [endpointMap, setEndpointMap] = useState({});
   const [autoGroups, setAutoGroups] = useState([]);
@@ -235,12 +238,18 @@ export const useModelPricingData = () => {
       data,
       vendors,
       group_ratio,
+      default_group_ratio,
+      vip_group_ratio,
+      user_group,
       usable_group,
       supported_endpoint,
       auto_groups,
     } = res.data;
     if (success) {
       setGroupRatio(group_ratio);
+      setDefaultGroupRatio(default_group_ratio || {});
+      setVipGroupRatio(vip_group_ratio || {});
+      setUserGroup(user_group || '');
       setUsableGroup(usable_group);
       setSelectedGroup('all');
       // 构建供应商 Map 方便查找
@@ -371,6 +380,9 @@ export const useModelPricingData = () => {
     models,
     loading,
     groupRatio,
+    defaultGroupRatio,
+    vipGroupRatio,
+    userGroup,
     usableGroup,
     endpointMap,
     autoGroups,

@@ -3408,6 +3408,7 @@
     "例如：gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$": "Example: gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$",
     "支持精确匹配；使用 regex: 开头可按正则匹配。": "Supports exact matching. Use a regex: prefix for regex matching.",
     "折扣": "Discount",
+    "分组折扣": "Group Discount",
     "当前价格": "Current Price",
     "官方价格": "Official Price",
     "官方计费": "Official Billing"

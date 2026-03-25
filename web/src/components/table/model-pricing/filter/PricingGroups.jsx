@@ -26,6 +26,8 @@ import SelectableButtonGroup from '../../../common/ui/SelectableButtonGroup';
  * @param {Function} setFilterGroup 设置选中分组
  * @param {Record<string, any>} usableGroup 后端返回的可用分组对象
  * @param {Record<string, number>} groupRatio 分组倍率对象
+ * @param {Record<string, number>} defaultGroupRatio 默认用户分组倍率
+ * @param {Record<string, number>} vipGroupRatio VIP用户分组倍率
  * @param {Array} models 模型列表
  * @param {boolean} loading 是否加载中
  * @param {Function} t i18n
@@ -35,13 +37,27 @@ const PricingGroups = ({
   setFilterGroup,
   usableGroup = {},
   groupRatio = {},
+  defaultGroupRatio = {},
+  vipGroupRatio = {},
   models = [],
   loading = false,
   t,
 }) => {
+  // 从所有模型的 enable_groups 中提取所有分组（用于展示）
+  const allGroupsSet = new Set();
+  models.forEach((model) => {
+    if (Array.isArray(model.enable_groups)) {
+      model.enable_groups.forEach((g) => {
+        if (g && g !== '' && g !== 'default' && g !== 'vip' && g !== 'auto') {
+          allGroupsSet.add(g);
+        }
+      });
+    }
+  });
+  
   const groups = [
     'all',
-    ...Object.keys(usableGroup).filter((key) => key !== '' && key !== 'default' && key !== 'vip' && key !== 'auto'),
+    ...Array.from(allGroupsSet).sort(),
   ];
 
   const items = groups.map((g) => {
@@ -61,6 +77,7 @@ const PricingGroups = ({
         ratioDisplay = '1x';
       }
     }
+    
     return {
       value: g,
       label: g === 'all' ? t('全部分组') : g,
@@ -70,7 +87,7 @@ const PricingGroups = ({
 
   return (
     <SelectableButtonGroup
-      title={t('可用令牌分组')}
+      title={t('令牌分组')}
       items={items}
       activeValue={filterGroup}
       onChange={setFilterGroup}
