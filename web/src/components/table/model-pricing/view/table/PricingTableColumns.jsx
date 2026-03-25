@@ -312,17 +312,37 @@ export const getPricingTableColumns = ({
         const defaultChangePercent = ((defaultRatio - 1) * 100);
         const vipChangePercent = ((vipRatio - 1) * 100);
         
-        // 显示当前用户分组的折扣
-        const showCurrentDiscount = currentRatio !== 1;
-        // 仅 default 用户且 VIP 有更优惠时显示 VIP 折扣
-        const showVipDiscount = userGroup === 'default' && vipRatio < defaultRatio;
+        // 判断是否为 VIP 独享折扣（VIP 倍率比 default 更优惠）
+        const isVipExclusive = vipRatio < defaultRatio;
+        
+        // 显示逻辑：
+        // 1. 未登录用户（userGroup = ''）或 default 用户：显示 default 折扣 + VIP 独享折扣（如果有）
+        // 2. VIP 用户：只在 VIP 独享折扣的分组上显示 VIP 标识
+        let showCurrentDiscount = false;
+        let showVipDiscount = false;
+        let currentChangePercent = 0;
+        
+        if (userGroup === 'vip') {
+          // VIP 用户：只在 VIP 独享折扣上显示 VIP 标识，其他显示普通折扣
+          if (isVipExclusive && currentRatio !== 1) {
+            showVipDiscount = true;
+          } else if (currentRatio !== 1) {
+            showCurrentDiscount = true;
+          }
+          currentChangePercent = ((currentRatio - 1) * 100);
+        } else {
+          // 未登录或 default 用户：显示当前折扣 + VIP 独享折扣
+          showCurrentDiscount = currentRatio !== 1;
+          showVipDiscount = isVipExclusive;
+          currentChangePercent = ((currentRatio - 1) * 100);
+        }
         
         return {
           group,
           currentRatio,
           defaultRatio,
           vipRatio,
-          currentChangePercent: ((currentRatio - 1) * 100),
+          currentChangePercent,
           defaultChangePercent,
           vipChangePercent,
           showCurrentDiscount,
