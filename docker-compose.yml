@@ -1,36 +1,48 @@
 # ========================================
-# Amux API - Dokploy 部署配置
+# Amux API - Dokploy 主节点部署配置（Master Node）
 # ========================================
+#
+# 📌 节点类型：主节点（Master）
+#    职责：处理写操作、后台定时任务、API 转发
+#    域名示例：api.amux.ai
 #
 # 🎯 推荐方案：在 Dokploy 面板创建独立的 PostgreSQL 和 Redis
 #    优势：删除/重建应用不会影响数据库，数据更安全
 #
 # 📋 部署步骤：
-#   1️⃣  在 Dokploy 创建 PostgreSQL 服务
+#   1️⃣  在 Dokploy 创建 PostgreSQL 服务（所有节点共享）
 #       - Service Name: amux-postgres（或其他名称）
 #       - Database: amux
 #       - Username: amux
 #       - Password: 设置强密码并记住
 #
-#   2️⃣  在 Dokploy 创建 Redis 服务
+#   2️⃣  在 Dokploy 创建 Redis 服务（所有节点共享）
 #       - Service Name: amux-redis（或其他名称）
 #
-#   3️⃣  创建本 Compose 服务
+#   3️⃣  创建本 Compose 服务（主节点）
 #       - 连接 GitHub 仓库
 #       - Compose Path: docker-compose.yml
+#       - 绑定域名：api.amux.ai
 #       - 设置以下环境变量：
 #
 #   4️⃣  必需的环境变量（在 Dokploy 环境变量面板设置）：
 #       SQL_DSN=postgresql://amux:你的密码@amux-postgres:5432/amux
 #       REDIS_CONN_STRING=redis://amux-redis:6379
-#       SESSION_SECRET=用 openssl rand -base64 48 生成
+#       SESSION_SECRET=用 openssl rand -base64 48 生成（所有节点必须相同）
+#       CRYPTO_SECRET=用 openssl rand -base64 32 生成（所有节点必须相同）
+#       FRONTEND_BASE_URL=https://api.amux.ai
 #
-#   5️⃣  推荐的环境变量：
-#       CRYPTO_SECRET=用 openssl rand -base64 32 生成
+#   5️⃣  部署从节点（可选，用于多线路优化）：
+#       - 使用 docker-compose-slave.yml 配置
+#       - 绑定不同域名（如 sg.api.amux.ai、us.api.amux.ai）
+#       - 使用与主节点完全相同的环境变量
+#       - 详见 CLUSTER_DEPLOYMENT.md
 #
 #   6️⃣  点击 Deploy 部署！
 #
-# ⚠️  注意：服务名（amux-postgres、amux-redis）要替换成你在 Dokploy 中实际创建的名称
+# ⚠️  重要提示：
+#    - 服务名（amux-postgres、amux-redis）要替换成你在 Dokploy 中实际创建的名称
+#    - 部署从节点时，SESSION_SECRET 和 CRYPTO_SECRET 必须与主节点完全相同
 # ========================================
 
 version: '3.8'
@@ -76,6 +88,13 @@ services:
       # Redis 数据加密密钥（推荐设置）
       # 生成方式: openssl rand -base64 32
       - CRYPTO_SECRET=${CRYPTO_SECRET:-}
+      
+      # ==================== 节点类型配置 ====================
+      # 节点类型（master=主节点，slave=从节点）
+      # 主节点：处理所有写操作和后台定时任务
+      # 从节点：主要处理读操作和 API 转发
+      # 默认值：master（可以不设置，当前配置为主节点）
+      # - NODE_TYPE=master
       
       # ==================== 基础配置 ====================
       # 时区设置

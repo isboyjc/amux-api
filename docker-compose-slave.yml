@@ -1,0 +1,128 @@
+# ========================================
+# Amux API - Dokploy 从节点部署配置（Slave Node）
+# ========================================
+#
+# 📌 节点类型：从节点（Slave）
+#    职责：主要处理读操作和 API 转发，不执行后台定时任务
+#    域名示例：sg.api.amux.ai（新加坡）、us.api.amux.ai（美国）、eu.api.amux.ai（欧洲）
+#
+# ⚠️  关键要求：
+#    1. 必须能访问与主节点相同的 PostgreSQL 和 Redis 服务
+#    2. 必须使用与主节点完全相同的 SESSION_SECRET 和 CRYPTO_SECRET
+#    3. 必须设置 NODE_TYPE=slave
+#
+# 📋 部署步骤：
+#   1️⃣  确保已经部署了主节点（使用 docker-compose.yml）
+#
+#   2️⃣  在 Dokploy 创建新的 Compose 服务（从节点）
+#       - 连接相同的 GitHub 仓库
+#       - Compose Path: docker-compose-slave.yml
+#       - 绑定域名：sg.api.amux.ai（或其他线路域名）
+#       - 设置环境变量（必须与主节点相同）：
+#
+#   3️⃣  必需的环境变量（与主节点完全相同）：
+#       SQL_DSN=postgresql://amux:你的密码@amux-postgres:5432/amux
+#       REDIS_CONN_STRING=redis://amux-redis:6379
+#       SESSION_SECRET=与主节点相同的密钥
+#       CRYPTO_SECRET=与主节点相同的密钥
+#       FRONTEND_BASE_URL=https://sg.api.amux.ai（当前节点的域名）
+#
+#   4️⃣  点击 Deploy 部署！
+#
+#   5️⃣  测试：
+#       curl https://sg.api.amux.ai/api/status
+#       应该返回 {"success":true,...}
+#
+# 💡 提示：
+#    - 可以部署多个从节点，每个绑定不同域名
+#    - 从节点之间完全独立，互不影响
+#    - 某个从节点挂了不会影响其他节点
+# ========================================
+
+version: '3.8'
+
+services:
+  app:
+    # 使用与主节点相同的镜像
+    image: ghcr.io/isboyjc/amux-api:latest
+    pull_policy: always
+    
+    restart: always
+    command: --log-dir /app/logs
+    expose:
+      - "3000"
+    volumes:
+      # 注意：使用不同的 volume 名称，避免与主节点冲突
+      - amux_data_slave:/data
+      - amux_logs_slave:/app/logs
+    environment:
+      # ==================== 数据库配置（与主节点相同）====================
+      # PostgreSQL 连接字符串（必需，与主节点相同）
+      # 示例: postgresql://amux:yourpass@amux-postgres:5432/amux
+      - SQL_DSN=${SQL_DSN}
+      
+      # ==================== 缓存配置（与主节点相同）====================
+      # Redis 连接字符串（必需，与主节点相同）
+      # 示例: redis://amux-redis:6379
+      - REDIS_CONN_STRING=${REDIS_CONN_STRING}
+      
+      # ==================== 安全配置（必须与主节点相同）====================
+      # 会话加密密钥（必需，必须与主节点相同）
+      - SESSION_SECRET=${SESSION_SECRET}
+      
+      # Redis 数据加密密钥（推荐设置，必须与主节点相同）
+      - CRYPTO_SECRET=${CRYPTO_SECRET:-}
+      
+      # ==================== 节点类型配置（关键配置）====================
+      # 节点类型：必须设置为 slave
+      # 从节点不会执行后台定时任务，只处理 API 请求
+      - NODE_TYPE=slave
+      
+      # ==================== 基础配置 ====================
+      # 时区设置
+      - TZ=Asia/Shanghai
+      
+      # 服务端口（默认 3000）
+      - PORT=3000
+      
+      # Gin 运行模式（release=生产模式，debug=调试模式）
+      - GIN_MODE=release
+      
+      # ==================== 性能优化 ====================
+      # 启用错误日志记录
+      - ERROR_LOG_ENABLED=true
+      
+      # 启用批量更新（提升数据库写入性能）
+      - BATCH_UPDATE_ENABLED=true
+      
+      # 启用内存缓存（提升响应速度）
+      - MEMORY_CACHE_ENABLED=true
+      
+      # 缓存同步频率（秒，默认 60）
+      - SYNC_FREQUENCY=60
+      
+      # ==================== 可选配置 ====================
+      # 流式响应超时时间（秒，默认 300）
+      # 如果出现空补全可以增大此值
+      - STREAMING_TIMEOUT=${STREAMING_TIMEOUT:-300}
+      
+      # 前端访问地址（用于回调、通知等）
+      # 注意：每个节点填写自己的域名
+      # 示例: https://sg.api.amux.ai（新加坡节点）
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  # 注意：使用不同的 volume 名称，避免与主节点冲突
+  amux_data_slave:
+  amux_logs_slave:
+
+networks:
+  default:
+    name: amux-network-slave
+    driver: bridge
