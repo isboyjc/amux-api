@@ -73,6 +73,8 @@ func ValidateConsoleSettings(settingsStr string, settingType string) error {
 		return validateFAQ(settingsStr)
 	case "UptimeKumaGroups":
 		return validateUptimeKumaGroups(settingsStr)
+	case "Support":
+		return validateSupport(settingsStr)
 	default:
 		return fmt.Errorf("未知的设置类型：%s", settingType)
 	}
@@ -301,4 +303,62 @@ func validateUptimeKumaGroups(groupsStr string) error {
 
 func GetUptimeKumaGroups() []map[string]interface{} {
 	return getJSONList(GetConsoleSetting().UptimeKumaGroups)
+}
+
+// Support 配置结构: {"items":[{"qrcode":"url","label":"text"}, ...], "email":"xxx@example.com"}
+func validateSupport(supportStr string) error {
+	var support map[string]interface{}
+	if err := json.Unmarshal([]byte(supportStr), &support); err != nil {
+		return fmt.Errorf("用户支持配置格式错误：%s", err.Error())
+	}
+
+	if email, ok := support["email"].(string); ok && email != "" {
+		if len(email) > 200 {
+			return fmt.Errorf("支持邮箱长度不能超过200个字符")
+		}
+		if err := checkDangerousContent(email, 1, "邮箱"); err != nil {
+			return err
+		}
+	}
+
+	if items, ok := support["items"].([]interface{}); ok {
+		if len(items) > 3 {
+			return fmt.Errorf("用户支持二维码数量不能超过3个")
+		}
+		for i, raw := range items {
+			item, ok := raw.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("第%d个用户支持项格式错误", i+1)
+			}
+			qrcode, _ := item["qrcode"].(string)
+			label, _ := item["label"].(string)
+			if qrcode != "" {
+				if len(qrcode) > 500 {
+					return fmt.Errorf("第%d个二维码URL长度不能超过500个字符", i+1)
+				}
+				if err := validateURL(qrcode, i+1, "二维码"); err != nil {
+					return err
+				}
+			}
+			if len(label) > 50 {
+				return fmt.Errorf("第%d个二维码标签长度不能超过50个字符", i+1)
+			}
+			if label != "" {
+				if err := checkDangerousContent(label, i+1, "标签"); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func GetSupport() map[string]interface{} {
+	s := GetConsoleSetting().Support
+	if s == "" {
+		return map[string]interface{}{}
+	}
+	var support map[string]interface{}
+	json.Unmarshal([]byte(s), &support)
+	return support
 }

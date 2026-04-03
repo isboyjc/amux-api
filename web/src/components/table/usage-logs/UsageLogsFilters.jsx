@@ -48,7 +48,7 @@ const LogsFilters = ({
       <div className='flex flex-col gap-2'>
         <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2'>
           {/* 时间选择器 */}
-          <div className='col-span-1 lg:col-span-2'>
+          <div className='col-span-1'>
             <Form.DatePicker
               field='dateRange'
               className='w-full'
@@ -116,6 +116,14 @@ const LogsFilters = ({
                 field='username'
                 prefix={<IconSearch />}
                 placeholder={t('用户名称')}
+                showClear
+                pure
+                size='small'
+              />
+              <Form.Input
+                field='user_id'
+                prefix={<IconSearch />}
+                placeholder={t('用户 ID')}
                 showClear
                 pure
                 size='small'

@@ -29,6 +29,7 @@ import ApiInfoPanel from './ApiInfoPanel';
 import AnnouncementsPanel from './AnnouncementsPanel';
 import FaqPanel from './FaqPanel';
 import UptimePanel from './UptimePanel';
+import SupportPanel from './SupportPanel';
 import SearchModal from './modals/SearchModal';
 
 import { useDashboardData } from '../../hooks/dashboard/useDashboardData';
@@ -256,6 +257,16 @@ const Dashboard = () => {
                     dashboardData.t,
                   )
                 }
+                CARD_PROPS={CARD_PROPS}
+                ILLUSTRATION_SIZE={ILLUSTRATION_SIZE}
+                t={dashboardData.t}
+              />
+            )}
+
+            {/* 用户支持卡片 */}
+            {dashboardData.supportEnabled && (
+              <SupportPanel
+                supportData={dashboardData.supportData}
                 CARD_PROPS={CARD_PROPS}
                 ILLUSTRATION_SIZE={ILLUSTRATION_SIZE}
                 t={dashboardData.t}

@@ -8,7 +8,7 @@
   word-break: break-word;
 }
 
-/* 用户消息样式 - 白色字体适配蓝色背景 */
+/* 用户消息样式 - 亮色模式：白色字体适配深色背景 */
 .user-message {
   color: white !important;
 }
@@ -80,6 +80,56 @@
 
 .user-message td {
   border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* 暗色模式：用户消息气泡为白色背景，文字改为黑色 */
+body[theme-mode='dark'] .user-message,
+body[theme-mode='dark'] .user-message .markdown-body,
+body[theme-mode='dark'] .user-message h1,
+body[theme-mode='dark'] .user-message h2,
+body[theme-mode='dark'] .user-message h3,
+body[theme-mode='dark'] .user-message h4,
+body[theme-mode='dark'] .user-message h5,
+body[theme-mode='dark'] .user-message h6,
+body[theme-mode='dark'] .user-message p,
+body[theme-mode='dark'] .user-message span,
+body[theme-mode='dark'] .user-message div,
+body[theme-mode='dark'] .user-message li,
+body[theme-mode='dark'] .user-message td,
+body[theme-mode='dark'] .user-message th {
+  color: #18181b !important;
+}
+
+body[theme-mode='dark'] .user-message blockquote {
+  color: #18181b !important;
+  border-left-color: rgba(0, 0, 0, 0.3) !important;
+  background-color: rgba(0, 0, 0, 0.05) !important;
+}
+
+body[theme-mode='dark'] .user-message code:not(pre code) {
+  color: #18181b !important;
+  background-color: rgba(0, 0, 0, 0.08) !important;
+}
+
+body[theme-mode='dark'] .user-message a {
+  color: #2563eb !important;
+}
+
+body[theme-mode='dark'] .user-message a:hover {
+  color: #1d4ed8 !important;
+}
+
+body[theme-mode='dark'] .user-message table {
+  border-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+body[theme-mode='dark'] .user-message th {
+  background-color: rgba(0, 0, 0, 0.06) !important;
+  border-color: rgba(0, 0, 0, 0.15) !important;
+}
+
+body[theme-mode='dark'] .user-message td {
+  border-color: rgba(0, 0, 0, 0.15) !important;
 }
 
 /* 加载动画 */

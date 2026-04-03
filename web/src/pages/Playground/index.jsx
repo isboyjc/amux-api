@@ -24,6 +24,7 @@ import { Layout, Toast, Modal } from '@douyinfe/semi-ui';
 
 // Context
 import { UserContext } from '../../context/User';
+import { useActualTheme } from '../../context/Theme';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 
 // hooks
@@ -41,7 +42,6 @@ import {
 } from '../../constants/playground.constants';
 import {
   getLogo,
-  stringToColor,
   buildMessageContent,
   createMessage,
   createLoadingAssistantMessage,
@@ -61,17 +61,27 @@ import ChatArea from '../../components/playground/ChatArea';
 import FloatingButtons from '../../components/playground/FloatingButtons';
 import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
 
-// 生成头像
+// 生成用户头像（灰色背景 + 圆角矩形，与导航头像一致）
 const generateAvatarDataUrl = (username) => {
   if (!username) {
     return 'https://lf3-static.bytednsdoc.com/obj/eden-cn/ptlz_zlp/ljhwZthlaukjlkulzlp/docs-icon.png';
   }
   const firstLetter = username[0].toUpperCase();
-  const bgColor = stringToColor(username);
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-      <circle cx="16" cy="16" r="16" fill="${bgColor}" />
+      <rect width="32" height="32" rx="6" ry="6" fill="#9ca3af" />
       <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" font-size="16" fill="#ffffff" font-family="Ubuntu, sans-serif">${firstLetter}</text>
+    </svg>
+  `;
+  return `data:image/svg+xml;base64,${encodeToBase64(svg)}`;
+};
+
+// 生成默认 AI logo（与系统默认 SVG logo 一致，适配明暗色）
+const generateDefaultLogoDataUrl = (isDark) => {
+  const fillColor = isDark ? '#ffffff' : '#18181b';
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+      <path d="M4 96 C4 96, 24 12, 64 12 C104 12, 124 96, 124 96 Q124 102, 118 102 C94 102, 92 64, 64 64 C36 64, 34 102, 10 102 Q4 102, 4 96 Z" fill="${fillColor}"/>
     </svg>
   `;
   return `data:image/svg+xml;base64,${encodeToBase64(svg)}`;
@@ -80,6 +90,7 @@ const generateAvatarDataUrl = (username) => {
 const Playground = () => {
   const { t } = useTranslation();
   const [userState] = useContext(UserContext);
+  const actualTheme = useActualTheme();
   const isMobile = useIsMobile();
   const styleState = { isMobile };
   const [searchParams] = useSearchParams();
@@ -168,11 +179,11 @@ const Playground = () => {
     },
     assistant: {
       name: 'Assistant',
-      avatar: getLogo(),
+      avatar: getLogo() || generateDefaultLogoDataUrl(actualTheme === 'dark'),
     },
     system: {
       name: 'System',
-      avatar: getLogo(),
+      avatar: getLogo() || generateDefaultLogoDataUrl(actualTheme === 'dark'),
     },
   };
 
