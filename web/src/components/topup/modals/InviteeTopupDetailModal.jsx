@@ -38,7 +38,7 @@ const InviteeTopupDetailModal = ({ t, visible, onCancel, inviteeId, inviteeName,
       setLoading(true);
       const res = await API.get(`/api/user/invitee/${inviteeId}/topups`, {
         params: {
-          page: page,
+          p: page,
           page_size: pageSize,
         },
       });

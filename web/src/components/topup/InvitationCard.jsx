@@ -68,7 +68,7 @@ const InvitationCard = ({
       setInviteesLoading(true);
       const res = await API.get('/api/user/invitees', {
         params: {
-          page: page,
+          p: page,
           page_size: size,
         },
       });
