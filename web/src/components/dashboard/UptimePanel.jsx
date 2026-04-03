@@ -63,7 +63,7 @@ const UptimePanel = ({
             size='small'
             theme='borderless'
             type='tertiary'
-            className='text-gray-500 hover:text-blue-500 hover:bg-blue-50 !rounded-full'
+            className='text-gray-500 hover:text-blue-500 hover:bg-blue-50'
           />
         </div>
       }

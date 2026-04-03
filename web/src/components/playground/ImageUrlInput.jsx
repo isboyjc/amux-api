@@ -82,7 +82,7 @@ const ImageUrlInput = ({
             theme='solid'
             type='primary'
             onClick={handleAddImageUrl}
-            className='!rounded-full !w-4 !h-4 !p-0 !min-w-0'
+            className='!w-4 !h-4 !p-0 !min-w-0'
             disabled={!imageEnabled || disabled}
           />
         </div>
@@ -129,7 +129,7 @@ const ImageUrlInput = ({
               theme='borderless'
               type='danger'
               onClick={() => handleRemoveImageUrl(index)}
-              className='!rounded-full !w-6 !h-6 !p-0 !min-w-0 !text-red-500 hover:!bg-red-50 flex-shrink-0'
+              className='!w-6 !h-6 !p-0 !min-w-0 !text-red-500 hover:!bg-red-50 flex-shrink-0'
               disabled={!imageEnabled || disabled}
             />
           </div>

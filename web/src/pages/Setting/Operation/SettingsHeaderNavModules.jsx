@@ -174,7 +174,7 @@ export default function SettingsHeaderNavModules(props) {
     },
     {
       key: 'pricing',
-      title: t('模型广场'),
+      title: t('模型'),
       description: t('模型定价，需要登录访问'),
       hasSubConfig: true, // 标识该模块有子配置
     },

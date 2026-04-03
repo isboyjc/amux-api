@@ -37,15 +37,41 @@ const HeaderLogo = ({
     return null;
   }
 
+  const DefaultSvgLogo = () => (
+    <svg
+      width='128'
+      height='128'
+      viewBox='0 0 128 128'
+      fill='none'
+      xmlns='http://www.w3.org/2000/svg'
+      className='w-6 h-6 transition-all duration-200 group-hover:scale-110 text-zinc-900 dark:text-white'
+    >
+      <path
+        d='M4 96 C4 96, 24 12, 64 12 C104 12, 124 96, 124 96 Q124 102, 118 102 C94 102, 92 64, 64 64 C36 64, 34 102, 10 102 Q4 102, 4 96 Z'
+        fill='currentColor'
+      />
+    </svg>
+  );
+
+  const hasCustomLogo = !!logo;
+
   return (
     <Link to='/' className='group flex items-center gap-2'>
-      <div className='relative w-8 h-8 md:w-8 md:h-8'>
-        <SkeletonWrapper loading={isLoading || !logoLoaded} type='image' />
-        <img
-          src={logo}
-          alt='logo'
-          className={`absolute inset-0 w-full h-full transition-all duration-200 group-hover:scale-110 rounded-full ${!isLoading && logoLoaded ? 'opacity-100' : 'opacity-0'}`}
-        />
+      <div className='relative w-8 h-8 md:w-8 md:h-8 flex items-center justify-center'>
+        {hasCustomLogo ? (
+          <>
+            <SkeletonWrapper loading={isLoading || !logoLoaded} type='image' />
+            <img
+              src={logo}
+              alt='logo'
+              className={`absolute inset-0 w-full h-full transition-all duration-200 group-hover:scale-110 rounded-full ${!isLoading && logoLoaded ? 'opacity-100' : 'opacity-0'}`}
+            />
+          </>
+        ) : (
+          <SkeletonWrapper loading={isLoading} type='image'>
+            <DefaultSvgLogo />
+          </SkeletonWrapper>
+        )}
       </div>
       <div className='hidden md:flex items-center gap-2'>
         <div className='flex items-center gap-2'>
@@ -57,7 +83,7 @@ const HeaderLogo = ({
           >
             <Typography.Title
               heading={4}
-              className='!text-lg !font-semibold !mb-0'
+              className='!text-lg !font-bold !mb-0 !tracking-tight logo-text'
             >
               {systemName}
             </Typography.Title>

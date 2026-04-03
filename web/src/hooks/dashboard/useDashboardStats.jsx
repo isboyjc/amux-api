@@ -112,7 +112,7 @@ export const useDashboardStats = (
       },
       {
         title: createSectionTitle(Gauge, t('性能指标')),
-        color: 'bg-indigo-50',
+        color: 'bg-zinc-50',
         items: [
           {
             title: t('平均RPM'),
@@ -120,7 +120,7 @@ export const useDashboardStats = (
             icon: <IconStopwatchStroked />,
             avatarColor: 'indigo',
             trendData: trendData.rpm,
-            trendColor: '#6366f1',
+            trendColor: '#71717a',
           },
           {
             title: t('平均TPM'),

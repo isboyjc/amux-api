@@ -30,6 +30,114 @@ body {
   background-color: var(--semi-color-bg-0);
 }
 
+/* ==================== 自定义主题色 - Neutral Zinc 风格 ==================== */
+/* 亮色模式主题覆盖 */
+body {
+  /* 主色调 - Zinc 中性色 */
+  --semi-color-primary: #18181b;
+  --semi-color-primary-hover: #27272a;
+  --semi-color-primary-active: #09090b;
+  --semi-color-primary-disabled: #d4d4d8;
+  --semi-color-primary-light-default: rgba(24, 24, 27, 0.06);
+  --semi-color-primary-light-hover: rgba(24, 24, 27, 0.12);
+  --semi-color-primary-light-active: rgba(24, 24, 27, 0.18);
+
+  /* 信息色 - 跟随主色 */
+  --semi-color-info: #18181b;
+  --semi-color-info-hover: #27272a;
+  --semi-color-info-active: #09090b;
+  --semi-color-info-disabled: #d4d4d8;
+  --semi-color-info-light-default: rgba(24, 24, 27, 0.06);
+  --semi-color-info-light-hover: rgba(24, 24, 27, 0.12);
+  --semi-color-info-light-active: rgba(24, 24, 27, 0.18);
+
+  /* 链接色 */
+  --semi-color-link: #18181b;
+  --semi-color-link-hover: #3f3f46;
+  --semi-color-link-active: #09090b;
+  --semi-color-link-visited: #52525b;
+
+  /* 焦点边框 */
+  --semi-color-focus-border: #a1a1aa;
+
+  /* 主色前景色（用于主色背景上的文字/图标） */
+  --semi-color-primary-foreground: #fafafa;
+}
+
+/* 暗色模式主题覆盖 */
+body[theme-mode='dark'] {
+  /* 主色调 - 反转为浅色 */
+  --semi-color-primary: #fafafa;
+  --semi-color-primary-hover: #e4e4e7;
+  --semi-color-primary-active: #ffffff;
+  --semi-color-primary-disabled: #3f3f46;
+  --semi-color-primary-light-default: rgba(250, 250, 250, 0.08);
+  --semi-color-primary-light-hover: rgba(250, 250, 250, 0.14);
+  --semi-color-primary-light-active: rgba(250, 250, 250, 0.20);
+
+  /* 信息色 */
+  --semi-color-info: #fafafa;
+  --semi-color-info-hover: #e4e4e7;
+  --semi-color-info-active: #ffffff;
+  --semi-color-info-disabled: #3f3f46;
+  --semi-color-info-light-default: rgba(250, 250, 250, 0.08);
+  --semi-color-info-light-hover: rgba(250, 250, 250, 0.14);
+  --semi-color-info-light-active: rgba(250, 250, 250, 0.20);
+
+  /* 链接色 */
+  --semi-color-link: #fafafa;
+  --semi-color-link-hover: #d4d4d8;
+  --semi-color-link-active: #ffffff;
+  --semi-color-link-visited: #a1a1aa;
+
+  /* 焦点边框 */
+  --semi-color-focus-border: #52525b;
+
+  /* 主色前景色 */
+  --semi-color-primary-foreground: #18181b;
+}
+
+/* ---- 暗色模式：主色背景上的前景色修正 ---- */
+/* 实心主按钮（仅 theme="solid"，排除 light / borderless） */
+html.dark .semi-button-primary:not(.semi-button-light):not(.semi-button-borderless):not(.semi-button-disabled) {
+  color: var(--semi-color-primary-foreground) !important;
+}
+
+html.dark .semi-button-primary:not(.semi-button-light):not(.semi-button-borderless):not(.semi-button-disabled) .semi-icon {
+  color: var(--semi-color-primary-foreground) !important;
+}
+
+/* 复选框选中态 */
+html.dark .semi-checkbox-inner-checked .semi-icon {
+  color: var(--semi-color-primary-foreground) !important;
+}
+
+/* 单选框选中态内圆点 */
+html.dark .semi-radio-inner-checked::after {
+  background-color: var(--semi-color-primary-foreground) !important;
+}
+
+/* 分页器激活项 */
+html.dark .semi-page-item-active {
+  color: var(--semi-color-primary-foreground) !important;
+}
+
+/* 步骤条当前步骤图标 */
+html.dark .semi-steps-item-process .semi-steps-item-icon {
+  color: var(--semi-color-primary-foreground) !important;
+}
+
+/* 开关选中态 - 滑块颜色 */
+html.dark .semi-switch-checked .semi-switch-knob {
+  background-color: var(--semi-color-primary-foreground) !important;
+}
+
+/* 导航选中态文字 */
+html.dark .semi-navigation-item-selected .semi-navigation-item-text,
+html.dark .semi-navigation-item-selected .semi-navigation-item-icon {
+  color: var(--semi-color-primary) !important;
+}
+
 /* 覆盖 Semi Design 组件字体 */
 [class*='semi-'],
 .semi-typography,
@@ -63,6 +171,12 @@ body {
 .semi-steps,
 .semi-navigation {
   font-family: 'Ubuntu', 'Microsoft YaHei', sans-serif !important;
+}
+
+/* Logo 文字样式 */
+.logo-text {
+  text-transform: uppercase !important;
+  font-weight: 700 !important;
 }
 
 /* 保持代码字体不变 */
@@ -188,12 +302,12 @@ code {
 }
 
 .sidebar-nav-item:hover {
-  background-color: rgba(var(--semi-blue-0), 0.08);
+  background-color: var(--semi-color-primary-light-hover);
   color: var(--semi-color-primary);
 }
 
 .sidebar-nav-item-selected {
-  background-color: rgba(var(--semi-blue-0), 0.12);
+  background-color: var(--semi-color-primary-light-active);
   color: var(--semi-color-primary);
   font-weight: 500;
 }
@@ -787,8 +901,8 @@ html.dark .sbg-variant-green {
 }
 
 .blur-ball-indigo {
-  background: #6366f1;
-  /* indigo-500 */
+  background: #71717a;
+  /* zinc-500 */
   top: 40px;
   left: 50%;
   transform: translateX(-50%);
@@ -796,8 +910,8 @@ html.dark .sbg-variant-green {
 }
 
 .blur-ball-teal {
-  background: #14b8a6;
-  /* teal-400 */
+  background: #a1a1aa;
+  /* zinc-400 */
   top: 200px;
   left: 30%;
   opacity: 0.4;
@@ -810,6 +924,18 @@ html:not(.dark) .blur-ball-indigo {
 
 html:not(.dark) .blur-ball-teal {
   opacity: 0.2;
+}
+
+/* ==================== 供应商图标黑白滤镜 ==================== */
+/* 亮色模式：纯黑图标 */
+.provider-icons .logoloop__node {
+  filter: grayscale(1) brightness(0);
+  transition: filter 0.2s ease;
+}
+
+/* 暗色模式：纯白图标 */
+html.dark .provider-icons .logoloop__node {
+  filter: grayscale(1) brightness(0) invert(1);
 }
 
 /* ==================== 卡片马卡龙模糊球（类封装） ==================== */
@@ -994,19 +1120,50 @@ html.dark .with-pastel-balls::before {
   gap: 0.25rem;
 }
 
-/* ==================== 自定义圆角样式 ==================== */
-.semi-radio,
-.semi-tagInput,
-.semi-input-textarea-wrapper,
-.semi-navigation-sub-title,
-.semi-chat-inputBox-sendButton,
-.semi-page-item,
-.semi-navigation-item,
+/* ==================== 自定义圆角样式（Apple 连续曲率风格，按尺寸分级） ==================== */
+
+/* --- XS: 微型控件 ~4px（标签、徽章、分页项） --- */
+.semi-tag,
 .semi-tag-closable,
-.semi-input-wrapper,
-.semi-tabs-tab-button,
-.semi-select,
+.semi-badge-count,
+.semi-page-item {
+  border-radius: 6px !important;
+}
+
+/* --- S: 小型控件 ~8px（按钮、输入框、选择器、单选/多选） --- */
+.semi-radio,
 .semi-button,
-.semi-datepicker-range-input {
+.semi-button-group .semi-button,
+.semi-input-wrapper,
+.semi-select,
+.semi-tagInput,
+.semi-datepicker-range-input,
+.semi-tabs-tab-button,
+.semi-chat-inputBox-sendButton,
+.semi-navigation-item,
+.semi-navigation-sub-title {
   border-radius: 10px !important;
+}
+
+/* --- S: 大号按钮 ~12px --- */
+.semi-button-size-large {
+  border-radius: 12px !important;
+}
+
+/* --- M: 中型容器 ~12px（文本域、下拉菜单、气泡卡片） --- */
+.semi-input-textarea-wrapper,
+.semi-dropdown-menu,
+.semi-popover-wrapper-content,
+.semi-tooltip-wrapper-content,
+.semi-datepicker-panel-container {
+  border-radius: 12px !important;
+}
+
+/* --- L: 大型容器 ~16px（卡片、对话框、抽屉、通知） --- */
+.semi-card,
+.semi-modal-content,
+.semi-sidesheet-inner,
+.semi-notification-notice,
+.semi-toast-wrapper .semi-toast {
+  border-radius: 16px !important;
 }

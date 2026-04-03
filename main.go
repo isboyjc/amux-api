@@ -96,6 +96,9 @@ func main() {
 	// 数据看板
 	go model.UpdateQuotaData()
 
+	// 首页公开 Token 统计（每 5 分钟刷新）
+	go controller.SyncPublicTokenStats(300)
+
 	if os.Getenv("CHANNEL_UPDATE_FREQUENCY") != "" {
 		frequency, err := strconv.Atoi(os.Getenv("CHANNEL_UPDATE_FREQUENCY"))
 		if err != nil {

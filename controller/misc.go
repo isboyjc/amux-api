@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -36,6 +39,57 @@ func TestStatus(c *gin.Context) {
 		"http_stats": httpStats,
 	})
 	return
+}
+
+const publicTokenStatsRedisKey = "public:total_tokens"
+
+var cachedTotalTokens atomic.Int64
+
+// SyncPublicTokenStats 后台定时从 DB 查询总 Token 数并写入缓存（Redis 或内存）
+// 在 main.go 中以 goroutine 启动
+func SyncPublicTokenStats(intervalSeconds int) {
+	// 启动时立即同步一次
+	refreshPublicTokenStats()
+	for {
+		time.Sleep(time.Duration(intervalSeconds) * time.Second)
+		refreshPublicTokenStats()
+	}
+}
+
+func refreshPublicTokenStats() {
+	total, err := model.GetPublicTokenStats()
+	if err != nil {
+		common.SysError("failed to refresh public token stats: " + err.Error())
+		return
+	}
+	// 写入内存（兜底 / 无 Redis 场景）
+	cachedTotalTokens.Store(total)
+	// 写入 Redis（多实例共享）
+	if common.RedisEnabled {
+		_ = common.RedisSet(publicTokenStatsRedisKey, strconv.FormatInt(total, 10), 10*time.Minute)
+	}
+}
+
+func GetPublicTokenStats(c *gin.Context) {
+	var total int64
+	// 优先从 Redis 读
+	if common.RedisEnabled {
+		val, err := common.RedisGet(publicTokenStatsRedisKey)
+		if err == nil {
+			total, _ = strconv.ParseInt(val, 10, 64)
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data":    gin.H{"total_tokens": total},
+			})
+			return
+		}
+	}
+	// 降级到内存缓存
+	total = cachedTotalTokens.Load()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    gin.H{"total_tokens": total},
+	})
 }
 
 func GetStatus(c *gin.Context) {

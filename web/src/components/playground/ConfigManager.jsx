@@ -238,7 +238,7 @@ const ConfigManager = ({
           theme='borderless'
           type='danger'
           onClick={handleReset}
-          className='!rounded-full !text-xs !px-2'
+          className='!text-xs !px-2'
         />
       </div>
 

@@ -456,6 +456,15 @@ func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	return token
 }
 
+func GetPublicTokenStats() (int64, error) {
+	var total int64
+	err := LOG_DB.Table("logs").
+		Where("type = ?", LogTypeConsume).
+		Select("COALESCE(SUM(prompt_tokens) + SUM(completion_tokens), 0)").
+		Scan(&total).Error
+	return total, err
+}
+
 func DeleteOldLog(ctx context.Context, targetTimestamp int64, limit int) (int64, error) {
 	var total int64 = 0
 

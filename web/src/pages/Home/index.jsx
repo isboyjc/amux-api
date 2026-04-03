@@ -61,7 +61,19 @@ import {
   AzureAI,
   Hunyuan,
   Xinference,
+  Meta,
+  Mistral,
+  Perplexity,
+  Groq,
+  Stepfun,
+  Baichuan,
+  Doubao,
+  Yi,
+  Google,
+  Anthropic,
 } from '@lobehub/icons';
+import LogoLoop from '../../components/common/ui/LogoLoop';
+import Counter from '../../components/common/ui/Counter';
 
 const { Text } = Typography;
 
@@ -80,6 +92,36 @@ const Home = () => {
   const endpointItems = API_ENDPOINTS.map((e) => ({ value: e }));
   const [endpointIndex, setEndpointIndex] = useState(0);
   const isChinese = i18n.language.startsWith('zh');
+  const [tokenDisplay, setTokenDisplay] = useState({ value: '0', unit: '', ready: false });
+
+  const formatTokens = (tokens) => {
+    if (tokens >= 1_000_000_000_000) {
+      return { value: (tokens / 1_000_000_000_000).toFixed(2), unit: 'T' };
+    }
+    if (tokens >= 1_000_000_000) {
+      return { value: (tokens / 1_000_000_000).toFixed(2), unit: 'B' };
+    }
+    if (tokens >= 1_000_000) {
+      return { value: (tokens / 1_000_000).toFixed(2), unit: 'M' };
+    }
+    if (tokens >= 1_000) {
+      return { value: (tokens / 1_000).toFixed(2), unit: 'K' };
+    }
+    return { value: String(tokens), unit: '' };
+  };
+
+  const fetchTokenStats = async () => {
+    try {
+      const res = await API.get('/api/public/token_stats');
+      if (res.data.success) {
+        const tokens = res.data.data.total_tokens || 0;
+        const formatted = formatTokens(tokens);
+        setTokenDisplay({ ...formatted, ready: true });
+      }
+    } catch (e) {
+      // silent
+    }
+  };
 
   const displayHomePageContent = async () => {
     setHomePageContent(localStorage.getItem('home_page_content') || '');
@@ -135,6 +177,7 @@ const Home = () => {
     };
 
     checkNoticeAndShow();
+    fetchTokenStats();
   }, []);
 
   useEffect(() => {
@@ -157,68 +200,66 @@ const Home = () => {
       />
       {homePageContentLoaded && homePageContent === '' ? (
         <div className='w-full overflow-x-hidden'>
-          {/* Banner 部分 */}
-          <div className='w-full border-b border-semi-color-border min-h-[500px] md:min-h-[600px] lg:min-h-[700px] relative overflow-x-hidden'>
+          {/* 首屏 Hero —— 全屏高度（减去导航栏 64px） */}
+          <div className='w-full relative overflow-hidden flex flex-col' style={{ height: 'calc(100vh - 64px)' }}>
             {/* 背景模糊晕染球 */}
             <div className='blur-ball blur-ball-indigo' />
             <div className='blur-ball blur-ball-teal' />
-            <div className='flex items-center justify-center h-full px-4 py-20 md:py-24 lg:py-32 mt-10'>
-              {/* 居中内容区 */}
-              <div className='flex flex-col items-center justify-center text-center max-w-4xl mx-auto'>
-                <div className='flex flex-col items-center justify-center mb-6 md:mb-8'>
-                  <h1
-                    className={`text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold text-semi-color-text-0 leading-tight ${isChinese ? 'tracking-wide md:tracking-wider' : ''}`}
-                  >
-                    <>
-                      {t('统一的')}
-                      <br />
-                      <span className='shine-text'>{t('大模型接口网关')}</span>
-                    </>
-                  </h1>
-                  <p className='text-base md:text-lg lg:text-xl text-semi-color-text-1 mt-4 md:mt-6 max-w-xl'>
-                    {t('更好的价格，更好的稳定性，只需要将模型基址替换为：')}
-                  </p>
-                  {/* BASE URL 与端点选择 */}
-                  <div className='flex flex-col md:flex-row items-center justify-center gap-4 w-full mt-4 md:mt-6 max-w-md'>
-                    <Input
-                      readonly
-                      value={serverAddress}
-                      className='flex-1 !rounded-full'
-                      size={isMobile ? 'default' : 'large'}
-                      suffix={
-                        <div className='flex items-center gap-2'>
-                          <ScrollList
-                            bodyHeight={32}
-                            style={{ border: 'unset', boxShadow: 'unset' }}
-                          >
-                            <ScrollItem
-                              mode='wheel'
-                              cycled={true}
-                              list={endpointItems}
-                              selectedIndex={endpointIndex}
-                              onSelect={({ index }) => setEndpointIndex(index)}
-                            />
-                          </ScrollList>
-                          <Button
-                            type='primary'
-                            onClick={handleCopyBaseURL}
-                            icon={<IconCopy />}
-                            className='!rounded-full'
+
+            {/* 主内容：垂直居中 */}
+            <div className='flex-1 flex items-center justify-center px-4'>
+              <div className='flex flex-col items-center justify-center text-center max-w-5xl mx-auto'>
+                <h1
+                  className={`text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold text-semi-color-text-0 leading-tight ${isChinese ? 'tracking-wide md:tracking-wider' : ''}`}
+                >
+                  {t('统一、稳定的')}
+                  <br />
+                  <span className='shine-text'>{t('企业级大模型接口网关')}</span>
+                </h1>
+
+                <p className='text-base md:text-lg lg:text-xl text-semi-color-text-2 mt-6 md:mt-8 max-w-3xl'>
+                  {t('为个人与企业用户提供更优价格与企业级稳定性，只需替换模型基址即可接入')}
+                </p>
+
+                {/* BASE URL */}
+                <div className='flex items-center justify-center w-full mt-6 md:mt-8 max-w-lg'>
+                  <Input
+                    readonly
+                    value={serverAddress}
+                    className='flex-1'
+                    size={isMobile ? 'default' : 'large'}
+                    suffix={
+                      <div className='flex items-center gap-2'>
+                        <ScrollList
+                          bodyHeight={32}
+                          style={{ border: 'unset', boxShadow: 'unset' }}
+                        >
+                          <ScrollItem
+                            mode='wheel'
+                            cycled={true}
+                            list={endpointItems}
+                            selectedIndex={endpointIndex}
+                            onSelect={({ index }) => setEndpointIndex(index)}
                           />
-                        </div>
-                      }
-                    />
-                  </div>
+                        </ScrollList>
+                        <Button
+                          type='primary'
+                          onClick={handleCopyBaseURL}
+                          icon={<IconCopy />}
+                        />
+                      </div>
+                    }
+                  />
                 </div>
 
                 {/* 操作按钮 */}
-                <div className='flex flex-row gap-4 justify-center items-center'>
+                <div className='flex flex-row gap-4 justify-center items-center mt-8 md:mt-10'>
                   <Link to='/console'>
                     <Button
                       theme='solid'
                       type='primary'
                       size={isMobile ? 'default' : 'large'}
-                      className='!rounded-3xl px-8 py-2'
+                      className='px-8 py-2'
                       icon={<IconPlay />}
                     >
                       {t('获取密钥')}
@@ -227,7 +268,7 @@ const Home = () => {
                   {isDemoSiteMode && statusState?.status?.version ? (
                     <Button
                       size={isMobile ? 'default' : 'large'}
-                      className='flex items-center !rounded-3xl px-6 py-2'
+                      className='flex items-center px-6 py-2'
                       icon={<IconGithubLogo />}
                       onClick={() =>
                         window.open(
@@ -242,7 +283,7 @@ const Home = () => {
                     docsLink && (
                       <Button
                         size={isMobile ? 'default' : 'large'}
-                        className='flex items-center !rounded-3xl px-6 py-2'
+                        className='flex items-center px-6 py-2'
                         icon={<IconFile />}
                         onClick={() => window.open(docsLink, '_blank')}
                       >
@@ -251,85 +292,84 @@ const Home = () => {
                     )
                   )}
                 </div>
+              </div>
+            </div>
 
-                {/* 框架兼容性图标 */}
-                <div className='mt-12 md:mt-16 lg:mt-20 w-full'>
-                  <div className='flex items-center mb-6 md:mb-8 justify-center'>
-                    <Text
-                      type='tertiary'
-                      className='text-lg md:text-xl lg:text-2xl font-light'
-                    >
-                      {t('支持众多的大模型供应商')}
+            {/* 供应商图标 —— 吸底滚动展示 */}
+            <div className='w-full pb-4 md:pb-6'>
+              <div className='flex items-center justify-center mb-4 md:mb-6 gap-1 flex-wrap'>
+                <Text type='tertiary' className='text-sm md:text-base font-light'>
+                  {t('支持全球众多的大模型供应商')}
+                </Text>
+                {tokenDisplay.ready && (
+                  <>
+                    <Text type='tertiary' className='text-sm md:text-base font-light'>
+                      ·
                     </Text>
-                  </div>
-                  <div className='flex flex-wrap items-center justify-center gap-3 sm:gap-4 md:gap-6 lg:gap-8 max-w-5xl mx-auto px-4'>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Moonshot size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <OpenAI size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <XAI size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Zhipu.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Volcengine.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Cohere.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Claude.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Gemini.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Suno size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Minimax.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Wenxin.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Spark.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Qingyan.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <DeepSeek.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Qwen.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Midjourney size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Grok size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <AzureAI.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Hunyuan.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Xinference.Color size={40} />
-                    </div>
-                    <div className='w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 flex items-center justify-center'>
-                      <Typography.Text className='!text-lg sm:!text-xl md:!text-2xl lg:!text-3xl font-bold'>
-                        30+
-                      </Typography.Text>
-                    </div>
-                  </div>
-                </div>
+                    <Text type='tertiary' className='text-sm md:text-base font-light'>
+                      {t('累计处理约')}
+                    </Text>
+                    <Counter
+                      value={tokenDisplay.value}
+                      className='text-base md:text-lg font-bold text-semi-color-text-0'
+                    />
+                    <Text type='tertiary' className='text-sm md:text-base font-light'>
+                      {tokenDisplay.unit} Tokens
+                    </Text>
+                  </>
+                )}
+              </div>
+              <div className='provider-icons max-w-5xl mx-auto px-4 md:px-10 space-y-4'>
+                <LogoLoop
+                  items={[
+                    <OpenAI size={32} />,
+                    <Claude.Color size={32} />,
+                    <Gemini.Color size={32} />,
+                    <Meta size={32} />,
+                    <Mistral.Color size={32} />,
+                    <DeepSeek.Color size={32} />,
+                    <Qwen.Color size={32} />,
+                    <Zhipu.Color size={32} />,
+                    <Moonshot size={32} />,
+                    <XAI size={32} />,
+                    <Perplexity.Color size={32} />,
+                    <Groq size={32} />,
+                    <Google.Color size={32} />,
+                    <Anthropic size={32} />,
+                    <Cohere.Color size={32} />,
+                  ]}
+                  speed={30}
+                  direction='left'
+                  logoHeight={32}
+                  gap={44}
+                  pauseOnHover
+                  fadeOut
+                />
+                <LogoLoop
+                  items={[
+                    <Volcengine.Color size={32} />,
+                    <Wenxin.Color size={32} />,
+                    <Spark.Color size={32} />,
+                    <Doubao size={32} />,
+                    <Baichuan.Color size={32} />,
+                    <Yi.Color size={32} />,
+                    <Stepfun.Color size={32} />,
+                    <Minimax.Color size={32} />,
+                    <Hunyuan.Color size={32} />,
+                    <Qingyan.Color size={32} />,
+                    <AzureAI.Color size={32} />,
+                    <Midjourney size={32} />,
+                    <Grok size={32} />,
+                    <Suno size={32} />,
+                    <Xinference.Color size={32} />,
+                  ]}
+                  speed={30}
+                  direction='right'
+                  logoHeight={32}
+                  gap={44}
+                  pauseOnHover
+                  fadeOut
+                />
               </div>
             </div>
           </div>
