@@ -328,7 +328,7 @@ const InvitationCard = ({
                 columns={columns}
                 dataSource={invitees}
                 pagination={{
-                  current: currentPage,
+                  currentPage: currentPage,
                   pageSize: pageSize,
                   total: inviteesTotal,
                   onPageChange: handlePageChange,
