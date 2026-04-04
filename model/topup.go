@@ -621,6 +621,20 @@ func ProcessAffiliateRebate(userId int, topupMoney float64) {
 			return
 		}
 
+		// 写入充值返现流水
+		err = CreateAffRebateLog(tx, &AffRebateLog{
+			UserId:      user.InviterId,
+			FromUserId:  userId,
+			Type:        AffRebateTypeTopup,
+			Quota:       rebateQuota,
+			TopupAmount: topupMoney,
+		})
+		if err != nil {
+			tx.Rollback()
+			common.SysError("充值返现流水记录失败: " + err.Error())
+			return
+		}
+
 		if err = tx.Commit().Error; err != nil {
 			common.SysError("充值返现提交失败: " + err.Error())
 			return

@@ -53,6 +53,7 @@ const InvitationCard = ({
   const [pageSize, setPageSize] = useState(10);
   const [detailModalVisible, setDetailModalVisible] = useState(false);
   const [selectedInvitee, setSelectedInvitee] = useState(null);
+  const [rebateStats, setRebateStats] = useState(null);
   
   // 从配置中获取是否允许查看受邀用户列表
   const affShowInvitees = statusState?.status?.AffShowInvitees === 'true';
@@ -61,6 +62,23 @@ const InvitationCard = ({
   // 从 StatusContext 获取 Stripe 币种符号（优先），否则使用 props 传入的
   const actualStripeCurrencySymbol = statusState?.status?.stripe_currency_symbol || stripeCurrencySymbol;
   const enableStripeTopup = statusState?.status?.enable_stripe_topup || false;
+
+  // 加载返现统计
+  const loadRebateStats = async () => {
+    try {
+      const res = await API.get('/api/user/aff_rebate_stats');
+      const { success, data } = res.data;
+      if (success) {
+        setRebateStats(data);
+      }
+    } catch (error) {
+      console.error('加载返现统计失败:', error);
+    }
+  };
+
+  useEffect(() => {
+    loadRebateStats();
+  }, []);
 
   // 加载受邀请用户列表
   const loadInvitees = async (page = 1, size = 10) => {
@@ -226,6 +244,17 @@ const InvitationCard = ({
                         {t('待使用收益')}
                       </Text>
                     </div>
+                    {rebateStats && (rebateStats.reg_pending_quota > 0 || rebateStats.topup_pending_quota > 0) && (
+                      <div className='flex items-center justify-center gap-2 mt-1'>
+                        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px' }}>
+                          {t('注册')}: {renderQuota(rebateStats.reg_pending_quota || 0)}
+                        </span>
+                        <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '10px' }}>|</span>
+                        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px' }}>
+                          {t('充值')}: {renderQuota(rebateStats.topup_pending_quota || 0)}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* 总收益 */}
@@ -251,6 +280,17 @@ const InvitationCard = ({
                         {t('总收益')}
                       </Text>
                     </div>
+                    {rebateStats && (rebateStats.reg_history_quota > 0 || rebateStats.topup_history_quota > 0) && (
+                      <div className='flex items-center justify-center gap-2 mt-1'>
+                        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px' }}>
+                          {t('注册')}: {renderQuota(rebateStats.reg_history_quota || 0)}
+                        </span>
+                        <span style={{ color: 'rgba(255,255,255,0.35)', fontSize: '10px' }}>|</span>
+                        <span style={{ color: 'rgba(255,255,255,0.6)', fontSize: '10px' }}>
+                          {t('充值')}: {renderQuota(rebateStats.topup_history_quota || 0)}
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   {/* 邀请人数 */}

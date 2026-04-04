@@ -1236,3 +1236,14 @@ func GetInviteeTopups(c *gin.Context) {
 	pageInfo.SetItems(topups)
 	common.ApiSuccess(c, pageInfo)
 }
+
+// GetAffRebateStats 获取返现统计（按注册返现和充值返现分类）
+func GetAffRebateStats(c *gin.Context) {
+	userId := c.GetInt("id")
+	stats, err := model.GetAffRebateStats(userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stats)
+}

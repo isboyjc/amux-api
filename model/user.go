@@ -328,7 +328,7 @@ func HardDeleteUserById(id int) error {
 	return err
 }
 
-func inviteUser(inviterId int) (err error) {
+func inviteUser(inviterId int, fromUserId int) (err error) {
 	user, err := GetUserById(inviterId, true)
 	if err != nil {
 		return err
@@ -336,7 +336,28 @@ func inviteUser(inviterId int) (err error) {
 	user.AffCount++
 	user.AffQuota += common.QuotaForInviter
 	user.AffHistoryQuota += common.QuotaForInviter
-	return DB.Save(user).Error
+
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+	defer tx.Rollback()
+
+	if err = tx.Save(user).Error; err != nil {
+		return err
+	}
+
+	// 写入注册返现流水
+	if err = CreateAffRebateLog(tx, &AffRebateLog{
+		UserId:     inviterId,
+		FromUserId: fromUserId,
+		Type:       AffRebateTypeRegister,
+		Quota:      common.QuotaForInviter,
+	}); err != nil {
+		return err
+	}
+
+	return tx.Commit().Error
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
@@ -426,7 +447,7 @@ func (user *User) Insert(inviterId int) error {
 		if common.QuotaForInviter > 0 {
 			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
+			_ = inviteUser(inviterId, user.Id)
 		}
 	}
 	return nil
@@ -486,7 +507,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 		if common.QuotaForInviter > 0 {
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId)
+			_ = inviteUser(inviterId, user.Id)
 		}
 	}
 }
