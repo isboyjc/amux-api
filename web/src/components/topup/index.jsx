@@ -68,6 +68,7 @@ const TopUp = () => {
   const [stripeCurrencySymbol, setStripeCurrencySymbol] = useState('¥');
   const [stripeUseDynamicPrice, setStripeUseDynamicPrice] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
+  const [topupInfoLoaded, setTopupInfoLoaded] = useState(false);
 
   // Creem 相关状态
   const [creemProducts, setCreemProducts] = useState([]);
@@ -545,6 +546,8 @@ const TopUp = () => {
       }
     } catch (error) {
       showError(t('获取充值配置异常'));
+    } finally {
+      setTopupInfoLoaded(true);
     }
   };
 
@@ -615,15 +618,16 @@ const TopUp = () => {
 
   useEffect(() => {
     if (statusState?.status) {
-      // const minTopUpValue = statusState.status.min_topup || 1;
-      // setMinTopUp(minTopUpValue);
-      // setTopUpCount(minTopUpValue);
       setTopUpLink(statusState.status.top_up_link || '');
       setPriceRatio(statusState.status.price || 1);
-
-      setStatusLoading(false);
     }
   }, [statusState?.status]);
+
+  useEffect(() => {
+    if (statusState?.status && topupInfoLoaded) {
+      setStatusLoading(false);
+    }
+  }, [statusState?.status, topupInfoLoaded]);
 
   useEffect(() => {
     if (payWay && topUpCount > 0) {
