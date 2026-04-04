@@ -201,7 +201,7 @@ const Home = () => {
       {homePageContentLoaded && homePageContent === '' ? (
         <div className='w-full overflow-x-hidden'>
           {/* 首屏 Hero —— 全屏高度（减去导航栏 64px） */}
-          <div className='w-full relative overflow-hidden flex flex-col' style={{ height: 'calc(100vh - 64px)' }}>
+          <div className='w-full relative overflow-hidden flex flex-col' style={{ height: '100dvh', minHeight: '600px' }}>
             {/* 背景模糊晕染球 */}
             <div className='blur-ball blur-ball-indigo' />
             <div className='blur-ball blur-ball-teal' />

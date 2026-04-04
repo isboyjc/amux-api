@@ -98,12 +98,12 @@ body[theme-mode='dark'] {
 }
 
 /* ---- 暗色模式：主色背景上的前景色修正 ---- */
-/* 实心主按钮（仅 theme="solid"，排除 light / borderless） */
-html.dark .semi-button-primary:not(.semi-button-light):not(.semi-button-borderless):not(.semi-button-disabled) {
+/* 实心主按钮（仅 theme="solid"，排除 light / outline / borderless） */
+html.dark .semi-button-primary:not(.semi-button-light):not(.semi-button-outline):not(.semi-button-borderless):not(.semi-button-disabled) {
   color: var(--semi-color-primary-foreground) !important;
 }
 
-html.dark .semi-button-primary:not(.semi-button-light):not(.semi-button-borderless):not(.semi-button-disabled) .semi-icon {
+html.dark .semi-button-primary:not(.semi-button-light):not(.semi-button-outline):not(.semi-button-borderless):not(.semi-button-disabled) .semi-icon {
   color: var(--semi-color-primary-foreground) !important;
 }
 
@@ -117,9 +117,10 @@ html.dark .semi-radio-inner-checked::after {
   background-color: var(--semi-color-primary-foreground) !important;
 }
 
-/* 分页器激活项 */
-html.dark .semi-page-item-active {
-  color: var(--semi-color-primary-foreground) !important;
+/* 分页器激活项 - 暗色模式下白色文字 */
+html.dark .semi-page-item-active,
+body[theme-mode='dark'] .semi-page-item-active {
+  color: #ffffff !important;
 }
 
 /* 步骤条当前步骤图标 */
@@ -854,7 +855,7 @@ html.dark .sbg-variant-green {
     90deg,
     currentColor 0%,
     currentColor 40%,
-    #facc15 50%,
+    rgba(0, 0, 0, 0.9) 50%,
     currentColor 60%,
     currentColor 100%
   );

@@ -53,7 +53,9 @@ const StatsCards = ({
                     <Avatar
                       className='mr-3'
                       size='small'
+                      shape='square'
                       color={item.avatarColor}
+                      style={{ borderRadius: '10px' }}
                     >
                       {item.icon}
                     </Avatar>

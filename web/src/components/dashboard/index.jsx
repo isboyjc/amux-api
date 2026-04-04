@@ -263,7 +263,7 @@ const Dashboard = () => {
               />
             )}
 
-            {/* 用户支持卡片 */}
+            {/* Amux 社区卡片 */}
             {dashboardData.supportEnabled && (
               <SupportPanel
                 supportData={dashboardData.supportData}

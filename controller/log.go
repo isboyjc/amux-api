@@ -48,6 +48,12 @@ func GetUserLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// 普通用户不返回渠道信息
+	for _, log := range logs {
+		log.ChannelId = 0
+		log.ChannelName = ""
+		log.Other = ""
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)

@@ -19,9 +19,26 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useState, useMemo, useContext } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import { Typography } from '@douyinfe/semi-ui';
 import { getFooterHTML, getLogo, getSystemName } from '../../helpers';
 import { StatusContext } from '../../context/Status';
+
+const DefaultSvgLogo = () => (
+  <svg
+    width='128'
+    height='128'
+    viewBox='0 0 128 128'
+    fill='none'
+    xmlns='http://www.w3.org/2000/svg'
+    className='w-8 h-8 text-zinc-900 dark:text-white'
+  >
+    <path
+      d='M4 96 C4 96, 24 12, 64 12 C104 12, 124 96, 124 96 Q124 102, 118 102 C94 102, 92 64, 64 64 C36 64, 34 102, 10 102 Q4 102, 4 96 Z'
+      fill='currentColor'
+    />
+  </svg>
+);
 
 const FooterBar = () => {
   const { t } = useTranslation();
@@ -29,7 +46,8 @@ const FooterBar = () => {
   const systemName = getSystemName();
   const logo = getLogo();
   const [statusState] = useContext(StatusContext);
-  const isDemoSiteMode = statusState?.status?.demo_site_enabled || false;
+  const docsLink = statusState?.status?.docs_link || '';
+  const version = statusState?.status?.version || '';
 
   const loadFooter = () => {
     let footer_html = localStorage.getItem('footer_html');
@@ -42,176 +60,123 @@ const FooterBar = () => {
 
   const customFooter = useMemo(
     () => (
-      <footer className='relative h-auto py-16 px-6 md:px-24 w-full flex flex-col items-center justify-between overflow-hidden'>
-        <div className='absolute hidden md:block top-[204px] left-[-100px] w-[151px] h-[151px] rounded-full bg-[#FFD166]'></div>
-        <div className='absolute md:hidden bottom-[20px] left-[-50px] w-[80px] h-[80px] rounded-full bg-[#FFD166] opacity-60'></div>
-
-        {isDemoSiteMode && (
-          <div className='flex flex-col md:flex-row justify-between w-full max-w-[1110px] mb-10 gap-8'>
-            <div className='flex-shrink-0'>
-              <img
-                src={logo}
-                alt={systemName}
-                className='w-16 h-16 rounded-full bg-gray-800 p-1.5 object-contain'
-              />
+      <footer className='w-full border-t border-semi-color-border'>
+        <div className='max-w-6xl mx-auto px-6 md:px-12 py-12 md:py-16'>
+          <div className='flex flex-col md:flex-row justify-between gap-10 md:gap-16'>
+            {/* 左侧：Logo + 标语 */}
+            <div className='flex flex-col gap-3 md:max-w-xs'>
+              <div className='flex items-center gap-2.5'>
+                {logo ? (
+                  <img
+                    src={logo}
+                    alt={systemName}
+                    className='w-8 h-8 rounded-lg object-contain'
+                  />
+                ) : (
+                  <DefaultSvgLogo />
+                )}
+                <span className='text-base font-bold text-semi-color-text-0 logo-text'>
+                  {systemName}
+                </span>
+              </div>
+              <Typography.Text className='text-sm !text-semi-color-text-2 leading-relaxed'>
+                {t('为个人与企业用户提供更优价格与企业级稳定性，只需替换模型基址即可接入')}
+              </Typography.Text>
             </div>
 
-            <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-8 w-full'>
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('关于我们')}
+            {/* 右侧：链接列 */}
+            <div className='grid grid-cols-2 sm:grid-cols-3 gap-8 md:gap-12'>
+              {/* 产品 */}
+              <div>
+                <p className='text-sm font-semibold text-semi-color-text-0 mb-4'>
+                  {t('产品')}
                 </p>
-                <div className='flex flex-col gap-4'>
-                  <a
-                    href='https://docs.newapi.pro/wiki/project-introduction/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                <div className='flex flex-col gap-2.5'>
+                  <Link
+                    to='/console'
+                    className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
                   >
-                    {t('关于项目')}
-                  </a>
-                  <a
-                    href='https://docs.newapi.pro/support/community-interaction/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                    {t('控制台')}
+                  </Link>
+                  <Link
+                    to='/pricing'
+                    className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
                   >
-                    {t('联系我们')}
-                  </a>
-                  <a
-                    href='https://docs.newapi.pro/wiki/features-introduction/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    {t('功能特性')}
-                  </a>
+                    {t('模型')}
+                  </Link>
+                  {docsLink && (
+                    <a
+                      href={docsLink}
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
+                    >
+                      {t('文档')}
+                    </a>
+                  )}
                 </div>
               </div>
 
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('文档')}
+              {/* 支持 */}
+              <div>
+                <p className='text-sm font-semibold text-semi-color-text-0 mb-4'>
+                  {t('支持')}
                 </p>
-                <div className='flex flex-col gap-4'>
-                  <a
-                    href='https://docs.newapi.pro/getting-started/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                <div className='flex flex-col gap-2.5'>
+                  <Link
+                    to='/login'
+                    className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
                   >
-                    {t('快速开始')}
-                  </a>
-                  <a
-                    href='https://docs.newapi.pro/installation/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                    {t('登录')}
+                  </Link>
+                  <Link
+                    to='/register'
+                    className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
                   >
-                    {t('安装指南')}
-                  </a>
-                  <a
-                    href='https://docs.newapi.pro/api/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    {t('API 文档')}
-                  </a>
+                    {t('注册')}
+                  </Link>
                 </div>
               </div>
 
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('相关项目')}
+              {/* 法律 */}
+              <div>
+                <p className='text-sm font-semibold text-semi-color-text-0 mb-4'>
+                  {t('法律')}
                 </p>
-                <div className='flex flex-col gap-4'>
-                  <a
-                    href='https://github.com/songquanpeng/one-api'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                <div className='flex flex-col gap-2.5'>
+                  <Link
+                    to='/user-agreement'
+                    className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
                   >
-                    One API
-                  </a>
-                  <a
-                    href='https://github.com/novicezk/midjourney-proxy'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                    {t('用户协议')}
+                  </Link>
+                  <Link
+                    to='/privacy-policy'
+                    className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
                   >
-                    Midjourney-Proxy
-                  </a>
-                  <a
-                    href='https://github.com/Calcium-Ion/neko-api-key-tool'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    neko-api-key-tool
-                  </a>
-                </div>
-              </div>
-
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('友情链接')}
-                </p>
-                <div className='flex flex-col gap-4'>
-                  <a
-                    href='https://github.com/Calcium-Ion/new-api-horizon'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    new-api-horizon
-                  </a>
-                  <a
-                    href='https://github.com/coaidev/coai'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    CoAI
-                  </a>
-                  <a
-                    href='https://www.gpt-load.com/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    GPT-Load
-                  </a>
+                    {t('隐私政策')}
+                  </Link>
                 </div>
               </div>
             </div>
           </div>
-        )}
 
-        <div className='flex flex-col md:flex-row items-center justify-between w-full max-w-[1110px] gap-6'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <Typography.Text className='text-sm !text-semi-color-text-1'>
+          {/* 底部版权 */}
+          <div className='mt-10 pt-6 border-t border-semi-color-border flex flex-col sm:flex-row items-center justify-between gap-3'>
+            <Typography.Text className='text-xs !text-semi-color-text-3'>
               © {currentYear} {systemName}. {t('版权所有')}
             </Typography.Text>
-          </div>
-
-          {/* <div className='text-sm'>
-            <span className='!text-semi-color-text-1'>
-              {t('设计与开发由')}{' '}
-            </span>
             <a
-              href='https://github.com/QuantumNous/new-api'
-              target='_blank'
-              rel='noopener noreferrer'
-              className='!text-semi-color-primary font-medium'
+              href='mailto:support@amux.ai'
+              className='text-xs text-semi-color-text-3 hover:text-semi-color-text-1 transition-colors'
             >
-              New API
+              support@amux.ai
             </a>
-          </div> */}
+          </div>
         </div>
       </footer>
     ),
-    [logo, systemName, t, currentYear, isDemoSiteMode],
+    [logo, systemName, t, currentYear, docsLink, version],
   );
 
   useEffect(() => {
@@ -226,17 +191,6 @@ const FooterBar = () => {
             className='custom-footer'
             dangerouslySetInnerHTML={{ __html: footer }}
           ></div>
-          {/* <div className='absolute bottom-2 right-4 text-xs !text-semi-color-text-2 opacity-70'>
-            <span>{t('设计与开发由')} </span>
-            <a
-              href='https://github.com/QuantumNous/new-api'
-              target='_blank'
-              rel='noopener noreferrer'
-              className='!text-semi-color-primary font-medium'
-            >
-              New API
-            </a>
-          </div> */}
         </div>
       ) : (
         customFooter

@@ -323,25 +323,29 @@ func validateSupport(supportStr string) error {
 
 	if items, ok := support["items"].([]interface{}); ok {
 		if len(items) > 3 {
-			return fmt.Errorf("用户支持二维码数量不能超过3个")
+			return fmt.Errorf("社区链接数量不能超过3个")
 		}
 		for i, raw := range items {
 			item, ok := raw.(map[string]interface{})
 			if !ok {
-				return fmt.Errorf("第%d个用户支持项格式错误", i+1)
+				return fmt.Errorf("第%d个社区链接格式错误", i+1)
 			}
-			qrcode, _ := item["qrcode"].(string)
+			// 兼容 url 和旧的 qrcode 字段
+			itemUrl, _ := item["url"].(string)
+			if itemUrl == "" {
+				itemUrl, _ = item["qrcode"].(string)
+			}
 			label, _ := item["label"].(string)
-			if qrcode != "" {
-				if len(qrcode) > 500 {
-					return fmt.Errorf("第%d个二维码URL长度不能超过500个字符", i+1)
+			if itemUrl != "" {
+				if len(itemUrl) > 500 {
+					return fmt.Errorf("第%d个链接URL长度不能超过500个字符", i+1)
 				}
-				if err := validateURL(qrcode, i+1, "二维码"); err != nil {
+				if err := validateURL(itemUrl, i+1, "链接"); err != nil {
 					return err
 				}
 			}
 			if len(label) > 50 {
-				return fmt.Errorf("第%d个二维码标签长度不能超过50个字符", i+1)
+				return fmt.Errorf("第%d个链接标签长度不能超过50个字符", i+1)
 			}
 			if label != "" {
 				if err := checkDangerousContent(label, i+1, "标签"); err != nil {

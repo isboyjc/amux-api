@@ -169,7 +169,7 @@ const DashboardSetting = () => {
           <SettingsUptimeKuma options={inputs} refresh={onRefresh} />
         </Card>
 
-        {/* 用户支持设置 */}
+        {/* Amux 社区设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsSupport options={inputs} refresh={onRefresh} />
         </Card>

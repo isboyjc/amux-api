@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Button, Input, Switch, Typography, Empty } from '@douyinfe/semi-ui';
-import { Headset, Plus, Trash2, ImageIcon } from 'lucide-react';
+import { Button, Input, Switch, Typography } from '@douyinfe/semi-ui';
+import { Headset, Plus, Trash2, Link2 } from 'lucide-react';
 import { API, showError, showSuccess } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 
@@ -84,7 +84,7 @@ const SettingsSupport = ({ options, refresh }) => {
 
   const addItem = () => {
     if (items.length >= MAX_ITEMS) return;
-    setItems((prev) => [...prev, { qrcode: '', label: '' }]);
+    setItems((prev) => [...prev, { url: '', label: '' }]);
   };
 
   const removeItem = (index) => {
@@ -97,7 +97,7 @@ const SettingsSupport = ({ options, refresh }) => {
         <div className='flex items-center gap-2'>
           <Headset size={18} />
           <Title heading={5} className='!mb-0'>
-            {t('用户支持')}
+            {t('关于 Amux 社区')}
           </Title>
         </div>
         <Switch
@@ -108,33 +108,24 @@ const SettingsSupport = ({ options, refresh }) => {
       </div>
 
       <Text type='tertiary' size='small'>
-        {t('配置用户支持信息，最多可添加3个二维码及1个支持邮箱')}
+        {t('配置 Amux 社区链接，最多3个，图片链接自动渲染图片，其他链接展示为浏览器打开入口')}
       </Text>
 
-      {/* 二维码配置项 */}
+      {/* 链接配置项 */}
       <div className='space-y-3'>
         {items.map((item, index) => (
           <div
             key={index}
             className='flex items-start gap-3 p-3 rounded-xl bg-semi-color-fill-0'
           >
-            {/* 预览 */}
-            <div className='w-16 h-16 rounded-lg bg-semi-color-bg-2 flex items-center justify-center flex-shrink-0 overflow-hidden'>
-              {item.qrcode ? (
-                <img
-                  src={item.qrcode}
-                  alt={item.label}
-                  className='w-full h-full object-cover'
-                />
-              ) : (
-                <ImageIcon size={20} className='text-semi-color-text-3' />
-              )}
+            <div className='w-10 h-10 rounded-lg bg-semi-color-bg-2 flex items-center justify-center flex-shrink-0'>
+              <Link2 size={18} className='text-semi-color-text-3' />
             </div>
             <div className='flex-1 space-y-2'>
               <Input
-                value={item.qrcode}
-                onChange={(v) => updateItem(index, 'qrcode', v)}
-                placeholder={t('二维码图片 URL')}
+                value={item.url || item.qrcode || ''}
+                onChange={(v) => updateItem(index, 'url', v)}
+                placeholder={t('链接地址（图片 URL 或网页 URL）')}
                 size='small'
               />
               <Input
@@ -162,7 +153,7 @@ const SettingsSupport = ({ options, refresh }) => {
             size='small'
             onClick={addItem}
           >
-            {t('添加二维码')}
+            {t('添加链接')}
           </Button>
         )}
       </div>

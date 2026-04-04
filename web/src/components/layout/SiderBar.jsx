@@ -502,7 +502,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           <Button
             theme='outline'
             type='tertiary'
-            size='small'
             icon={
               <ChevronLeft
                 size={16}
@@ -517,8 +516,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             icononly={collapsed}
             style={
               collapsed
-                ? { width: 36, height: 24, padding: 0 }
-                : { padding: '4px 12px', width: '100%' }
+                ? { width: 44, height: 40, padding: 0 }
+                : { padding: '8px 12px', width: '100%', height: 40 }
             }
           >
             {!collapsed ? t('收起侧边栏') : null}
