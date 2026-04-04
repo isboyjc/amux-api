@@ -63,6 +63,7 @@ const EditTokenModal = (props) => {
   const [models, setModels] = useState([]);
   const [groups, setGroups] = useState([]);
   const [hasAutoGroup, setHasAutoGroup] = useState(false);
+  const [autoGroupOrder, setAutoGroupOrder] = useState([]);
   const isEdit = props.editingToken.id !== undefined;
 
   const defaultGroup = hasAutoGroup && statusState?.status?.default_use_auto_group ? 'auto' : '';
@@ -76,7 +77,7 @@ const EditTokenModal = (props) => {
     model_limits: [],
     allow_ips: '',
     group: defaultGroup,
-    cross_group_retry: false,
+    cross_group_retry: defaultGroup === 'auto',
     tokenCount: 1,
   });
 
@@ -142,6 +143,16 @@ const EditTokenModal = (props) => {
       setHasAutoGroup(autoGroupExists);
       if (autoGroupExists) {
         localGroupOptions.sort((a, b) => (a.value === 'auto' ? -1 : 1));
+        // 获取自动分组顺序
+        try {
+          const pricingRes = await API.get('/api/pricing');
+          const pricingData = pricingRes.data;
+          if (pricingData.success && pricingData.auto_groups) {
+            setAutoGroupOrder(pricingData.auto_groups);
+          }
+        } catch (e) {
+          // ignore
+        }
       }
       setGroups(localGroupOptions);
     } else {
@@ -366,6 +377,9 @@ const EditTokenModal = (props) => {
                         placeholder={hasAutoGroup && statusState?.status?.default_use_auto_group ? t('令牌分组，默认为自动分组') : t('令牌分组，默认为用户的分组')}
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
+                        onChange={(val) => {
+                          formApiRef.current?.setValue('cross_group_retry', val === 'auto');
+                        }}
                         showClear
                         style={{ width: '100%' }}
                       />
@@ -388,9 +402,12 @@ const EditTokenModal = (props) => {
                       field='cross_group_retry'
                       label={t('跨分组重试')}
                       size='default'
-                      extraText={t(
-                        '开启后，当前分组渠道失败时会按顺序尝试下一个分组的渠道',
-                      )}
+                      extraText={
+                        t('开启后，当前分组渠道失败时会按顺序尝试下一个分组的渠道') +
+                        (autoGroupOrder.length > 0
+                          ? t('，当前分组顺序：') + autoGroupOrder.join(' → ')
+                          : '')
+                      }
                     />
                   </Col>
                   <Col xs={24} sm={24} md={24} lg={10} xl={10}>
