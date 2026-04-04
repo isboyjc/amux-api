@@ -62,7 +62,10 @@ const EditTokenModal = (props) => {
   const formApiRef = useRef(null);
   const [models, setModels] = useState([]);
   const [groups, setGroups] = useState([]);
+  const [hasAutoGroup, setHasAutoGroup] = useState(false);
   const isEdit = props.editingToken.id !== undefined;
+
+  const defaultGroup = hasAutoGroup && statusState?.status?.default_use_auto_group ? 'auto' : '';
 
   const getInitValues = () => ({
     name: '',
@@ -72,7 +75,7 @@ const EditTokenModal = (props) => {
     model_limits_enabled: false,
     model_limits: [],
     allow_ips: '',
-    group: '',
+    group: defaultGroup,
     cross_group_retry: false,
     tokenCount: 1,
   });
@@ -135,15 +138,12 @@ const EditTokenModal = (props) => {
         value: group,
         ratio: info.ratio,
       }));
-      if (statusState?.status?.default_use_auto_group) {
-        if (localGroupOptions.some((group) => group.value === 'auto')) {
-          localGroupOptions.sort((a, b) => (a.value === 'auto' ? -1 : 1));
-        }
+      const autoGroupExists = localGroupOptions.some((group) => group.value === 'auto');
+      setHasAutoGroup(autoGroupExists);
+      if (autoGroupExists) {
+        localGroupOptions.sort((a, b) => (a.value === 'auto' ? -1 : 1));
       }
       setGroups(localGroupOptions);
-      // if (statusState?.status?.default_use_auto_group && formApiRef.current) {
-      //   formApiRef.current.setValue('group', 'auto');
-      // }
     } else {
       showError(t(message));
     }
@@ -328,7 +328,7 @@ const EditTokenModal = (props) => {
     >
       <Spin spinning={loading}>
         <Form
-          key={isEdit ? 'edit' : 'new'}
+          key={`${isEdit ? 'edit' : 'new'}-${defaultGroup}`}
           initValues={getInitValues()}
           getFormApi={(api) => (formApiRef.current = api)}
           onSubmit={submit}
@@ -363,7 +363,7 @@ const EditTokenModal = (props) => {
                       <Form.Select
                         field='group'
                         label={t('令牌分组')}
-                        placeholder={t('令牌分组，默认为用户的分组')}
+                        placeholder={hasAutoGroup && statusState?.status?.default_use_auto_group ? t('令牌分组，默认为自动分组') : t('令牌分组，默认为用户的分组')}
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
                         showClear
