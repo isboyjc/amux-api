@@ -96,6 +96,7 @@ const RegisterForm = () => {
   const [emailRegisterLoading, setEmailRegisterLoading] = useState(false);
   const [registerLoading, setRegisterLoading] = useState(false);
   const [verificationCodeLoading, setVerificationCodeLoading] = useState(false);
+  const [verificationCodeSent, setVerificationCodeSent] = useState(false);
   const [otherRegisterOptionsLoading, setOtherRegisterOptionsLoading] =
     useState(false);
   const [wechatCodeSubmitLoading, setWechatCodeSubmitLoading] = useState(false);
@@ -268,6 +269,7 @@ const RegisterForm = () => {
       if (success) {
         showSuccess('验证码发送成功，请检查你的邮箱！');
         setDisableButton(true); // 发送成功后禁用按钮，开始倒计时
+        setVerificationCodeSent(true);
       } else {
         showError(message);
       }
@@ -609,6 +611,11 @@ const RegisterForm = () => {
                       </Button>
                     }
                   />
+                  {verificationCodeSent && (
+                    <Text size='small' type='tertiary' className='!mt-1'>
+                      {t('如果没有收到验证码邮件，请检查垃圾邮件/垃圾箱文件夹')}
+                    </Text>
+                  )}
                   <Form.Input
                     field='verification_code'
                     label={t('验证码')}

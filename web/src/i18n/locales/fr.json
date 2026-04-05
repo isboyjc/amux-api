@@ -3242,6 +3242,7 @@
     "验证成功": "Vérification réussie",
     "验证数据库连接状态": "Vérifier l'état de la connexion à la base de données",
     "验证码": "Code de vérification",
+    "如果没有收到验证码邮件，请检查垃圾邮件/垃圾箱文件夹": "Si vous n'avez pas reçu l'e-mail de vérification, veuillez vérifier votre dossier spam/courrier indésirable",
     "验证码发送成功，请检查邮箱！": "Le code de vérification a été envoyé avec succès, veuillez vérifier votre e-mail !",
     "验证设置": "Vérifier la configuration",
     "验证身份": "Vérifier l'identité",
