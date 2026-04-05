@@ -175,6 +175,7 @@ func CheckDesktopAuth(c *gin.Context) {
 		}
 		c.JSON(200, gin.H{
 			"status":       "authorized",
+			"user_id":      consumed.UserId,
 			"access_token": consumed.AccessToken,
 		})
 
