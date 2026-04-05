@@ -263,3 +263,7 @@ custom_oauth.name_empty: "Provider name cannot be empty"
 custom_oauth.has_bindings: "Cannot delete provider with existing user bindings"
 custom_oauth.binding_not_found: "OAuth binding not found"
 custom_oauth.provider_id_field_invalid: "Could not extract user ID from provider response"
+
+# Desktop auth messages
+desktop_auth.session_exists: "Authorization session already exists"
+desktop_auth.session_invalid: "Authorization link is invalid or has expired, please go back to Desktop and try again"

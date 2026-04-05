@@ -3475,6 +3475,22 @@
     "准备好开始了吗？": "Ready to Get Started?",
     "homepage_cta_desc": "Sign up to get free credits and complete integration in minutes",
     "免费开始使用": "Start for Free",
-    "查看文档": "View Docs"
+    "查看文档": "View Docs",
+    "授权链接无效": "Invalid Authorization Link",
+    "授权链接无效或已过期，请返回 Desktop 重试": "Authorization link is invalid or expired. Please go back to Desktop and try again.",
+    "授权成功": "Authorization Successful",
+    "你可以关闭此页面返回 Amux Desktop": "You can close this page and return to Amux Desktop.",
+    "已取消授权": "Authorization Cancelled",
+    "你已拒绝此次授权请求": "You have rejected this authorization request.",
+    "Amux Desktop 请求接入你的账号": "Amux Desktop is requesting access to your account",
+    "该操作将授予 Amux Desktop 你的系统访问令牌": "This will grant Amux Desktop your system access token",
+    "授权后 Amux Desktop 将可以：": "After authorization, Amux Desktop will be able to:",
+    "获取你的账户基本信息": "Access your basic account information",
+    "查看可用模型列表与分组信息": "View available models and group information",
+    "使用你的额度进行 API 调用": "Use your quota for API calls",
+    "系统访问令牌具有较高权限，请勿泄露给他人。如需撤销授权，可在个人设置中重新生成令牌以覆盖当前令牌。": "The system access token has elevated privileges — do not share it with others. To revoke access, regenerate the token in your personal settings to override the current one.",
+    "拒绝": "Reject",
+    "确认授权": "Authorize",
+    "操作失败": "Operation failed"
   }
 }

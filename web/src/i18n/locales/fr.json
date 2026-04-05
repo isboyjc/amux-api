@@ -3436,6 +3436,22 @@
     "准备好开始了吗？": "Prêt à commencer ?",
     "homepage_cta_desc": "Inscrivez-vous pour obtenir des crédits gratuits et complétez l'intégration en quelques minutes",
     "免费开始使用": "Commencer gratuitement",
-    "查看文档": "Documentation"
+    "查看文档": "Documentation",
+    "授权链接无效": "Lien d'autorisation invalide",
+    "授权链接无效或已过期，请返回 Desktop 重试": "Le lien d'autorisation est invalide ou a expiré. Veuillez retourner sur Desktop et réessayer.",
+    "授权成功": "Autorisation réussie",
+    "你可以关闭此页面返回 Amux Desktop": "Vous pouvez fermer cette page et retourner sur Amux Desktop.",
+    "已取消授权": "Autorisation annulée",
+    "你已拒绝此次授权请求": "Vous avez refusé cette demande d'autorisation.",
+    "Amux Desktop 请求接入你的账号": "Amux Desktop demande l'accès à votre compte",
+    "该操作将授予 Amux Desktop 你的系统访问令牌": "Cette opération accordera à Amux Desktop votre jeton d'accès système",
+    "授权后 Amux Desktop 将可以：": "Après autorisation, Amux Desktop pourra :",
+    "获取你的账户基本信息": "Accéder à vos informations de compte",
+    "查看可用模型列表与分组信息": "Consulter les modèles disponibles et les informations de groupe",
+    "使用你的额度进行 API 调用": "Utiliser votre quota pour les appels API",
+    "系统访问令牌具有较高权限，请勿泄露给他人。如需撤销授权，可在个人设置中重新生成令牌以覆盖当前令牌。": "Le jeton d'accès système dispose de privilèges élevés — ne le partagez pas. Pour révoquer l'accès, régénérez le jeton dans vos paramètres personnels.",
+    "拒绝": "Refuser",
+    "确认授权": "Autoriser",
+    "操作失败": "Échec de l'opération"
   }
 }

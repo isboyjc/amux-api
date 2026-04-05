@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { history } from './history';
 
 export function authHeader() {
@@ -34,8 +34,15 @@ export function authHeader() {
 
 export const AuthRedirect = ({ children }) => {
   const user = localStorage.getItem('user');
+  const [searchParams] = useSearchParams();
+  const callback = searchParams.get('callback');
 
   if (user) {
+    // If there's a valid callback, redirect there instead of /console
+    // Must start with / but not // (protocol-relative URL) and not contain ://
+    if (callback && callback.startsWith('/') && !callback.startsWith('//') && !callback.includes('://')) {
+      return <Navigate to={callback} replace />;
+    }
     return <Navigate to='/console' replace />;
   }
 

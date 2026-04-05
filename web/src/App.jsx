@@ -51,6 +51,7 @@ import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
 
 const Home = lazy(() => import('./pages/Home'));
+const DesktopAuthorize = lazy(() => import('./pages/DesktopAuthorize'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
@@ -107,6 +108,14 @@ function App() {
           }
         />
         <Route path='/forbidden' element={<Forbidden />} />
+        <Route
+          path='/desktop/authorize'
+          element={
+            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+              <DesktopAuthorize />
+            </Suspense>
+          }
+        />
         <Route
           path='/console/models'
           element={

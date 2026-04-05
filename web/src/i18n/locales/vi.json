@@ -3986,6 +3986,22 @@
     "准备好开始了吗？": "Sẵn sàng bắt đầu?",
     "homepage_cta_desc": "Đăng ký để nhận tín dụng miễn phí và hoàn tất tích hợp trong vài phút",
     "免费开始使用": "Bắt đầu miễn phí",
-    "查看文档": "Tài liệu"
+    "查看文档": "Tài liệu",
+    "授权链接无效": "Liên kết xác thực không hợp lệ",
+    "授权链接无效或已过期，请返回 Desktop 重试": "Liên kết xác thực không hợp lệ hoặc đã hết hạn. Vui lòng quay lại Desktop và thử lại.",
+    "授权成功": "Xác thực thành công",
+    "你可以关闭此页面返回 Amux Desktop": "Bạn có thể đóng trang này và quay lại Amux Desktop.",
+    "已取消授权": "Đã hủy xác thực",
+    "你已拒绝此次授权请求": "Bạn đã từ chối yêu cầu xác thực này.",
+    "Amux Desktop 请求接入你的账号": "Amux Desktop yêu cầu truy cập vào tài khoản của bạn",
+    "该操作将授予 Amux Desktop 你的系统访问令牌": "Thao tác này sẽ cấp cho Amux Desktop mã truy cập hệ thống của bạn",
+    "授权后 Amux Desktop 将可以：": "Sau khi xác thực, Amux Desktop sẽ có thể:",
+    "获取你的账户基本信息": "Truy cập thông tin cơ bản của tài khoản",
+    "查看可用模型列表与分组信息": "Xem danh sách mô hình và thông tin nhóm",
+    "使用你的额度进行 API 调用": "Sử dụng hạn mức của bạn cho các cuộc gọi API",
+    "系统访问令牌具有较高权限，请勿泄露给他人。如需撤销授权，可在个人设置中重新生成令牌以覆盖当前令牌。": "Mã truy cập hệ thống có quyền cao — không chia sẻ với người khác. Để thu hồi quyền truy cập, hãy tạo lại mã trong cài đặt cá nhân.",
+    "拒绝": "Từ chối",
+    "确认授权": "Xác thực",
+    "操作失败": "Thao tác thất bại"
   }
 }

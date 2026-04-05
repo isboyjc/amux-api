@@ -314,3 +314,9 @@ const (
 	MsgCustomOAuthBindingNotFound   = "custom_oauth.binding_not_found"
 	MsgCustomOAuthProviderIdInvalid = "custom_oauth.provider_id_field_invalid"
 )
+
+// Desktop auth related messages
+const (
+	MsgDesktopAuthSessionExists  = "desktop_auth.session_exists"
+	MsgDesktopAuthSessionInvalid = "desktop_auth.session_invalid"
+)

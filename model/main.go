@@ -281,6 +281,7 @@ func migrateDB() error {
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&AffRebateLog{},
+		&DesktopAuthSession{},
 	)
 	if err != nil {
 		return err
@@ -336,6 +337,7 @@ func migrateDBFast() error {
 		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&AffRebateLog{}, "AffRebateLog"},
+		{&DesktopAuthSession{}, "DesktopAuthSession"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
