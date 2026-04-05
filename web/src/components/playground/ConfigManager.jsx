@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useRef } from 'react';
-import { Button, Typography, Toast, Modal, Dropdown } from '@douyinfe/semi-ui';
-import { Download, Upload, RotateCcw, Settings2 } from 'lucide-react';
+import { Button, Typography, Toast, Modal, Dropdown, Tooltip } from '@douyinfe/semi-ui';
+import { Download, Upload, RotateCcw, Settings2, MessageCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import {
   exportConfig,
@@ -33,6 +33,7 @@ const ConfigManager = ({
   currentConfig,
   onConfigImport,
   onConfigReset,
+  onNewChat,
   styleState,
   messages,
 }) => {
@@ -227,43 +228,51 @@ const ConfigManager = ({
   // 桌面端显示紧凑的按钮组
   return (
     <div className='space-y-3'>
-      {/* 配置状态信息和重置按钮 */}
-      <div className='flex items-center justify-between'>
-        <Typography.Text className='text-xs text-gray-500'>
-          {getConfigStatus()}
-        </Typography.Text>
-        <Button
-          icon={<RotateCcw size={12} />}
-          size='small'
-          theme='borderless'
-          type='danger'
-          onClick={handleReset}
-          className='!text-xs !px-2'
-        />
-      </div>
+      {/* 配置状态信息 */}
+      <Typography.Text className='text-xs text-gray-400 block text-center'>
+        {getConfigStatus()}
+      </Typography.Text>
 
-      {/* 导出和导入按钮 */}
       <div className='flex gap-2'>
+        {/* 导出 */}
+        <Tooltip content={t('导出配置')} position='top'>
+          <Button
+            icon={<Download size={16} />}
+            theme='outline'
+            type='tertiary'
+            onClick={handleExport}
+            className='!rounded-lg !w-9 !h-9 !p-0'
+          />
+        </Tooltip>
+        {/* 导入 */}
+        <Tooltip content={t('导入配置')} position='top'>
+          <Button
+            icon={<Upload size={16} />}
+            theme='outline'
+            type='tertiary'
+            onClick={handleImportClick}
+            className='!rounded-lg !w-9 !h-9 !p-0'
+          />
+        </Tooltip>
+        {/* 重置 */}
+        <Tooltip content={t('重置配置')} position='top'>
+          <Button
+            icon={<RotateCcw size={16} />}
+            theme='outline'
+            type='tertiary'
+            onClick={handleReset}
+            className='!rounded-lg !w-9 !h-9 !p-0'
+          />
+        </Tooltip>
+        {/* 新建会话 */}
         <Button
-          icon={<Download size={12} />}
-          size='small'
+          icon={<MessageCircle size={16} />}
           theme='solid'
           type='primary'
-          onClick={handleExport}
-          className='!rounded-lg flex-1 !text-xs !h-7'
+          onClick={onNewChat}
+          className='!rounded-lg !h-9 flex-1'
         >
-          {t('导出')}
-        </Button>
-
-        <Button
-          icon={<Upload size={12} />}
-          size='small'
-          theme='outline'
-          type='primary'
-          onClick={handleImportClick}
-          className='!rounded-lg flex-1 !text-xs !h-7'
-        >
-          {t('导入')}
+          {t('新会话')}
         </Button>
       </div>
 

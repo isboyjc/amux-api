@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Card, Chat, Typography, Button } from '@douyinfe/semi-ui';
-import { MessageSquare, Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import CustomInputRender from './CustomInputRender';
 
@@ -64,18 +64,13 @@ const ChatArea = ({
       ) : (
         <div className='px-6 py-4 bg-gradient-to-r from-purple-500 to-blue-500 rounded-t-2xl'>
           <div className='flex items-center justify-between'>
-            <div className='flex items-center gap-3'>
-              <div className='w-10 h-10 rounded-full bg-white/20 backdrop-blur flex items-center justify-center'>
-                <MessageSquare size={20} className='text-white' />
-              </div>
-              <div>
-                <Typography.Title heading={5} className='!text-white mb-0'>
-                  {t('AI 对话')}
-                </Typography.Title>
-                <Typography.Text className='!text-white/80 text-sm hidden sm:inline'>
-                  {inputs.model || t('选择模型开始对话')}
-                </Typography.Text>
-              </div>
+            <div className='flex flex-col'>
+              <Typography.Title heading={5} className='!text-white mb-0'>
+                {t('AI 对话')}
+              </Typography.Title>
+              <Typography.Text className='!text-white/80 text-sm hidden sm:inline'>
+                {inputs.model || t('选择模型开始对话')}
+              </Typography.Text>
             </div>
             <div className='flex items-center gap-2'>
               <Button

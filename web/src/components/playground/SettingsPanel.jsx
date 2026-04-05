@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Card, Select, Typography, Button, Switch } from '@douyinfe/semi-ui';
-import { Sparkles, Users, ToggleLeft, X, Settings } from 'lucide-react';
+import React, { useState } from 'react';
+import { Card, Select, Typography, Button, Switch, Collapsible } from '@douyinfe/semi-ui';
+import { Sparkles, Users, ToggleLeft, X, Settings, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { renderGroupOption, selectFilter } from '../../helpers';
 import ParameterControl from './ParameterControl';
@@ -41,12 +41,14 @@ const SettingsPanel = ({
   onCloseSettings,
   onConfigImport,
   onConfigReset,
+  onNewChat,
   onCustomRequestModeChange,
   onCustomRequestBodyChange,
   previewPayload,
   messages,
 }) => {
   const { t } = useTranslation();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const currentConfig = {
     inputs,
@@ -97,6 +99,7 @@ const SettingsPanel = ({
             currentConfig={currentConfig}
             onConfigImport={onConfigImport}
             onConfigReset={onConfigReset}
+            onNewChat={onNewChat}
             styleState={{ ...styleState, isMobile: false }}
             messages={messages}
           />
@@ -189,40 +192,65 @@ const SettingsPanel = ({
           />
         </div>
 
-        {/* 参数控制组件 */}
-        <div className={customRequestMode ? 'opacity-50' : ''}>
-          <ParameterControl
-            inputs={inputs}
-            parameterEnabled={parameterEnabled}
-            onInputChange={onInputChange}
-            onParameterToggle={onParameterToggle}
-            disabled={customRequestMode}
-          />
-        </div>
-
-        {/* 流式输出开关 */}
-        <div className={customRequestMode ? 'opacity-50' : ''}>
-          <div className='flex items-center justify-between'>
-            <div className='flex items-center gap-2'>
-              <ToggleLeft size={16} className='text-gray-500' />
-              <Typography.Text strong className='text-sm'>
-                {t('流式输出')}
-              </Typography.Text>
-              {customRequestMode && (
-                <Typography.Text className='text-xs text-orange-600'>
-                  ({t('已在自定义模式中忽略')})
-                </Typography.Text>
-              )}
+        {/* 高级参数折叠面板 */}
+        <div>
+          <div
+            className='flex items-center gap-3 cursor-pointer group'
+            onClick={() => setAdvancedOpen(!advancedOpen)}
+          >
+            <div className='flex-1 h-px' style={{ backgroundColor: 'var(--semi-color-border)' }} />
+            <div className='flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs transition-colors duration-150' style={{ color: 'var(--semi-color-text-3)' }}>
+              <Settings size={12} />
+              <span>{t('高级参数')}</span>
+              <ChevronDown
+                size={12}
+                className='transition-transform duration-200'
+                style={{
+                  transform: advancedOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                }}
+              />
             </div>
-            <Switch
-              checked={inputs.stream}
-              onChange={(checked) => onInputChange('stream', checked)}
-              checkedText={t('开')}
-              uncheckedText={t('关')}
-              size='small'
-              disabled={customRequestMode}
-            />
+            <div className='flex-1 h-px' style={{ backgroundColor: 'var(--semi-color-border)' }} />
           </div>
+          <Collapsible isOpen={advancedOpen}>
+            <div className='space-y-6 pt-4'>
+              {/* 参数控制组件 */}
+              <div className={customRequestMode ? 'opacity-50' : ''}>
+                <ParameterControl
+                  inputs={inputs}
+                  parameterEnabled={parameterEnabled}
+                  onInputChange={onInputChange}
+                  onParameterToggle={onParameterToggle}
+                  disabled={customRequestMode}
+                />
+              </div>
+
+              {/* 流式输出开关 */}
+              <div className={customRequestMode ? 'opacity-50' : ''}>
+                <div className='flex items-center justify-between'>
+                  <div className='flex items-center gap-2'>
+                    <ToggleLeft size={16} className='text-gray-500' />
+                    <Typography.Text strong className='text-sm'>
+                      {t('流式输出')}
+                    </Typography.Text>
+                    {customRequestMode && (
+                      <Typography.Text className='text-xs text-orange-600'>
+                        ({t('已在自定义模式中忽略')})
+                      </Typography.Text>
+                    )}
+                  </div>
+                  <Switch
+                    checked={inputs.stream}
+                    onChange={(checked) => onInputChange('stream', checked)}
+                    checkedText={t('开')}
+                    uncheckedText={t('关')}
+                    size='small'
+                    disabled={customRequestMode}
+                  />
+                </div>
+              </div>
+            </div>
+          </Collapsible>
         </div>
       </div>
 
@@ -233,6 +261,7 @@ const SettingsPanel = ({
             currentConfig={currentConfig}
             onConfigImport={onConfigImport}
             onConfigReset={onConfigReset}
+            onNewChat={onNewChat}
             styleState={styleState}
             messages={messages}
           />

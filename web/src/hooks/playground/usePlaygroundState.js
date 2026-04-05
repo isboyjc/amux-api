@@ -208,6 +208,10 @@ export const usePlaygroundState = () => {
     }
   }, []);
 
+  const handleNewChat = useCallback(() => {
+    setMessage(getDefaultMessages(t));
+  }, [t]);
+
   // 清理定时器
   useEffect(() => {
     return () => {
@@ -302,5 +306,6 @@ export const usePlaygroundState = () => {
     saveMessagesImmediately,
     handleConfigImport,
     handleConfigReset,
+    handleNewChat,
   };
 };

@@ -118,6 +118,7 @@ const Playground = () => {
     saveMessagesImmediately,
     handleConfigImport,
     handleConfigReset,
+    handleNewChat,
     setShowSettings,
     setModels,
     setGroups,
@@ -499,6 +500,7 @@ const Playground = () => {
                 onCloseSettings={() => setShowSettings(false)}
                 onConfigImport={handleConfigImport}
                 onConfigReset={handleConfigReset}
+                onNewChat={handleNewChat}
                 onCustomRequestModeChange={setCustomRequestMode}
                 onCustomRequestBodyChange={setCustomRequestBody}
                 previewPayload={previewPayload}

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useRef, useEffect, useCallback } from 'react';
 import { Toast } from '@douyinfe/semi-ui';
+import { ArrowUp, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { usePlayground } from '../../contexts/PlaygroundContext';
 
@@ -105,7 +106,7 @@ const CustomInputRender = (props) => {
   // 清空按钮
   const styledClearNode = clearContextNode
     ? React.cloneElement(clearContextNode, {
-        className: `!rounded-full !bg-gray-100 hover:!bg-red-500 hover:!text-white flex-shrink-0 transition-all ${clearContextNode.props.className || ''}`,
+        className: `!rounded-lg !bg-gray-100 hover:!bg-red-500 hover:!text-white flex-shrink-0 transition-all ${clearContextNode.props.className || ''}`,
         style: {
           ...clearContextNode.props.style,
           width: '32px',
@@ -116,12 +117,14 @@ const CustomInputRender = (props) => {
           alignItems: 'center',
           justifyContent: 'center',
         },
+        icon: <Trash2 size={16} />,
+        children: null,
       })
     : null;
 
   // 发送按钮
   const styledSendNode = React.cloneElement(sendNode, {
-    className: `!rounded-full !bg-purple-500 hover:!bg-purple-600 flex-shrink-0 transition-all ${sendNode.props.className || ''}`,
+    className: `!rounded-lg !bg-purple-500 hover:!bg-purple-600 flex-shrink-0 transition-all ${sendNode.props.className || ''}`,
     style: {
       ...sendNode.props.style,
       width: '32px',
@@ -132,6 +135,8 @@ const CustomInputRender = (props) => {
       alignItems: 'center',
       justifyContent: 'center',
     },
+    icon: <ArrowUp size={18} strokeWidth={2.5} />,
+    children: null,
   });
 
   return (
