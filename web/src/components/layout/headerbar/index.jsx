@@ -26,6 +26,7 @@ import MobileMenuButton from './MobileMenuButton';
 import HeaderLogo from './HeaderLogo';
 import Navigation from './Navigation';
 import ActionButtons from './ActionButtons';
+import { PanelLeft } from 'lucide-react';
 
 const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
   const {
@@ -46,6 +47,7 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     theme,
     headerNavModules,
     pricingRequireAuth,
+    toggleCollapsed,
     logout,
     handleLanguageChange,
     handleThemeToggle,
@@ -74,7 +76,7 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
         unreadKeys={getUnreadKeys()}
       />
 
-      <div className='w-full px-4 md:px-6'>
+      <div className='w-full px-4 md:px-4'>
         <div className='flex items-center justify-between h-16'>
           <div className='flex items-center'>
             <MobileMenuButton
@@ -97,6 +99,26 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
               isDemoSiteMode={isDemoSiteMode}
               t={t}
             />
+
+            {isConsoleRoute && !isMobile && (
+              <button
+                onClick={toggleCollapsed}
+                className='ml-3 p-1.5 rounded-lg transition-colors duration-150'
+                style={{
+                  backgroundColor: 'var(--semi-color-fill-0)',
+                  color: 'var(--semi-color-text-2)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--semi-color-fill-1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--semi-color-fill-0)';
+                }}
+                title={collapsed ? t('展开侧边栏') : t('收起侧边栏')}
+              >
+                <PanelLeft size={15} />
+              </button>
+            )}
           </div>
 
           <div className='flex items-center'>

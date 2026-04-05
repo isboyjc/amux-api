@@ -21,14 +21,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { getLucideIcon } from '../../helpers/render';
-import { ChevronLeft } from 'lucide-react';
+
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
 import { isAdmin, isRoot, showError } from '../../helpers';
 import SkeletonWrapper from './components/SkeletonWrapper';
 
-import { Nav, Divider, Button } from '@douyinfe/semi-ui';
+import { Nav, Divider } from '@douyinfe/semi-ui';
 
 const routerMap = {
   home: '/',
@@ -490,40 +490,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         </Nav>
       </SkeletonWrapper>
 
-      {/* 底部折叠按钮 */}
-      <div className='sidebar-collapse-button'>
-        <SkeletonWrapper
-          loading={showSkeleton}
-          type='button'
-          width={collapsed ? 36 : 156}
-          height={24}
-          className='w-full'
-        >
-          <Button
-            theme='outline'
-            type='tertiary'
-            icon={
-              <ChevronLeft
-                size={16}
-                strokeWidth={2.5}
-                color='var(--semi-color-text-2)'
-                style={{
-                  transform: collapsed ? 'rotate(180deg)' : 'rotate(0deg)',
-                }}
-              />
-            }
-            onClick={toggleCollapsed}
-            icononly={collapsed}
-            style={
-              collapsed
-                ? { width: 44, height: 40, padding: 0 }
-                : { padding: '8px 12px', width: '100%', height: 40 }
-            }
-          >
-            {!collapsed ? t('收起侧边栏') : null}
-          </Button>
-        </SkeletonWrapper>
-      </div>
     </div>
   );
 };

@@ -240,6 +240,7 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     pricingRequireAuth,
 
     // Actions
+    toggleCollapsed,
     logout,
     handleLanguageChange,
     handleThemeToggle,

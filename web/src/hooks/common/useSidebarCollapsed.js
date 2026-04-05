@@ -17,27 +17,40 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 const KEY = 'default_collapse_sidebar';
+const EVENT_NAME = 'sidebar-collapsed-change';
 
 export const useSidebarCollapsed = () => {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem(KEY) === 'true',
   );
 
+  // 监听其他实例的变更事件
+  useEffect(() => {
+    const handler = (e) => setCollapsed(e.detail);
+    window.addEventListener(EVENT_NAME, handler);
+    return () => window.removeEventListener(EVENT_NAME, handler);
+  }, []);
+
+  const notify = useCallback((value) => {
+    localStorage.setItem(KEY, value.toString());
+    window.dispatchEvent(new CustomEvent(EVENT_NAME, { detail: value }));
+  }, []);
+
   const toggle = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem(KEY, next.toString());
+      notify(next);
       return next;
     });
-  }, []);
+  }, [notify]);
 
   const set = useCallback((value) => {
     setCollapsed(value);
-    localStorage.setItem(KEY, value.toString());
-  }, []);
+    notify(value);
+  }, [notify]);
 
   return [collapsed, toggle, set];
 };
