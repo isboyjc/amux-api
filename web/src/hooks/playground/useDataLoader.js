@@ -70,7 +70,8 @@ export const useDataLoader = (
           (option) => option.value === inputs.group,
         );
         if (!hasCurrentGroup) {
-          handleInputChange('group', groupOptions[0]?.value || '');
+          const autoGroup = groupOptions.find((option) => option.value === 'auto');
+          handleInputChange('group', autoGroup ? 'auto' : groupOptions[0]?.value || '');
         }
       } else {
         showError(t(message));
