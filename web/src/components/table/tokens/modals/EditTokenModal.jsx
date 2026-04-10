@@ -101,8 +101,9 @@ const EditTokenModal = (props) => {
     }
   };
 
-  const loadModels = async () => {
-    let res = await API.get(`/api/user/models`);
+  const loadModels = async (group) => {
+    const params = group && group !== 'auto' ? `?group=${encodeURIComponent(group)}` : '';
+    let res = await API.get(`/api/user/models${params}`);
     const { success, message, data } = res.data;
     if (success) {
       const categories = getModelCategories(t);
@@ -125,6 +126,16 @@ const EditTokenModal = (props) => {
         };
       });
       setModels(localModelOptions);
+
+      // 清理已选模型中不在新列表里的项
+      if (formApiRef.current) {
+        const currentLimits = formApiRef.current.getValue('model_limits') || [];
+        const validModels = new Set(data);
+        const filtered = currentLimits.filter((m) => validModels.has(m));
+        if (filtered.length !== currentLimits.length) {
+          formApiRef.current.setValue('model_limits', filtered);
+        }
+      }
     } else {
       showError(t(message));
     }
@@ -175,6 +186,10 @@ const EditTokenModal = (props) => {
       }
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
+      }
+      // 根据令牌已有的分组加载对应模型
+      if (data.group) {
+        loadModels(data.group);
       }
     } else {
       showError(message);
@@ -379,6 +394,7 @@ const EditTokenModal = (props) => {
                         renderOptionItem={renderGroupOption}
                         onChange={(val) => {
                           formApiRef.current?.setValue('cross_group_retry', val === 'auto');
+                          loadModels(val);
                         }}
                         showClear
                         style={{ width: '100%' }}

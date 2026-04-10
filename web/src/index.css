@@ -674,23 +674,26 @@ html.dark .sbg-variant-green {
   /* Chrome, Safari, Opera */
 }
 
-/* 表格背景透明 */
+/* 表格背景跟随主题 */
 .semi-table-thead > .semi-table-row > .semi-table-row-head,
 .semi-table-thead > .semi-table-row > .semi-table-row-head.semi-table-cell-fixed-left,
 .semi-table-thead > .semi-table-row > .semi-table-row-head.semi-table-cell-fixed-right,
 .semi-table-thead > .semi-table-row > .semi-table-row-head.semi-table-cell-fixed-left::before,
 .semi-table-thead > .semi-table-row > .semi-table-row-head.semi-table-cell-fixed-right::before,
 .semi-table-header-sticky .semi-table-thead > .semi-table-row > .semi-table-row-head {
-  background-color: transparent !important;
+  background-color: var(--semi-color-bg-0) !important;
 }
 
 .semi-table-tbody > .semi-table-row {
-  background-color: transparent !important;
+  background-color: var(--semi-color-bg-0) !important;
 }
 
+.semi-table-tbody > .semi-table-row > .semi-table-row-cell.semi-table-cell-fixed-left,
+.semi-table-tbody > .semi-table-row > .semi-table-row-cell.semi-table-cell-fixed-right,
 .semi-table-tbody > .semi-table-row > .semi-table-cell-fixed-left,
 .semi-table-tbody > .semi-table-row > .semi-table-cell-fixed-right {
-  background-color: transparent !important;
+  background-color: var(--semi-color-bg-0) !important;
+  background-image: none !important;
 }
 
 .semi-table-tbody > .semi-table-row:hover > .semi-table-row-cell {
@@ -700,7 +703,7 @@ html.dark .sbg-variant-green {
 
 .semi-table-tbody > .semi-table-row:hover > .semi-table-row-cell.semi-table-cell-fixed-left,
 .semi-table-tbody > .semi-table-row:hover > .semi-table-row-cell.semi-table-cell-fixed-right {
-  background-color: var(--semi-color-fill-0) !important;
+  background-color: var(--semi-color-bg-1) !important;
   background-image: none !important;
 }
 
@@ -1193,13 +1196,31 @@ html.dark .with-pastel-balls::before {
   border-radius: 12px !important;
 }
 
-/* --- M: 中型容器 ~12px（文本域、下拉菜单、气泡卡片） --- */
+/* --- M: 中型容器 ~12px（文本域、气泡卡片） --- */
 .semi-input-textarea-wrapper,
-.semi-dropdown-menu,
 .semi-popover-wrapper-content,
 .semi-tooltip-wrapper-content,
 .semi-datepicker-panel-container {
   border-radius: 12px !important;
+}
+
+.semi-dropdown-menu,
+.semi-dropdown-wrapper {
+  border-radius: 14px !important;
+}
+
+/* --- Apple-style dropdown --- */
+.semi-dropdown-menu {
+  padding: 6px !important;
+}
+
+.semi-dropdown-item {
+  border-radius: 10px !important;
+}
+
+html.dark .semi-dropdown-wrapper {
+  background: #1c1c1e !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
 }
 
 /* --- L: 大型容器 ~16px（卡片、对话框、抽屉、通知） --- */

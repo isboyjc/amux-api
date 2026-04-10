@@ -20,12 +20,8 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Avatar, Button, Dropdown, Typography } from '@douyinfe/semi-ui';
-import {
-  IconExit,
-  IconUserSetting,
-  IconCreditCard,
-  IconKey,
-} from '@douyinfe/semi-icons';
+import { IconExit } from '@douyinfe/semi-icons';
+import { UserCog, KeyRound, Wallet } from 'lucide-react';
 import SkeletonWrapper from '../components/SkeletonWrapper';
 
 const UserArea = ({
@@ -64,8 +60,8 @@ const UserArea = ({
                 className='!px-3 !py-1.5 !text-sm !text-semi-color-text-0 hover:!bg-semi-color-fill-1 dark:!text-zinc-200 dark:hover:!bg-zinc-700 dark:hover:!text-white'
               >
                 <div className='flex items-center gap-2'>
-                  <IconUserSetting
-                    size='small'
+                  <UserCog
+                    size={14}
                     className='text-zinc-500 dark:text-zinc-400'
                   />
                   <span>{t('个人设置')}</span>
@@ -78,8 +74,8 @@ const UserArea = ({
                 className='!px-3 !py-1.5 !text-sm !text-semi-color-text-0 hover:!bg-semi-color-fill-1 dark:!text-zinc-200 dark:hover:!bg-zinc-700 dark:hover:!text-white'
               >
                 <div className='flex items-center gap-2'>
-                  <IconKey
-                    size='small'
+                  <KeyRound
+                    size={14}
                     className='text-zinc-500 dark:text-zinc-400'
                   />
                   <span>{t('令牌管理')}</span>
@@ -92,8 +88,8 @@ const UserArea = ({
                 className='!px-3 !py-1.5 !text-sm !text-semi-color-text-0 hover:!bg-semi-color-fill-1 dark:!text-zinc-200 dark:hover:!bg-zinc-700 dark:hover:!text-white'
               >
                 <div className='flex items-center gap-2'>
-                  <IconCreditCard
-                    size='small'
+                  <Wallet
+                    size={14}
                     className='text-zinc-500 dark:text-zinc-400'
                   />
                   <span>{t('钱包管理')}</span>

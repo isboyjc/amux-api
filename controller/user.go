@@ -519,12 +519,22 @@ func GetUserModels(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	groups := service.GetUserUsableGroups(user.Group)
+	usableGroups := service.GetUserUsableGroups(user.Group)
+	queryGroup := c.Query("group")
+
 	var models []string
-	for group := range groups {
-		for _, g := range model.GetGroupEnabledModels(group) {
-			if !common.StringsContains(models, g) {
-				models = append(models, g)
+	if queryGroup != "" && queryGroup != "auto" {
+		// Filter by specific group, but only if the user has access to it
+		if _, ok := usableGroups[queryGroup]; ok {
+			models = model.GetGroupEnabledModels(queryGroup)
+		}
+	} else {
+		// Return all models across all usable groups
+		for group := range usableGroups {
+			for _, g := range model.GetGroupEnabledModels(group) {
+				if !common.StringsContains(models, g) {
+					models = append(models, g)
+				}
 			}
 		}
 	}

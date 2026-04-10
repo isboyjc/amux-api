@@ -28,3 +28,4 @@ data/
 .gomodcache/
 .gocache-temp
 .gopath
+tmp/

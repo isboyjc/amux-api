@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API, processModelsData, processGroupsData } from '../../helpers';
 import { API_ENDPOINTS } from '../../constants/playground.constants';
@@ -30,10 +30,12 @@ export const useDataLoader = (
   setGroups,
 ) => {
   const { t } = useTranslation();
+  const prevGroupRef = useRef(inputs.group);
 
-  const loadModels = useCallback(async () => {
+  const loadModels = useCallback(async (group) => {
     try {
-      const res = await API.get(API_ENDPOINTS.USER_MODELS);
+      const params = group && group !== 'auto' ? `?group=${encodeURIComponent(group)}` : '';
+      const res = await API.get(`${API_ENDPOINTS.USER_MODELS}${params}`);
       const { success, message, data } = res.data;
 
       if (success) {
@@ -81,13 +83,21 @@ export const useDataLoader = (
     }
   }, [userState, inputs.group, handleInputChange, setGroups, t]);
 
-  // 自动加载数据
+  // 初始加载
   useEffect(() => {
     if (userState?.user) {
-      loadModels();
+      loadModels(inputs.group);
       loadGroups();
     }
-  }, [userState?.user, loadModels, loadGroups]);
+  }, [userState?.user]);
+
+  // 分组变化时重新加载模型
+  useEffect(() => {
+    if (userState?.user && prevGroupRef.current !== inputs.group) {
+      prevGroupRef.current = inputs.group;
+      loadModels(inputs.group);
+    }
+  }, [inputs.group, userState?.user, loadModels]);
 
   return {
     loadModels,
