@@ -159,6 +159,7 @@ function renderIsStream(bool, t) {
 
 function renderUseTime(type, t) {
   const time = parseInt(type);
+  if (isNaN(time)) return null;
   if (time < 101) {
     return (
       <Tag color='green' shape='circle'>
@@ -184,7 +185,9 @@ function renderUseTime(type, t) {
 }
 
 function renderFirstUseTime(type, t) {
+  if (type == null || type === '') return null;
   let time = parseFloat(type) / 1000.0;
+  if (isNaN(time)) return null;
   time = time.toFixed(1);
   if (time < 3) {
     return (
@@ -386,7 +389,7 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     };
   }
 
-  if (other == null || record.type !== 2) {
+  if (other == null || record.type !== 2 || other.model_ratio == null) {
     return null;
   }
 
