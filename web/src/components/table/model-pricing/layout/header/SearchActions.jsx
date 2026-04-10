@@ -18,40 +18,32 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { memo, useCallback } from 'react';
-import { Input, Button, Switch, Select, Divider } from '@douyinfe/semi-ui';
-import { IconSearch, IconCopy, IconFilter } from '@douyinfe/semi-icons';
+import { Input, Button, Switch, Divider, Pagination, Dropdown } from '@douyinfe/semi-ui';
+import { IconSearch, IconFilter } from '@douyinfe/semi-icons';
 
 const SearchActions = memo(
   ({
-    selectedRowKeys = [],
-    copyText,
     handleChange,
     handleCompositionStart,
     handleCompositionEnd,
     isMobile = false,
     searchValue = '',
     setShowFilterModal,
-    showWithRecharge,
-    setShowWithRecharge,
-    currency,
-    setCurrency,
-    siteDisplayType,
     showRatio,
     setShowRatio,
     viewMode,
     setViewMode,
     tokenUnit,
     setTokenUnit,
+    timeRange,
+    setTimeRange,
+    total = 0,
+    currentPage = 1,
+    setCurrentPage,
+    pageSize = 20,
+    setPageSize,
     t,
   }) => {
-    const supportsCurrencyDisplay = siteDisplayType !== 'TOKENS';
-
-    const handleCopyClick = useCallback(() => {
-      if (copyText && selectedRowKeys.length > 0) {
-        copyText(selectedRowKeys);
-      }
-    }, [copyText, selectedRowKeys]);
-
     const handleFilterClick = useCallback(() => {
       setShowFilterModal?.(true);
     }, [setShowFilterModal]);
@@ -64,9 +56,14 @@ const SearchActions = memo(
       setTokenUnit?.(tokenUnit === 'K' ? 'M' : 'K');
     }, [tokenUnit, setTokenUnit]);
 
+    const handleTimeRangeToggle = useCallback(() => {
+      setTimeRange?.(timeRange === '24h' ? '7d' : '24h');
+    }, [timeRange, setTimeRange]);
+
     return (
       <div className='flex items-center gap-2 w-full'>
-        <div className='flex-1'>
+        {/* 左侧：搜索框 + 设置项 */}
+        <div className='w-52 flex-shrink-0'>
           <Input
             prefix={<IconSearch />}
             placeholder={t('模糊搜索模型名称')}
@@ -78,44 +75,107 @@ const SearchActions = memo(
           />
         </div>
 
-        <Button
-          theme='outline'
-          type='primary'
-          icon={<IconCopy />}
-          onClick={handleCopyClick}
-          disabled={selectedRowKeys.length === 0}
-          className='!bg-blue-500 hover:!bg-blue-600 !text-white disabled:!bg-gray-300 disabled:!text-gray-500'
-        >
-          {t('复制')}
-        </Button>
-
         {!isMobile && (
           <>
-            <Divider layout='vertical' margin='8px' />
+            <Divider layout='vertical' margin='4px' />
 
-            {/* 显示倍率开关 */}
-            <div className='flex items-center gap-2'>
-              <span className='text-sm text-gray-600'>{t('倍率')}</span>
-              <Switch checked={showRatio} onChange={setShowRatio} />
+            <div
+              className='flex items-center gap-1 px-2 py-1 rounded-xl flex-shrink-0'
+              style={{ background: 'var(--semi-color-fill-0)' }}
+            >
+              {/* 显示倍率开关 */}
+              <div className='flex items-center gap-1.5 px-1'>
+                <span
+                  className='text-xs font-medium'
+                  style={{ color: 'var(--semi-color-text-2)' }}
+                >
+                  {t('倍率')}
+                </span>
+                <Switch size='small' checked={showRatio} onChange={setShowRatio} />
+              </div>
+
+              <div
+                className='self-stretch w-px mx-1'
+                style={{ background: 'var(--semi-color-border)' }}
+              />
+
+              {/* 视图模式切换按钮 */}
+              <Button
+                theme={viewMode === 'table' ? 'solid' : 'borderless'}
+                type={viewMode === 'table' ? 'primary' : 'tertiary'}
+                size='small'
+                onClick={handleViewModeToggle}
+              >
+                {t('表格视图')}
+              </Button>
+
+              <div
+                className='self-stretch w-px mx-1'
+                style={{ background: 'var(--semi-color-border)' }}
+              />
+
+              {/* Token单位切换按钮 */}
+              <Button
+                theme={tokenUnit === 'K' ? 'solid' : 'borderless'}
+                type={tokenUnit === 'K' ? 'primary' : 'tertiary'}
+                size='small'
+                onClick={handleTokenUnitToggle}
+              >
+                {tokenUnit}
+              </Button>
+
+              <div
+                className='self-stretch w-px mx-1'
+                style={{ background: 'var(--semi-color-border)' }}
+              />
+
+              {/* 健康状态时间范围切换 */}
+              <Button
+                theme='borderless'
+                type='tertiary'
+                size='small'
+                onClick={handleTimeRangeToggle}
+                style={{ minWidth: 40 }}
+              >
+                {timeRange === '24h' ? t('最近24小时') : t('最近7天')}
+              </Button>
             </div>
 
-            {/* 视图模式切换按钮 */}
-            <Button
-              theme={viewMode === 'table' ? 'solid' : 'outline'}
-              type={viewMode === 'table' ? 'primary' : 'tertiary'}
-              onClick={handleViewModeToggle}
-            >
-              {t('表格视图')}
-            </Button>
-
-            {/* Token单位切换按钮 */}
-            <Button
-              theme={tokenUnit === 'K' ? 'solid' : 'outline'}
-              type={tokenUnit === 'K' ? 'primary' : 'tertiary'}
-              onClick={handleTokenUnitToggle}
-            >
-              {tokenUnit}
-            </Button>
+            {/* 右侧：页大小 + 分页（推到最右） */}
+            {total > 0 && setCurrentPage && (
+              <div className='ml-auto flex-shrink-0 flex items-center gap-2'>
+                <Dropdown
+                  position='bottomLeft'
+                  render={
+                    <Dropdown.Menu>
+                      {[10, 20, 50, 100].map((s) => (
+                        <Dropdown.Item
+                          key={s}
+                          active={pageSize === s}
+                          onClick={() => {
+                            setPageSize(s);
+                            setCurrentPage(1);
+                          }}
+                        >
+                          {s} {t('条/页')}
+                        </Dropdown.Item>
+                      ))}
+                    </Dropdown.Menu>
+                  }
+                >
+                  <Button theme='outline' type='tertiary'>
+                    {pageSize} {t('条/页')}
+                  </Button>
+                </Dropdown>
+                <Pagination
+                  currentPage={currentPage}
+                  pageSize={pageSize}
+                  total={total}
+                  showSizeChanger={false}
+                  onPageChange={setCurrentPage}
+                />
+              </div>
+            )}
           </>
         )}
 

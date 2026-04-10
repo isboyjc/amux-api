@@ -92,7 +92,7 @@ const PricingGroups = ({
       activeValue={filterGroup}
       onChange={setFilterGroup}
       loading={loading}
-      variant='teal'
+      
       t={t}
     />
   );

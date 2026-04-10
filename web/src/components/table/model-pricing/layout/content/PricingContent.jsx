@@ -42,6 +42,8 @@ const PricingContent = ({ isMobile, sidebarProps, ...props }) => {
           setViewMode={sidebarProps.setViewMode}
           tokenUnit={sidebarProps.tokenUnit}
           setTokenUnit={sidebarProps.setTokenUnit}
+          timeRange={sidebarProps.timeRange}
+          setTimeRange={sidebarProps.setTimeRange}
         />
       </div>
 

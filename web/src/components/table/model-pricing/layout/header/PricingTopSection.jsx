@@ -24,8 +24,6 @@ import SearchActions from './SearchActions';
 
 const PricingTopSection = memo(
   ({
-    selectedRowKeys,
-    copyText,
     handleChange,
     handleCompositionStart,
     handleCompositionEnd,
@@ -36,17 +34,18 @@ const PricingTopSection = memo(
     filteredModels,
     loading,
     searchValue,
-    showWithRecharge,
-    setShowWithRecharge,
-    currency,
-    setCurrency,
-    siteDisplayType,
     showRatio,
     setShowRatio,
     viewMode,
     setViewMode,
     tokenUnit,
     setTokenUnit,
+    timeRange,
+    setTimeRange,
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
     t,
   }) => {
     const [showFilterModal, setShowFilterModal] = useState(false);
@@ -57,25 +56,20 @@ const PricingTopSection = memo(
           <>
             <div className='w-full'>
               <SearchActions
-                selectedRowKeys={selectedRowKeys}
-                copyText={copyText}
                 handleChange={handleChange}
                 handleCompositionStart={handleCompositionStart}
                 handleCompositionEnd={handleCompositionEnd}
                 isMobile={isMobile}
                 searchValue={searchValue}
                 setShowFilterModal={setShowFilterModal}
-                showWithRecharge={showWithRecharge}
-                setShowWithRecharge={setShowWithRecharge}
-                currency={currency}
-                setCurrency={setCurrency}
-                siteDisplayType={siteDisplayType}
                 showRatio={showRatio}
                 setShowRatio={setShowRatio}
                 viewMode={viewMode}
                 setViewMode={setViewMode}
                 tokenUnit={tokenUnit}
                 setTokenUnit={setTokenUnit}
+                timeRange={timeRange}
+                setTimeRange={setTimeRange}
                 t={t}
               />
             </div>
@@ -93,25 +87,24 @@ const PricingTopSection = memo(
             models={filteredModels}
             allModels={models}
             t={t}
-            selectedRowKeys={selectedRowKeys}
-            copyText={copyText}
             handleChange={handleChange}
             handleCompositionStart={handleCompositionStart}
             handleCompositionEnd={handleCompositionEnd}
             isMobile={isMobile}
             searchValue={searchValue}
             setShowFilterModal={setShowFilterModal}
-            showWithRecharge={showWithRecharge}
-            setShowWithRecharge={setShowWithRecharge}
-            currency={currency}
-            setCurrency={setCurrency}
-            siteDisplayType={siteDisplayType}
             showRatio={showRatio}
             setShowRatio={setShowRatio}
             viewMode={viewMode}
             setViewMode={setViewMode}
             tokenUnit={tokenUnit}
             setTokenUnit={setTokenUnit}
+            timeRange={timeRange}
+            setTimeRange={setTimeRange}
+            currentPage={currentPage}
+            setCurrentPage={setCurrentPage}
+            pageSize={pageSize}
+            setPageSize={setPageSize}
           />
         )}
       </>

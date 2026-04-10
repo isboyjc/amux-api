@@ -3491,6 +3491,18 @@
     "系统访问令牌具有较高权限，请勿泄露给他人。如需撤销授权，可在个人设置中重新生成令牌以覆盖当前令牌。": "The system access token has elevated privileges — do not share it with others. To revoke access, regenerate the token in your personal settings to override the current one.",
     "拒绝": "Reject",
     "确认授权": "Authorize",
-    "操作失败": "Operation failed"
+    "操作失败": "Operation failed",
+    "模型健康状态": "Model Health Status",
+    "各分组健康状态": "Health status by group",
+    "成功率": "Success Rate",
+    "无调用数据": "No Data",
+    "运行正常": "Healthy",
+    "轻微异常": "Minor Issues",
+    "服务降级": "Degraded",
+    "严重降级": "Severely Degraded",
+    "服务不可用": "Unavailable",
+    "最近24小时": "Last 24h",
+    "最近7天": "Last 7d",
+    "条/页": "/ page"
   }
 }

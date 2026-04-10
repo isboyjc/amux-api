@@ -23,16 +23,23 @@ import PricingSidebar from './PricingSidebar';
 import PricingContent from './content/PricingContent';
 import ModelDetailSideSheet from '../modal/ModelDetailSideSheet';
 import { useModelPricingData } from '../../../../hooks/model-pricing/useModelPricingData';
+import { useModelHealthData } from '../../../../hooks/model-pricing/useModelHealthData';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const PricingPage = () => {
   const pricingData = useModelPricingData();
+  const { healthData, healthLoading, timeRange, setTimeRange } =
+    useModelHealthData();
   const { Sider, Content } = Layout;
   const isMobile = useIsMobile();
   const [showRatio, setShowRatio] = React.useState(false);
   const [viewMode, setViewMode] = React.useState('card');
   const allProps = {
     ...pricingData,
+    healthData,
+    healthLoading,
+    timeRange,
+    setTimeRange,
     showRatio,
     setShowRatio,
     viewMode,
@@ -77,6 +84,9 @@ const PricingPage = () => {
         vendorsMap={pricingData.vendorsMap}
         endpointMap={pricingData.endpointMap}
         autoGroups={pricingData.autoGroups}
+        healthData={healthData}
+        timeRange={timeRange}
+        onTimeRangeChange={setTimeRange}
         t={pricingData.t}
       />
     </div>

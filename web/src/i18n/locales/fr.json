@@ -3452,6 +3452,18 @@
     "系统访问令牌具有较高权限，请勿泄露给他人。如需撤销授权，可在个人设置中重新生成令牌以覆盖当前令牌。": "Le jeton d'accès système dispose de privilèges élevés — ne le partagez pas. Pour révoquer l'accès, régénérez le jeton dans vos paramètres personnels.",
     "拒绝": "Refuser",
     "确认授权": "Autoriser",
-    "操作失败": "Échec de l'opération"
+    "操作失败": "Échec de l'opération",
+    "模型健康状态": "État de santé du modèle",
+    "各分组健康状态": "État de santé par groupe",
+    "成功率": "Taux de réussite",
+    "无调用数据": "Aucune donnée",
+    "运行正常": "Normal",
+    "轻微异常": "Anomalies mineures",
+    "服务降级": "Dégradé",
+    "严重降级": "Fortement dégradé",
+    "服务不可用": "Indisponible",
+    "最近24小时": "Dernières 24h",
+    "最近7天": "7 derniers jours",
+    "条/页": "/ page"
   }
 }

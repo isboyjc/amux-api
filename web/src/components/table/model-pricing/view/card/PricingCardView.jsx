@@ -22,9 +22,7 @@ import {
   Card,
   Tag,
   Tooltip,
-  Checkbox,
   Empty,
-  Pagination,
   Button,
   Avatar,
 } from '@douyinfe/semi-ui';
@@ -42,16 +40,44 @@ import {
   getModelPriceItems,
 } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
+import ModelHealthTimeline from '../common/ModelHealthTimeline';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 import { renderLimitedItems } from '../../../../common/ui/RenderUtils';
 import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
 const CARD_STYLES = {
   container:
-    'w-12 h-12 rounded-2xl flex items-center justify-center relative shadow-md',
+    'w-12 h-12 rounded-xl flex items-center justify-center relative',
+  containerStyle: {
+    backgroundColor: 'var(--semi-color-fill-0)',
+    border: '1px solid var(--semi-color-border)',
+  },
   icon: 'w-8 h-8 flex items-center justify-center',
-  selected: 'border-blue-500 bg-blue-50',
-  default: 'border-gray-200 hover:border-gray-300',
+  default: '',
+};
+
+const isDark = () =>
+  document.body.getAttribute('theme-mode') === 'dark';
+
+const getCardShadow = (type) => {
+  if (isDark()) {
+    switch (type) {
+      case 'hover':
+        return '0 8px 25px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.1)';
+      case 'selected':
+        return '0 1px 4px rgba(0,0,0,0.2), 0 0 0 2px rgba(59,130,246,0.45)';
+      default:
+        return '0 1px 4px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.06)';
+    }
+  }
+  switch (type) {
+    case 'hover':
+      return '0 8px 25px rgba(0,0,0,0.1), 0 4px 10px rgba(0,0,0,0.05)';
+    case 'selected':
+      return '0 1px 4px rgba(0,0,0,0.08), 0 0 0 2px rgba(59,130,246,0.35)';
+    default:
+      return '0 1px 4px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)';
+  }
 };
 
 const PricingCardView = ({
@@ -79,6 +105,8 @@ const PricingCardView = ({
   selectedRowKeys = [],
   setSelectedRowKeys,
   openModelDetail,
+  healthData,
+  usableGroup = {},
 }) => {
   const showSkeleton = useMinimumLoadingTime(loading);
   const startIndex = (currentPage - 1) * pageSize;
@@ -103,7 +131,7 @@ const PricingCardView = ({
   const getModelIcon = (model) => {
     if (!model || !model.model_name) {
       return (
-        <div className={CARD_STYLES.container}>
+        <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
           <Avatar size='large'>?</Avatar>
         </div>
       );
@@ -111,7 +139,7 @@ const PricingCardView = ({
     // 1) 优先使用模型自定义图标
     if (model.icon) {
       return (
-        <div className={CARD_STYLES.container}>
+        <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
           <div className={CARD_STYLES.icon}>
             {getLobeHubIcon(model.icon, 32)}
           </div>
@@ -121,7 +149,7 @@ const PricingCardView = ({
     // 2) 退化为供应商图标
     if (model.vendor_icon) {
       return (
-        <div className={CARD_STYLES.container}>
+        <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
           <div className={CARD_STYLES.icon}>
             {getLobeHubIcon(model.vendor_icon, 32)}
           </div>
@@ -239,7 +267,7 @@ const PricingCardView = ({
 
   return (
     <div className='px-2 pt-2'>
-      <div className='grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-4'>
+      <div className='grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3'>
         {paginatedModels.map((model, index) => {
           const modelKey = getModelKey(model);
           const isSelected = selectedRowKeys.includes(modelKey);
@@ -332,17 +360,32 @@ const PricingCardView = ({
           return (
             <Card
               key={modelKey || index}
-              className={`!rounded-2xl transition-all duration-200 hover:shadow-lg border cursor-pointer ${isSelected ? CARD_STYLES.selected : CARD_STYLES.default}`}
-              bodyStyle={{ height: '100%' }}
+              className={`!rounded-2xl !border-0 cursor-pointer ${CARD_STYLES.default}`}
+              style={{
+                boxShadow: getCardShadow('base'),
+                transition: 'box-shadow 0.3s ease, transform 0.3s ease',
+              }}
+              bodyStyle={{ height: '100%', padding: '14px 16px' }}
               onClick={() => openModelDetail && openModelDetail(model)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.boxShadow = getCardShadow('hover');
+                e.currentTarget.style.transform = 'translateY(-2px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = getCardShadow('base');
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
             >
               <div className='flex flex-col h-full'>
                 {/* 头部：图标 + 模型名称 + 操作按钮 */}
-                <div className='flex items-start justify-between mb-3'>
+                <div className='flex items-start justify-between mb-2'>
                   <div className='flex items-start space-x-3 flex-1 min-w-0'>
                     {getModelIcon(model)}
                     <div className='flex-1 min-w-0'>
-                      <h3 className='text-lg font-bold text-gray-900 truncate'>
+                      <h3
+                        className='text-sm font-semibold truncate'
+                        style={{ color: 'var(--semi-color-text-0)' }}
+                      >
                         {model.model_name}
                       </h3>
                       <div className='flex flex-col gap-1 text-xs mt-1'>
@@ -436,41 +479,59 @@ const PricingCardView = ({
                     </div>
                   </div>
 
-                  <div className='flex items-center space-x-2 ml-3'>
-                    {/* 复制按钮 */}
-                    <Button
-                      size='small'
-                      theme='outline'
-                      type='tertiary'
-                      icon={<Copy size={12} />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        copyText(model.model_name);
-                      }}
-                    />
-
-                    {/* 选择框 */}
-                    {rowSelection && (
-                      <Checkbox
-                        checked={isSelected}
-                        onChange={(e) => {
+                  <div className='ml-2 flex-shrink-0'>
+                    <Tooltip content={t('复制')} position='top' showArrow={false}>
+                      <Button
+                        size='small'
+                        theme='borderless'
+                        type='tertiary'
+                        icon={<Copy size={13} />}
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: 'var(--semi-color-text-2)',
+                        }}
+                        onClick={(e) => {
                           e.stopPropagation();
-                          handleCheckboxChange(model, e.target.checked);
+                          copyText(model.model_name);
                         }}
                       />
-                    )}
+                    </Tooltip>
                   </div>
                 </div>
 
                 {/* 模型描述 - 占据剩余空间 */}
-                <div className='flex-1 mb-4'>
+                <div className='flex-1 mb-2'>
                   <p
-                    className='text-xs line-clamp-2 leading-relaxed'
+                    className='text-xs line-clamp-1 leading-relaxed'
                     style={{ color: 'var(--semi-color-text-2)' }}
                   >
                     {getModelDescription(model)}
                   </p>
                 </div>
+
+                {/* 健康状态时间线 */}
+                {healthData && (
+                  <div className='mb-2'>
+                    <ModelHealthTimeline
+                      healthData={healthData}
+                      modelName={model.model_name}
+                      groups={
+                        model.enable_groups
+                          ? model.enable_groups.filter(
+                              (g) => usableGroup[g],
+                            )
+                          : undefined
+                      }
+                      compact={true}
+                      t={t}
+                    />
+                  </div>
+                )}
 
                 {/* 底部区域 */}
                 <div className='mt-auto'>
@@ -481,7 +542,10 @@ const PricingCardView = ({
                   {showRatio && (
                     <div className='pt-3'>
                       <div className='flex items-center space-x-1 mb-2'>
-                        <span className='text-xs font-medium text-gray-700'>
+                        <span
+                          className='text-xs font-medium'
+                          style={{ color: 'var(--semi-color-text-1)' }}
+                        >
                           {t('倍率信息')}
                         </span>
                         <Tooltip
@@ -498,7 +562,10 @@ const PricingCardView = ({
                           />
                         </Tooltip>
                       </div>
-                      <div className='grid grid-cols-3 gap-2 text-xs text-gray-600'>
+                      <div
+                        className='grid grid-cols-3 gap-2 text-xs'
+                        style={{ color: 'var(--semi-color-text-2)' }}
+                      >
                         <div>
                           {t('模型')}:{' '}
                           {model.quota_type === 0 ? model.model_ratio : t('无')}
@@ -522,25 +589,6 @@ const PricingCardView = ({
         })}
       </div>
 
-      {/* 分页 */}
-      {filteredModels.length > 0 && (
-        <div className='flex justify-center mt-6 py-4 border-t pricing-pagination-divider'>
-          <Pagination
-            currentPage={currentPage}
-            pageSize={pageSize}
-            total={filteredModels.length}
-            showSizeChanger={true}
-            pageSizeOptions={[10, 20, 50, 100]}
-            size={isMobile ? 'small' : 'default'}
-            showQuickJumper={isMobile}
-            onPageChange={(page) => setCurrentPage(page)}
-            onPageSizeChange={(size) => {
-              setPageSize(size);
-              setCurrentPage(1);
-            }}
-          />
-        </div>
-      )}
     </div>
   );
 };

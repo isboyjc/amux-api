@@ -18,14 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import {
-  Card,
-  Tag,
-  Avatar,
-  Typography,
-  Tooltip,
-  Modal,
-} from '@douyinfe/semi-ui';
+import { Tag, Avatar, Typography, Tooltip, Modal } from '@douyinfe/semi-ui';
 import { getLobeHubIcon } from '../../../../../helpers';
 import SearchActions from './SearchActions';
 
@@ -33,32 +26,8 @@ const { Paragraph } = Typography;
 
 const CONFIG = {
   CAROUSEL_INTERVAL: 2000,
-  ICON_SIZE: 40,
+  ICON_SIZE: 32,
   UNKNOWN_VENDOR: 'unknown',
-};
-
-const THEME_COLORS = {
-  allVendors: {
-    primary: '37 99 235',
-    background: 'rgba(59, 130, 246, 0.08)',
-  },
-  specific: {
-    primary: '16 185 129',
-    background: 'rgba(16, 185, 129, 0.1)',
-  },
-};
-
-const COMPONENT_STYLES = {
-  tag: {
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    color: '#1f2937',
-    border: '1px solid rgba(255,255,255,0.8)',
-    fontWeight: '500',
-  },
-  avatarContainer:
-    'w-16 h-16 rounded-2xl bg-white/90 shadow-md backdrop-blur-sm flex items-center justify-center',
-  titleText: { color: 'white' },
-  descriptionText: { color: 'rgba(255,255,255,0.9)' },
 };
 
 const CONTENT_TEXTS = {
@@ -78,56 +47,62 @@ const CONTENT_TEXTS = {
   },
 };
 
-const getVendorDisplayName = (vendorName, t) => {
-  return vendorName === CONFIG.UNKNOWN_VENDOR
+const getVendorDisplayName = (vendorName, t) =>
+  vendorName === CONFIG.UNKNOWN_VENDOR
     ? CONTENT_TEXTS.unknown.displayName(t)
     : vendorName;
-};
-
-const createDefaultAvatar = () => (
-  <div className={COMPONENT_STYLES.avatarContainer}>
-    <Avatar size='large' color='transparent'>
-      AI
-    </Avatar>
-  </div>
-);
-
-const getAvatarBackgroundColor = (isAllVendors) =>
-  isAllVendors
-    ? THEME_COLORS.allVendors.background
-    : THEME_COLORS.specific.background;
 
 const getAvatarText = (vendorName) =>
   vendorName === CONFIG.UNKNOWN_VENDOR
     ? '?'
     : vendorName.charAt(0).toUpperCase();
 
-const createAvatarContent = (vendor, isAllVendors) => {
+const createAvatarContent = (vendor) => {
   if (vendor.icon) {
-    return getLobeHubIcon(vendor.icon, CONFIG.ICON_SIZE);
+    return (
+      <div className='w-8 h-8 flex items-center justify-center'>
+        {getLobeHubIcon(vendor.icon, CONFIG.ICON_SIZE)}
+      </div>
+    );
   }
-
   return (
     <Avatar
       size='large'
-      style={{ backgroundColor: getAvatarBackgroundColor(isAllVendors) }}
+      style={{
+        width: 48,
+        height: 48,
+        borderRadius: 12,
+        fontSize: 16,
+        fontWeight: 'bold',
+      }}
     >
       {getAvatarText(vendor.name)}
     </Avatar>
   );
 };
 
-const renderVendorAvatar = (vendor, t, isAllVendors = false) => {
+const renderVendorAvatar = (vendor, t) => {
+  const containerClass =
+    'w-12 h-12 rounded-xl flex items-center justify-center overflow-hidden flex-shrink-0';
+  const containerStyle = {
+    backgroundColor: 'var(--semi-color-fill-0)',
+    border: '1px solid var(--semi-color-border)',
+  };
+
   if (!vendor) {
-    return createDefaultAvatar();
+    return (
+      <div className={containerClass} style={containerStyle}>
+        <Avatar size='large'>AI</Avatar>
+      </div>
+    );
   }
 
   const displayName = getVendorDisplayName(vendor.name, t);
-  const avatarContent = createAvatarContent(vendor, isAllVendors);
-
   return (
     <Tooltip content={displayName} position='top'>
-      <div className={COMPONENT_STYLES.avatarContainer}>{avatarContent}</div>
+      <div className={containerClass} style={containerStyle}>
+        {createAvatarContent(vendor)}
+      </div>
     </Tooltip>
   );
 };
@@ -138,24 +113,24 @@ const PricingVendorIntro = memo(
     models = [],
     allModels = [],
     t,
-    selectedRowKeys = [],
-    copyText,
     handleChange,
     handleCompositionStart,
     handleCompositionEnd,
     isMobile = false,
     searchValue = '',
     setShowFilterModal,
-    showWithRecharge,
-    setShowWithRecharge,
-    currency,
-    setCurrency,
     showRatio,
     setShowRatio,
     viewMode,
     setViewMode,
     tokenUnit,
     setTokenUnit,
+    timeRange,
+    setTimeRange,
+    currentPage,
+    setCurrentPage,
+    pageSize,
+    setPageSize,
   }) => {
     const [currentOffset, setCurrentOffset] = useState(0);
     const [descModalVisible, setDescModalVisible] = useState(false);
@@ -259,110 +234,95 @@ const PricingVendorIntro = memo(
       [vendorInfo, t],
     );
 
-    const createCoverStyle = useCallback(
-      (primaryColor) => ({
-        '--palette-primary-darkerChannel': primaryColor,
-        backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-      }),
-      [],
-    );
-
     const renderSearchActions = useCallback(
       () => (
         <SearchActions
-          selectedRowKeys={selectedRowKeys}
-          copyText={copyText}
           handleChange={handleChange}
           handleCompositionStart={handleCompositionStart}
           handleCompositionEnd={handleCompositionEnd}
           isMobile={isMobile}
           searchValue={searchValue}
           setShowFilterModal={setShowFilterModal}
-          showWithRecharge={showWithRecharge}
-          setShowWithRecharge={setShowWithRecharge}
-          currency={currency}
-          setCurrency={setCurrency}
           showRatio={showRatio}
           setShowRatio={setShowRatio}
           viewMode={viewMode}
           setViewMode={setViewMode}
           tokenUnit={tokenUnit}
           setTokenUnit={setTokenUnit}
+          timeRange={timeRange}
+          setTimeRange={setTimeRange}
+          total={currentModelCount}
+          currentPage={currentPage}
+          setCurrentPage={setCurrentPage}
+          pageSize={pageSize}
+          setPageSize={setPageSize}
           t={t}
         />
       ),
       [
-        selectedRowKeys,
-        copyText,
         handleChange,
         handleCompositionStart,
         handleCompositionEnd,
         isMobile,
         searchValue,
         setShowFilterModal,
-        showWithRecharge,
-        setShowWithRecharge,
-        currency,
-        setCurrency,
         showRatio,
         setShowRatio,
         viewMode,
         setViewMode,
         tokenUnit,
         setTokenUnit,
+        timeRange,
+        setTimeRange,
+        currentModelCount,
+        currentPage,
+        setCurrentPage,
+        pageSize,
+        setPageSize,
         t,
       ],
     );
 
-    const renderHeaderCard = useCallback(
-      ({ title, count, description, rightContent, primaryDarkerChannel }) => (
-        <Card
-          className='!rounded-2xl shadow-sm border-0'
-          cover={
-            <div
-              className='relative h-full'
-              style={createCoverStyle(primaryDarkerChannel)}
-            >
-              <div className='relative z-10 h-full flex items-center justify-between p-4'>
-                <div className='flex-1 min-w-0 mr-4'>
-                  <div className='flex flex-row flex-wrap items-center gap-2 sm:gap-3 mb-2'>
-                    <h2
-                      className='text-lg sm:text-xl font-bold truncate'
-                      style={COMPONENT_STYLES.titleText}
-                    >
-                      {title}
-                    </h2>
-                    <Tag
-                      style={COMPONENT_STYLES.tag}
-                      shape='circle'
-                      size='small'
-                      className='self-center'
-                    >
-                      {t('共 {{count}} 个模型', { count })}
-                    </Tag>
-                  </div>
-                  <Paragraph
-                    className='text-xs sm:text-sm leading-relaxed !mb-0 cursor-pointer'
-                    style={COMPONENT_STYLES.descriptionText}
-                    ellipsis={{ rows: 2 }}
-                    onClick={() => handleOpenDescModal(description)}
-                  >
-                    {description}
-                  </Paragraph>
-                </div>
-
-                <div className='flex-shrink-0'>{rightContent}</div>
+    const renderHeaderSection = useCallback(
+      ({ title, count, description, avatarContent }) => (
+        <div className='flex flex-col gap-3'>
+          <div className='flex items-center gap-3'>
+            {avatarContent}
+            <div className='flex-1 min-w-0'>
+              <div className='flex items-center gap-2 flex-wrap mb-0.5'>
+                <h2
+                  className='text-base font-semibold'
+                  style={{ color: 'var(--semi-color-text-0)' }}
+                >
+                  {title}
+                </h2>
+                <Tag
+                  size='small'
+                  shape='circle'
+                  style={{
+                    background: 'var(--semi-color-fill-1)',
+                    color: 'var(--semi-color-text-1)',
+                    border: '1px solid var(--semi-color-border)',
+                    fontWeight: 500,
+                  }}
+                >
+                  {t('共 {{count}} 个模型', { count })}
+                </Tag>
               </div>
+              <Paragraph
+                className='text-xs leading-normal !mb-0 cursor-pointer'
+                style={{ color: 'var(--semi-color-text-2)' }}
+                ellipsis={{ rows: 1 }}
+                onClick={() => handleOpenDescModal(description)}
+              >
+                {description}
+              </Paragraph>
             </div>
-          }
-        >
+          </div>
           {renderSearchActions()}
-        </Card>
+        </div>
       ),
-      [renderSearchActions, createCoverStyle, handleOpenDescModal, t],
+      [renderSearchActions, handleOpenDescModal, t],
     );
 
     const renderAllVendorsAvatar = useCallback(() => {
@@ -370,20 +330,18 @@ const PricingVendorIntro = memo(
         vendorInfo.length > 0
           ? vendorInfo[currentOffset % vendorInfo.length]
           : null;
-      return renderVendorAvatar(currentVendor, t, true);
+      return renderVendorAvatar(currentVendor, t);
     }, [vendorInfo, currentOffset, t]);
 
     if (filterVendor === 'all') {
-      const headerCard = renderHeaderCard({
-        title: t('全部供应商'),
-        count: currentModelCount,
-        description: getVendorDescription('all'),
-        rightContent: renderAllVendorsAvatar(),
-        primaryDarkerChannel: THEME_COLORS.allVendors.primary,
-      });
       return (
         <>
-          {headerCard}
+          {renderHeaderSection({
+            title: t('全部供应商'),
+            count: currentModelCount,
+            description: getVendorDescription('all'),
+            avatarContent: renderAllVendorsAvatar(),
+          })}
           {renderDescriptionModal()}
         </>
       );
@@ -396,18 +354,16 @@ const PricingVendorIntro = memo(
 
     const vendorDisplayName = getVendorDisplayName(currentVendor.name, t);
 
-    const headerCard = renderHeaderCard({
-      title: vendorDisplayName,
-      count: currentModelCount,
-      description:
-        currentVendor.description || getVendorDescription(currentVendor.name),
-      rightContent: renderVendorAvatar(currentVendor, t, false),
-      primaryDarkerChannel: THEME_COLORS.specific.primary,
-    });
-
     return (
       <>
-        {headerCard}
+        {renderHeaderSection({
+          title: vendorDisplayName,
+          count: currentModelCount,
+          description:
+            currentVendor.description ||
+            getVendorDescription(currentVendor.name),
+          avatarContent: renderVendorAvatar(currentVendor, t),
+        })}
         {renderDescriptionModal()}
       </>
     );

@@ -94,7 +94,7 @@ const PricingEndpointTypes = ({
       activeValue={filterEndpointType}
       onChange={setFilterEndpointType}
       loading={loading}
-      variant='green'
+      
       t={t}
     />
   );

@@ -100,7 +100,7 @@ const PricingTags = ({
       activeValue={filterTag}
       onChange={setFilterTag}
       loading={loading}
-      variant='rose'
+      
       t={t}
     />
   );

@@ -24,6 +24,7 @@ import { IconClose } from '@douyinfe/semi-icons';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import ModelHeader from './components/ModelHeader';
 import ModelBasicInfo from './components/ModelBasicInfo';
+import ModelHealthSection from './components/ModelHealthSection';
 import ModelEndpoints from './components/ModelEndpoints';
 import ModelPricingTable from './components/ModelPricingTable';
 
@@ -43,6 +44,9 @@ const ModelDetailSideSheet = ({
   vendorsMap,
   endpointMap,
   autoGroups,
+  healthData,
+  timeRange,
+  onTimeRangeChange,
   t,
 }) => {
   const isMobile = useIsMobile();
@@ -82,6 +86,14 @@ const ModelDetailSideSheet = ({
             <ModelBasicInfo
               modelData={modelData}
               vendorsMap={vendorsMap}
+              t={t}
+            />
+            <ModelHealthSection
+              healthData={healthData}
+              modelData={modelData}
+              usableGroup={usableGroup}
+              timeRange={timeRange}
+              onTimeRangeChange={onTimeRangeChange}
               t={t}
             />
             <ModelEndpoints

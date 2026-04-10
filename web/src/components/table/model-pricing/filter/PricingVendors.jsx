@@ -118,7 +118,7 @@ const PricingVendors = ({
       activeValue={filterVendor}
       onChange={setFilterVendor}
       loading={loading}
-      variant='violet'
+      
       t={t}
     />
   );

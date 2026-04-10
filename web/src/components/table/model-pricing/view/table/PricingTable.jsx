@@ -29,6 +29,7 @@ const PricingTable = ({
   filteredModels,
   loading,
   rowSelection,
+  currentPage = 1,
   pageSize,
   setPageSize,
   selectedGroup,
@@ -49,6 +50,10 @@ const PricingTable = ({
   openModelDetail,
   t,
 }) => {
+  const startIndex = (currentPage - 1) * pageSize;
+  const paginatedModels = filteredModels
+    ? filteredModels.slice(startIndex, startIndex + pageSize)
+    : [];
   const columns = useMemo(() => {
     return getPricingTableColumns({
       t,
@@ -107,7 +112,7 @@ const PricingTable = ({
       <Card className='!rounded-xl overflow-hidden' bordered={false}>
         <Table
           columns={processedColumns}
-          dataSource={filteredModels}
+          dataSource={paginatedModels}
           loading={loading}
           rowSelection={rowSelection}
           scroll={compactMode ? undefined : { x: 'max-content' }}
@@ -127,23 +132,15 @@ const PricingTable = ({
               style={{ padding: 30 }}
             />
           }
-          pagination={{
-            defaultPageSize: 20,
-            pageSize: pageSize,
-            showSizeChanger: true,
-            pageSizeOptions: [10, 20, 50, 100],
-            onPageSizeChange: (size) => setPageSize(size),
-          }}
+          pagination={false}
         />
       </Card>
     ),
     [
-      filteredModels,
+      paginatedModels,
       loading,
       processedColumns,
       rowSelection,
-      pageSize,
-      setPageSize,
       openModelDetail,
       t,
       compactMode,

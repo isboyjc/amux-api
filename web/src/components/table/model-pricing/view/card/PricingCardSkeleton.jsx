@@ -27,18 +27,19 @@ const PricingCardSkeleton = ({
 }) => {
   const placeholder = (
     <div className='px-2 pt-2'>
-      <div className='grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-4'>
+      <div className='grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-5'>
         {Array.from({ length: skeletonCount }).map((_, index) => (
           <Card
             key={index}
-            className='!rounded-2xl border border-gray-200'
+            className='!rounded-2xl !border-0'
+            style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.08), 0 0 0 1px var(--semi-color-border)' }}
             bodyStyle={{ padding: '24px' }}
           >
             {/* 头部：图标 + 模型名称 + 操作按钮 */}
             <div className='flex items-start justify-between mb-3'>
               <div className='flex items-start space-x-3 flex-1 min-w-0'>
                 {/* 模型图标骨架 */}
-                <div className='w-12 h-12 rounded-2xl flex items-center justify-center relative shadow-sm'>
+                <div className='w-12 h-12 rounded-xl flex items-center justify-center relative'>
                   <Skeleton.Avatar
                     size='large'
                     style={{ width: 48, height: 48, borderRadius: 16 }}

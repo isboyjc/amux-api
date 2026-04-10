@@ -4002,6 +4002,18 @@
     "系统访问令牌具有较高权限，请勿泄露给他人。如需撤销授权，可在个人设置中重新生成令牌以覆盖当前令牌。": "Mã truy cập hệ thống có quyền cao — không chia sẻ với người khác. Để thu hồi quyền truy cập, hãy tạo lại mã trong cài đặt cá nhân.",
     "拒绝": "Từ chối",
     "确认授权": "Xác thực",
-    "操作失败": "Thao tác thất bại"
+    "操作失败": "Thao tác thất bại",
+    "模型健康状态": "Trạng thái sức khỏe mô hình",
+    "各分组健康状态": "Trạng thái theo nhóm",
+    "成功率": "Tỷ lệ thành công",
+    "无调用数据": "Không có dữ liệu",
+    "运行正常": "Bình thường",
+    "轻微异常": "Bất thường nhẹ",
+    "服务降级": "Suy giảm",
+    "严重降级": "Suy giảm nghiêm trọng",
+    "服务不可用": "Không khả dụng",
+    "最近24小时": "24 giờ qua",
+    "最近7天": "7 ngày qua",
+    "条/页": "/ trang"
   }
 }
