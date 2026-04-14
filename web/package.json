@@ -10,7 +10,7 @@
     "@visactor/react-vchart": "~1.8.8",
     "@visactor/vchart": "~1.8.8",
     "@visactor/vchart-semi-theme": "~1.8.8",
-    "axios": "1.13.5",
+    "axios": "1.15.0",
     "baseline-browser-mapping": "^2.10.14",
     "caniuse-lite": "^1.0.30001785",
     "clsx": "^2.1.1",

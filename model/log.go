@@ -60,6 +60,7 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			// Remove admin-only debug fields.
 			delete(otherMap, "admin_info")
 			delete(otherMap, "reject_reason")
+			delete(otherMap, "stream_status")
 			logs[i].Other = common.MapToJsonStr(otherMap)
 		}
 		logs[i].Id = startIdx + i + 1

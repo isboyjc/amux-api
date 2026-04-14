@@ -186,6 +186,13 @@ html.dark .semi-navigation-item-selected .semi-navigation-item-icon {
   font-family: 'Ubuntu Mono', Consolas, 'Courier New', monospace !important;
 }
 
+/* 桌面端禁止 body 纵向滚动 - 防止 VChart tooltip 触发页面滚动条 */
+@media (min-width: 768px) {
+  body {
+    overflow-y: hidden;
+  }
+}
+
 .app-layout {
   height: 100vh;
   height: 100dvh;
@@ -592,6 +599,9 @@ code {
 /* 页脚样式 */
 .custom-footer {
   font-size: 1.1em;
+}
+.custom-footer.na-cb6feafeb3990c78 {
+  position: relative;
 }
 
 /* 卡片内容容器通用样式 */
@@ -1203,3 +1213,29 @@ html.dark .semi-dropdown-wrapper {
 .semi-toast-wrapper .semi-toast {
   border-radius: 16px !important;
 }
+
+/* ==================== 上游动画 keyframes ==================== */
+@keyframes slideInLeft {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Channel advanced settings side panel animations */
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.ec-dbcd0a3c01b55203 { forced-color-adjust: auto; }
