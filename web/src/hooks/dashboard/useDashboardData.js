@@ -56,6 +56,10 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
   const [quotaData, setQuotaData] = useState([]);
   const [consumeQuota, setConsumeQuota] = useState(0);
   const [consumeTokens, setConsumeTokens] = useState(0);
+  const [promptTokens, setPromptTokens] = useState(0);
+  const [completionTokens, setCompletionTokens] = useState(0);
+  const [cacheReadTokens, setCacheReadTokens] = useState(0);
+  const [cacheWriteTokens, setCacheWriteTokens] = useState(0);
   const [times, setTimes] = useState(0);
   const [pieData, setPieData] = useState([{ type: 'null', value: '0' }]);
   const [lineData, setLineData] = useState([]);
@@ -295,6 +299,14 @@ export const useDashboardData = (userState, userDispatch, statusState) => {
     setConsumeQuota,
     consumeTokens,
     setConsumeTokens,
+    promptTokens,
+    setPromptTokens,
+    completionTokens,
+    setCompletionTokens,
+    cacheReadTokens,
+    setCacheReadTokens,
+    cacheWriteTokens,
+    setCacheWriteTokens,
     times,
     setTimes,
     pieData,

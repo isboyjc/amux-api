@@ -29,13 +29,17 @@ import {
   IconTypograph,
   IconSend,
 } from '@douyinfe/semi-icons';
-import { renderQuota } from '../../helpers';
+import { renderQuota, renderNumber } from '../../helpers';
 import { createSectionTitle } from '../../helpers/dashboard';
 
 export const useDashboardStats = (
   userState,
   consumeQuota,
   consumeTokens,
+  promptTokens,
+  completionTokens,
+  cacheReadTokens,
+  cacheWriteTokens,
   times,
   trendData,
   performanceMetrics,
@@ -103,6 +107,12 @@ export const useDashboardStats = (
           {
             title: t('统计Tokens'),
             value: isNaN(consumeTokens) ? 0 : consumeTokens.toLocaleString(),
+            subtitleItems: [
+              { label: t('输入'), value: renderNumber(promptTokens || 0) },
+              { label: t('输出'), value: renderNumber(completionTokens || 0) },
+              { label: t('缓读'), value: renderNumber(cacheReadTokens || 0) },
+              { label: t('缓写'), value: renderNumber(cacheWriteTokens || 0) },
+            ],
             icon: <IconTextStroked />,
             avatarColor: 'pink',
             trendData: trendData.tokens,
@@ -140,6 +150,10 @@ export const useDashboardStats = (
       times,
       consumeQuota,
       consumeTokens,
+      promptTokens,
+      completionTokens,
+      cacheReadTokens,
+      cacheWriteTokens,
       trendData,
       performanceMetrics,
       navigate,

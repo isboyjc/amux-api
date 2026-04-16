@@ -290,6 +290,9 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
+	// 一次性迁移：从 logs 回填 quota_data 的 token 拆分列（后台执行，不阻塞启动）
+	// 必须在 InitLogDB() 之后启动，确保 LOG_DB 已初始化
+	go model.MigrateQuotaDataTokenSplit()
 
 	// Initialize Redis
 	err = common.InitRedisClient()

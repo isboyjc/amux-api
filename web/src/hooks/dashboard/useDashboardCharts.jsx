@@ -48,6 +48,10 @@ export const useDashboardCharts = (
   setConsumeQuota,
   setTimes,
   setConsumeTokens,
+  setPromptTokens,
+  setCompletionTokens,
+  setCacheReadTokens,
+  setCacheWriteTokens,
   setPieData,
   setLineData,
   setModelColors,
@@ -408,6 +412,10 @@ export const useDashboardCharts = (
         totalQuota,
         totalTimes,
         totalTokens,
+        totalPromptTokens,
+        totalCompletionTokens,
+        totalCacheReadTokens,
+        totalCacheWriteTokens,
         uniqueModels,
         timePoints,
         timeQuotaMap,
@@ -547,6 +555,10 @@ export const useDashboardCharts = (
       setConsumeQuota(totalQuota);
       setTimes(totalTimes);
       setConsumeTokens(totalTokens);
+      setPromptTokens(totalPromptTokens);
+      setCompletionTokens(totalCompletionTokens);
+      setCacheReadTokens(totalCacheReadTokens);
+      setCacheWriteTokens(totalCacheWriteTokens);
     },
     [
       dataExportDefaultTime,
@@ -558,6 +570,10 @@ export const useDashboardCharts = (
       setConsumeQuota,
       setTimes,
       setConsumeTokens,
+      setPromptTokens,
+      setCompletionTokens,
+      setCacheReadTokens,
+      setCacheWriteTokens,
       t,
     ],
   );

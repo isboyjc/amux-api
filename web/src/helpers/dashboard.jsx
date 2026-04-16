@@ -253,6 +253,10 @@ export const processRawData = (
     totalQuota: 0,
     totalTimes: 0,
     totalTokens: 0,
+    totalPromptTokens: 0,
+    totalCompletionTokens: 0,
+    totalCacheReadTokens: 0,
+    totalCacheWriteTokens: 0,
     uniqueModels: new Set(),
     timePoints: [],
     timeQuotaMap: new Map(),
@@ -266,6 +270,10 @@ export const processRawData = (
   data.forEach((item) => {
     result.uniqueModels.add(item.model_name);
     result.totalTokens += item.token_used;
+    result.totalPromptTokens += item.prompt_tokens || 0;
+    result.totalCompletionTokens += item.completion_tokens || 0;
+    result.totalCacheReadTokens += item.cache_read_tokens || 0;
+    result.totalCacheWriteTokens += item.cache_write_tokens || 0;
     result.totalQuota += item.quota;
     result.totalTimes += item.count;
 

@@ -300,7 +300,7 @@ func migrateDB() error {
 	EnsureCommonVendors()
 	// 一次性迁移：修复历史模型的 vendor_id
 	MigrateModelVendorIDs()
-	
+
 	return nil
 }
 

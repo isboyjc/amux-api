@@ -139,6 +139,8 @@ type RecordConsumeLogParams struct {
 	ChannelId        int                    `json:"channel_id"`
 	PromptTokens     int                    `json:"prompt_tokens"`
 	CompletionTokens int                    `json:"completion_tokens"`
+	CacheReadTokens  int                    `json:"cache_read_tokens"`
+	CacheWriteTokens int                    `json:"cache_write_tokens"`
 	ModelName        string                 `json:"model_name"`
 	TokenName        string                 `json:"token_name"`
 	Quota            int                    `json:"quota"`
@@ -196,7 +198,9 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
-			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
+			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(),
+				params.PromptTokens, params.CompletionTokens,
+				params.CacheReadTokens, params.CacheWriteTokens)
 		})
 	}
 }
