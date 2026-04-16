@@ -110,8 +110,8 @@ export const useDashboardStats = (
             subtitleItems: [
               { label: t('输入'), value: renderNumber(promptTokens || 0) },
               { label: t('输出'), value: renderNumber(completionTokens || 0) },
-              { label: t('缓读'), value: renderNumber(cacheReadTokens || 0) },
-              { label: t('缓写'), value: renderNumber(cacheWriteTokens || 0) },
+              { label: t('缓存读'), value: renderNumber(cacheReadTokens || 0) },
+              { label: t('缓存写'), value: renderNumber(cacheWriteTokens || 0) },
             ],
             icon: <IconTextStroked />,
             avatarColor: 'pink',
