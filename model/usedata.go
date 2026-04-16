@@ -38,6 +38,20 @@ func UpdateQuotaData() {
 var CacheQuotaData = make(map[string]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
 
+// hasTokenSplitColumns 检查 quota_data 表是否已有 token 拆分列。
+// 使用 sync.Once 缓存结果，避免每次查询都检查。
+var (
+	quotaTokenSplitReady     bool
+	quotaTokenSplitReadyOnce sync.Once
+)
+
+func hasTokenSplitColumns() bool {
+	quotaTokenSplitReadyOnce.Do(func() {
+		quotaTokenSplitReady = DB.Migrator().HasColumn(&QuotaData{}, "PromptTokens")
+	})
+	return quotaTokenSplitReady
+}
+
 func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64,
 	promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens int) {
 	key := fmt.Sprintf("%d-%s-%s-%d", userId, username, modelName, createdAt)
@@ -93,15 +107,16 @@ func SaveQuotaDataCache() {
 		DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ?",
 			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt).First(quotaDataDB)
 		if quotaDataDB.Id > 0 {
-			//quotaDataDB.Count += quotaData.Count
-			//quotaDataDB.Quota += quotaData.Quota
-			//DB.Table("quota_data").Save(quotaDataDB)
 			increaseQuotaData(quotaData.UserID, quotaData.Username, quotaData.ModelName,
 				quotaData.Count, quotaData.Quota, quotaData.CreatedAt,
 				quotaData.TokenUsed, quotaData.PromptTokens, quotaData.CompletionTokens,
 				quotaData.CacheReadTokens, quotaData.CacheWriteTokens)
 		} else {
-			DB.Table("quota_data").Create(quotaData)
+			if hasTokenSplitColumns() {
+				DB.Table("quota_data").Create(quotaData)
+			} else {
+				DB.Table("quota_data").Omit("PromptTokens", "CompletionTokens", "CacheReadTokens", "CacheWriteTokens").Create(quotaData)
+			}
 		}
 	}
 	CacheQuotaData = make(map[string]*QuotaData)
@@ -110,16 +125,19 @@ func SaveQuotaDataCache() {
 
 func increaseQuotaData(userId int, username string, modelName string, count int, quota int, createdAt int64,
 	tokenUsed, promptTokens, completionTokens, cacheReadTokens, cacheWriteTokens int) {
+	updates := map[string]interface{}{
+		"count":      gorm.Expr("count + ?", count),
+		"quota":      gorm.Expr("quota + ?", quota),
+		"token_used": gorm.Expr("token_used + ?", tokenUsed),
+	}
+	if hasTokenSplitColumns() {
+		updates["prompt_tokens"] = gorm.Expr("prompt_tokens + ?", promptTokens)
+		updates["completion_tokens"] = gorm.Expr("completion_tokens + ?", completionTokens)
+		updates["cache_read_tokens"] = gorm.Expr("cache_read_tokens + ?", cacheReadTokens)
+		updates["cache_write_tokens"] = gorm.Expr("cache_write_tokens + ?", cacheWriteTokens)
+	}
 	err := DB.Table("quota_data").Where("user_id = ? and username = ? and model_name = ? and created_at = ?",
-		userId, username, modelName, createdAt).Updates(map[string]interface{}{
-		"count":              gorm.Expr("count + ?", count),
-		"quota":              gorm.Expr("quota + ?", quota),
-		"token_used":         gorm.Expr("token_used + ?", tokenUsed),
-		"prompt_tokens":      gorm.Expr("prompt_tokens + ?", promptTokens),
-		"completion_tokens":  gorm.Expr("completion_tokens + ?", completionTokens),
-		"cache_read_tokens":  gorm.Expr("cache_read_tokens + ?", cacheReadTokens),
-		"cache_write_tokens": gorm.Expr("cache_write_tokens + ?", cacheWriteTokens),
-	}).Error
+		userId, username, modelName, createdAt).Updates(updates).Error
 	if err != nil {
 		common.SysLog(fmt.Sprintf("increaseQuotaData error: %s", err))
 	}
@@ -141,15 +159,18 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData
 
 func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
-	err = DB.Table("quota_data").
-		Select("username, created_at, " +
-			"sum(count) as count, " +
-			"sum(quota) as quota, " +
-			"sum(token_used) as token_used, " +
-			"sum(prompt_tokens) as prompt_tokens, " +
+	selectCols := "username, created_at, " +
+		"sum(count) as count, " +
+		"sum(quota) as quota, " +
+		"sum(token_used) as token_used"
+	if hasTokenSplitColumns() {
+		selectCols += ", sum(prompt_tokens) as prompt_tokens, " +
 			"sum(completion_tokens) as completion_tokens, " +
 			"sum(cache_read_tokens) as cache_read_tokens, " +
-			"sum(cache_write_tokens) as cache_write_tokens").
+			"sum(cache_write_tokens) as cache_write_tokens"
+	}
+	err = DB.Table("quota_data").
+		Select(selectCols).
 		Where("created_at >= ? and created_at <= ?", startTime, endTime).
 		Group("username, created_at").
 		Find(&quotaDatas).Error
@@ -161,16 +182,19 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaDat
 		return GetQuotaDataByUsername(username, startTime, endTime)
 	}
 	var quotaDatas []*QuotaData
-	// 从quota_data表中查询数据
-	err = DB.Table("quota_data").
-		Select("model_name, created_at, " +
-			"sum(count) as count, " +
-			"sum(quota) as quota, " +
-			"sum(token_used) as token_used, " +
-			"sum(prompt_tokens) as prompt_tokens, " +
+	selectCols := "model_name, created_at, " +
+		"sum(count) as count, " +
+		"sum(quota) as quota, " +
+		"sum(token_used) as token_used"
+	if hasTokenSplitColumns() {
+		selectCols += ", sum(prompt_tokens) as prompt_tokens, " +
 			"sum(completion_tokens) as completion_tokens, " +
 			"sum(cache_read_tokens) as cache_read_tokens, " +
-			"sum(cache_write_tokens) as cache_write_tokens").
+			"sum(cache_write_tokens) as cache_write_tokens"
+	}
+	// 从quota_data表中查询数据
+	err = DB.Table("quota_data").
+		Select(selectCols).
 		Where("created_at >= ? and created_at <= ?", startTime, endTime).
 		Group("model_name, created_at").
 		Find(&quotaDatas).Error
@@ -180,6 +204,12 @@ func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaDat
 // MigrateQuotaDataTokenSplit 一次性迁移：从 logs 表回填 quota_data 的 token 拆分列
 // 通过 Option 表记录是否已执行，避免重复执行
 func MigrateQuotaDataTokenSplit() {
+	// 必须等 AutoMigrate 创建完列之后才能执行
+	if !DB.Migrator().HasColumn(&QuotaData{}, "PromptTokens") {
+		common.SysLog("MigrateQuotaDataTokenSplit: token split columns not yet created, skipping")
+		return
+	}
+
 	migrationKey := "quota_data_token_split_migration_v1"
 	var opt Option
 	if err := DB.Where(commonKeyCol+" = ?", migrationKey).First(&opt).Error; err == nil {
