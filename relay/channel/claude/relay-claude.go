@@ -259,7 +259,7 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 				formatMessages = formatMessages[:len(formatMessages)-1]
 			}
 		}
-		if fmtMessage.Content == nil {
+		if fmtMessage.Content == nil || (fmtMessage.IsStringContent() && fmtMessage.StringContent() == "") {
 			fmtMessage.SetStringContent("...")
 		}
 		formatMessages = append(formatMessages, fmtMessage)
@@ -275,14 +275,16 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		if message.Role == "system" {
 			// 根据Claude API规范，system字段使用数组格式更有通用性
 			if message.IsStringContent() {
-				systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
-					Type: "text",
-					Text: common.GetPointer[string](message.StringContent()),
-				})
+				if text := message.StringContent(); text != "" {
+					systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
+						Type: "text",
+						Text: common.GetPointer[string](text),
+					})
+				}
 			} else {
 				// 支持复合内容的system消息（虽然不常见，但需要考虑完整性）
 				for _, ctx := range message.ParseContent() {
-					if ctx.Type == "text" {
+					if ctx.Type == "text" && ctx.Text != "" {
 						systemMessages = append(systemMessages, dto.ClaudeMediaMessage{
 							Type: "text",
 							Text: common.GetPointer[string](ctx.Text),
@@ -340,72 +342,75 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 					}
 				}
 			} else if message.IsStringContent() && message.ToolCalls == nil {
-				claudeMessage.Content = message.StringContent()
-			} else {
-			claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
-			for _, mediaMessage := range message.ParseContent() {
-				switch mediaMessage.Type {
-				case "text":
-					claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
-						Type: "text",
-						Text: common.GetPointer[string](mediaMessage.Text),
-					})
-				case dto.ContentTypeFile:
-					// 按文件扩展名决定处理方式，避免依赖内容嗅探导致误判
-					file := mediaMessage.GetFile()
-					if file == nil || file.FileData == "" {
-						continue
-					}
-					fileName := strings.ToLower(file.FileName)
-					if strings.HasSuffix(fileName, ".pdf") {
-						claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
-							Type: "document",
-							Source: &dto.ClaudeMessageSource{
-								Type:      "base64",
-								MediaType: "application/pdf",
-								Data:      file.FileData,
-							},
-						})
-					} else if strings.HasSuffix(fileName, ".txt") ||
-						strings.HasSuffix(fileName, ".md") ||
-						strings.HasSuffix(fileName, ".csv") {
-					decoded, err := base64.StdEncoding.DecodeString(file.FileData)
-					if err != nil {
-						continue
-					}
-					text := string(decoded)
-						claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
-							Type: "text",
-							Text: common.GetPointer[string](text),
-						})
-					}
-					// 其他扩展名（如 .bin）不支持，跳过
-				default:
-					source := mediaMessage.ToFileSource()
-					if source == nil {
-						continue
-					}
-					base64Data, mimeType, err := service.GetBase64Data(c, source, "formatting image for Claude")
-					if err != nil {
-						return nil, fmt.Errorf("get file data failed: %s", err.Error())
-					}
-					claudeMediaMessage := dto.ClaudeMediaMessage{
-						Source: &dto.ClaudeMessageSource{
-							Type: "base64",
-						},
-					}
-					if strings.HasPrefix(mimeType, "application/pdf") {
-						claudeMediaMessage.Type = "document"
-					} else {
-						claudeMediaMessage.Type = "image"
-					}
-
-					claudeMediaMessage.Source.MediaType = mimeType
-					claudeMediaMessage.Source.Data = base64Data
-					claudeMediaMessages = append(claudeMediaMessages, claudeMediaMessage)
-					continue
+				text := message.StringContent()
+				if text == "" {
+					text = "..."
 				}
-			}
+				claudeMessage.Content = text
+			} else {
+				claudeMediaMessages := make([]dto.ClaudeMediaMessage, 0)
+				for _, mediaMessage := range message.ParseContent() {
+					switch mediaMessage.Type {
+					case "text":
+						if mediaMessage.Text != "" {
+							claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
+								Type: "text",
+								Text: common.GetPointer[string](mediaMessage.Text),
+							})
+						}
+					case dto.ContentTypeFile:
+						file := mediaMessage.GetFile()
+						if file == nil || file.FileData == "" {
+							continue
+						}
+						fileName := strings.ToLower(file.FileName)
+						if strings.HasSuffix(fileName, ".pdf") {
+							claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
+								Type: "document",
+								Source: &dto.ClaudeMessageSource{
+									Type:      "base64",
+									MediaType: "application/pdf",
+									Data:      file.FileData,
+								},
+							})
+						} else if strings.HasSuffix(fileName, ".txt") ||
+							strings.HasSuffix(fileName, ".md") ||
+							strings.HasSuffix(fileName, ".csv") {
+							decoded, err := base64.StdEncoding.DecodeString(file.FileData)
+							if err != nil {
+								continue
+							}
+							text := string(decoded)
+							claudeMediaMessages = append(claudeMediaMessages, dto.ClaudeMediaMessage{
+								Type: "text",
+								Text: common.GetPointer[string](text),
+							})
+						}
+					default:
+						source := mediaMessage.ToFileSource()
+						if source == nil {
+							continue
+						}
+						base64Data, mimeType, err := service.GetBase64Data(c, source, "formatting image for Claude")
+						if err != nil {
+							return nil, fmt.Errorf("get file data failed: %s", err.Error())
+						}
+						claudeMediaMessage := dto.ClaudeMediaMessage{
+							Source: &dto.ClaudeMessageSource{
+								Type: "base64",
+							},
+						}
+						if strings.HasPrefix(mimeType, "application/pdf") {
+							claudeMediaMessage.Type = "document"
+						} else {
+							claudeMediaMessage.Type = "image"
+						}
+
+						claudeMediaMessage.Source.MediaType = mimeType
+						claudeMediaMessage.Source.Data = base64Data
+						claudeMediaMessages = append(claudeMediaMessages, claudeMediaMessage)
+					}
+				}
 
 				if message.ToolCalls != nil {
 					for _, toolCall := range message.ParseToolCalls() {
