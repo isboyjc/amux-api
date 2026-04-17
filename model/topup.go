@@ -132,6 +132,14 @@ func Recharge(referenceId string, customerId string) (err error) {
 	return nil
 }
 
+// topUpQueryWindowSeconds 限制充值记录查询的时间窗口（秒）。
+const topUpQueryWindowSeconds int64 = 30 * 24 * 60 * 60
+
+// topUpQueryCutoff 返回允许查询的最早 create_time（秒级 Unix 时间戳）。
+func topUpQueryCutoff() int64 {
+	return common.GetTimestamp() - topUpQueryWindowSeconds
+}
+
 func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
@@ -144,15 +152,17 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 		}
 	}()
 
+	cutoff := topUpQueryCutoff()
+
 	// Get total count within transaction
-	err = tx.Model(&TopUp{}).Where("user_id = ?", userId).Count(&total).Error
+	err = tx.Model(&TopUp{}).Where("user_id = ? AND create_time >= ?", userId, cutoff).Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
 	// Get paginated topups within same transaction
-	err = tx.Where("user_id = ?", userId).Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error
+	err = tx.Where("user_id = ? AND create_time >= ?", userId, cutoff).Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -213,6 +223,10 @@ func GetAllTopUps(status string, pageInfo *common.PageInfo) (topups []*TopupList
 	return topups, total, nil
 }
 
+// searchTopUpCountHardLimit 搜索充值记录时 COUNT 的安全上限，
+// 防止对超大表执行无界 COUNT 触发 DoS。
+const searchTopUpCountHardLimit = 10000
+
 // SearchUserTopUps 按订单号搜索某用户的充值记录
 func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
 	tx := DB.Begin()
@@ -225,20 +239,26 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 		}
 	}()
 
-	query := tx.Model(&TopUp{}).Where("user_id = ?", userId)
+	query := tx.Model(&TopUp{}).Where("user_id = ? AND create_time >= ?", userId, topUpQueryCutoff())
 	if keyword != "" {
-		like := "%%" + keyword + "%%"
-		query = query.Where("trade_no LIKE ?", like)
+		pattern, perr := sanitizeLikePattern(keyword)
+		if perr != nil {
+			tx.Rollback()
+			return nil, 0, perr
+		}
+		query = query.Where("trade_no LIKE ? ESCAPE '!'", pattern)
 	}
 
-	if err = query.Count(&total).Error; err != nil {
+	if err = query.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {
 		tx.Rollback()
-		return nil, 0, err
+		common.SysError("failed to count search topups: " + err.Error())
+		return nil, 0, errors.New("搜索充值记录失败")
 	}
 
 	if err = query.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
 		tx.Rollback()
-		return nil, 0, err
+		common.SysError("failed to search topups: " + err.Error())
+		return nil, 0, errors.New("搜索充值记录失败")
 	}
 
 	if err = tx.Commit().Error; err != nil {
@@ -264,19 +284,24 @@ func SearchAllTopUps(keyword string, status string, pageInfo *common.PageInfo) (
 		Joins("LEFT JOIN users ON users.id = top_ups.user_id")
 
 	if keyword != "" {
-		like := "%" + keyword + "%"
+		pattern, perr := sanitizeLikePattern(keyword)
+		if perr != nil {
+			tx.Rollback()
+			return nil, 0, perr
+		}
 		baseQuery = baseQuery.Where(
-			"top_ups.trade_no LIKE ? OR users.username LIKE ? OR users.email LIKE ?",
-			like, like, like,
+			"top_ups.trade_no LIKE ? ESCAPE '!' OR users.username LIKE ? ESCAPE '!' OR users.email LIKE ? ESCAPE '!'",
+			pattern, pattern, pattern,
 		)
 	}
 	if status != "" {
 		baseQuery = baseQuery.Where("top_ups.status = ?", status)
 	}
 
-	if err = baseQuery.Count(&total).Error; err != nil {
+	if err = baseQuery.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {
 		tx.Rollback()
-		return nil, 0, err
+		common.SysError("failed to count search topups: " + err.Error())
+		return nil, 0, errors.New("搜索充值记录失败")
 	}
 
 	if err = baseQuery.
@@ -286,7 +311,8 @@ func SearchAllTopUps(keyword string, status string, pageInfo *common.PageInfo) (
 		Offset(pageInfo.GetStartIdx()).
 		Scan(&topups).Error; err != nil {
 		tx.Rollback()
-		return nil, 0, err
+		common.SysError("failed to search topups: " + err.Error())
+		return nil, 0, errors.New("搜索充值记录失败")
 	}
 
 	if err = tx.Commit().Error; err != nil {
