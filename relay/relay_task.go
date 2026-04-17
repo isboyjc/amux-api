@@ -415,15 +415,17 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
-// 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
+// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/Doubao 任务状态。
+// 仅当渠道类型为 Gemini、Vertex 或 DoubaoVideo 时触发；其他渠道或出错时返回 nil。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
 func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
+	if channelModel.Type != constant.ChannelTypeVertexAi && 
+	   channelModel.Type != constant.ChannelTypeGemini && 
+	   channelModel.Type != constant.ChannelTypeDoubaoVideo {
 		return nil
 	}
 
@@ -464,6 +466,10 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	if ti.Progress != "" {
 		task.Progress = ti.Progress
 	}
+	// Update fail reason if provided
+	if ti.Reason != "" {
+		task.FailReason = ti.Reason
+	}
 	if strings.HasPrefix(ti.Url, "data:") {
 		// data: URI — kept in Data, not ResultURL
 	} else if ti.Url != "" {
@@ -484,17 +490,30 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 
 	// 非 OpenAI Video API: 构建自定义格式响应
 	format := detectVideoFormat(body)
+	
+	// For failed tasks, put error message in top-level message field, and set url to empty
+	var resultURL string
+	var responseMessage string
+	if task.Status == model.TaskStatusFailure {
+		resultURL = ""  // url should be empty for failed tasks
+		responseMessage = task.FailReason  // error message goes to message field
+	} else {
+		resultURL = task.GetResultURL()
+		responseMessage = ""
+	}
+	
 	out := map[string]any{
 		"error":    nil,
 		"format":   format,
 		"metadata": nil,
 		"status":   mapTaskStatusToSimple(task.Status),
 		"task_id":  task.TaskID,
-		"url":      task.GetResultURL(),
+		"url":      resultURL,
 	}
 	respBody, _ := common.Marshal(dto.TaskResponse[any]{
-		Code: "success",
-		Data: out,
+		Code:    "success",
+		Message: responseMessage,
+		Data:    out,
 	})
 	return respBody
 }
