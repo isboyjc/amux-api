@@ -6,7 +6,7 @@ import (
 	"github.com/samber/lo"
 )
 
-var EffortSuffixes = []string{"-max", "-high", "-medium", "-low", "-minimal"}
+var EffortSuffixes = []string{"-max", "-xhigh", "-high", "-medium", "-low", "-minimal"}
 
 var OpenAIEffortSuffixes = []string{"-high", "-minimal", "-low", "-medium", "-none", "-xhigh"}
 
