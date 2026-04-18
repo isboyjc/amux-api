@@ -973,7 +973,14 @@ export const renderGroupOption = (item) => {
           {label}
         </Typography.Text>
       </div>
-      {item.ratio && renderRatio(item.ratio)}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        {typeof item.modelCount === 'number' && (
+          <Tag color='cyan'>
+            {item.modelCount} {i18next.t('可用模型')}
+          </Tag>
+        )}
+        {item.ratio && renderRatio(item.ratio)}
+      </div>
     </div>
   );
 };

@@ -29,6 +29,21 @@ func GetUserGroups(c *gin.Context) {
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
 	userUsableGroups := service.GetUserUsableGroups(userGroup)
+
+	// 预先收集各分组的可用模型，供分组列表展示及 auto 聚合使用
+	groupModelsCache := make(map[string][]string)
+	autoModelSet := make(map[string]struct{})
+	for groupName := range userUsableGroups {
+		if groupName == "auto" {
+			continue
+		}
+		models := model.GetGroupEnabledModels(groupName)
+		groupModelsCache[groupName] = models
+		for _, m := range models {
+			autoModelSet[m] = struct{}{}
+		}
+	}
+
 	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
 		// UserUsableGroups contains the groups that the user can use
 		if desc, ok := userUsableGroups[groupName]; ok {
@@ -38,15 +53,17 @@ func GetUserGroups(c *gin.Context) {
 				continue
 			}
 			usableGroups[groupName] = map[string]interface{}{
-				"ratio": service.GetUserGroupRatio(userGroup, groupName),
-				"desc":  desc,
+				"ratio":       service.GetUserGroupRatio(userGroup, groupName),
+				"desc":        desc,
+				"model_count": len(groupModelsCache[groupName]),
 			}
 		}
 	}
 	if _, ok := userUsableGroups["auto"]; ok {
 		usableGroups["auto"] = map[string]interface{}{
-			"ratio": "自动",
-			"desc":  setting.GetUsableGroupDescription("auto"),
+			"ratio":       "自动",
+			"desc":        setting.GetUsableGroupDescription("auto"),
+			"model_count": len(autoModelSet),
 		}
 	}
 	c.JSON(http.StatusOK, gin.H{

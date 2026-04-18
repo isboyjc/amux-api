@@ -156,6 +156,8 @@ const EditTokenModal = (props) => {
         label: info.desc,
         value: group,
         ratio: info.ratio,
+        modelCount: info.model_count,
+        disabled: info.model_count === 0,
       }));
       const autoGroupExists = localGroupOptions.some((group) => group.value === 'auto');
       setHasAutoGroup(autoGroupExists);
