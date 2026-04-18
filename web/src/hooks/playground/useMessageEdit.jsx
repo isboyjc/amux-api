@@ -33,6 +33,7 @@ export const useMessageEdit = (
   parameterEnabled,
   sendRequest,
   saveMessages,
+  modality,
 ) => {
   const { t } = useTranslation();
   const [editingMessageId, setEditingMessageId] = useState(null);
@@ -102,6 +103,7 @@ export const useMessageEdit = (
                   null,
                   inputs,
                   parameterEnabled,
+                  modality,
                 );
                 setMessage((prevMsg) => [
                   ...prevMsg,

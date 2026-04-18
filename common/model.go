@@ -35,15 +35,28 @@ func IsOpenAIResponseOnlyModel(modelName string) bool {
 	return false
 }
 
+// imageModelOverrideFn 在运行时由 model_setting 包注入，用来把"管理员自定义
+// 的 image 模式"合入匹配。这里用注入而不是 import，是因为 setting 包会反过来
+// 依赖 common，直接 import 会形成循环。
+var imageModelOverrideFn func(string) bool
+
+// RegisterImageModelOverride 允许上层 setting 包注入自定义 image 模式匹配。
+func RegisterImageModelOverride(fn func(string) bool) {
+	imageModelOverrideFn = fn
+}
+
 func IsImageGenerationModel(modelName string) bool {
-	modelName = strings.ToLower(modelName)
+	lower := strings.ToLower(modelName)
 	for _, m := range ImageGenerationModels {
-		if strings.Contains(modelName, m) {
+		if strings.Contains(lower, m) {
 			return true
 		}
-		if strings.HasPrefix(m, "prefix:") && strings.HasPrefix(modelName, strings.TrimPrefix(m, "prefix:")) {
+		if strings.HasPrefix(m, "prefix:") && strings.HasPrefix(lower, strings.TrimPrefix(m, "prefix:")) {
 			return true
 		}
+	}
+	if imageModelOverrideFn != nil && imageModelOverrideFn(modelName) {
+		return true
 	}
 	return false
 }

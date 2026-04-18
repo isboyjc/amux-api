@@ -332,9 +332,18 @@ export function compareObjects(oldObject, newObject) {
 
 // playground message
 
-// 生成唯一ID
-let messageId = 4;
-export const generateMessageId = () => `${messageId++}`;
+// 生成消息唯一 ID。用 time + 进程内计数 + 随机，保证：
+//   1) 跨页面刷新不重复（不再依赖模块级自增 counter 从 4 重头来）
+//   2) 同一毫秒内多次调用也不重复（计数器 + 随机）
+//   3) 与 IndexedDB 中历史消息里可能存在的纯数字字符串 ID（"2"/"3"/"4"…）
+//      不冲突（本函数返回带 `msg_` 前缀的形式）
+let _msgSeq = 0;
+export const generateMessageId = () => {
+  const ts = Date.now().toString(36);
+  const seq = (_msgSeq++).toString(36);
+  const rnd = Math.random().toString(36).slice(2, 6);
+  return `msg_${ts}${seq}${rnd}`;
+};
 
 // 提取消息中的文本内容
 export const getTextContent = (message) => {

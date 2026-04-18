@@ -21,6 +21,10 @@ import i18next from 'i18next';
 import { Modal, Tag, Typography, Avatar } from '@douyinfe/semi-ui';
 import { copy, showSuccess } from './utils';
 import { MOBILE_BREAKPOINT } from '../hooks/common/useIsMobile';
+import {
+  getModalityShortLabel,
+  MODALITY_COLOR,
+} from '../constants/modalityLabels';
 import { visit } from 'unist-util-visit';
 import * as LobeIcons from '@lobehub/icons';
 import {
@@ -981,6 +985,71 @@ export const renderGroupOption = (item) => {
         )}
         {item.ratio && renderRatio(item.ratio)}
       </div>
+    </div>
+  );
+};
+
+// 模型下拉项：label + modality 徽章
+export const renderModelOption = (item) => {
+  const {
+    disabled,
+    selected,
+    label,
+    value,
+    focused,
+    className,
+    style,
+    onMouseEnter,
+    onClick,
+    empty,
+    emptyContent,
+    modality,
+    ...rest
+  } = item;
+
+  const baseStyle = {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 16px',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    backgroundColor: focused ? 'var(--semi-color-fill-0)' : 'transparent',
+    opacity: disabled ? 0.5 : 1,
+    ...(selected && {
+      backgroundColor: 'var(--semi-color-primary-light-default)',
+    }),
+    gap: 8,
+  };
+
+  const handleClick = () => {
+    if (!disabled && onClick) onClick();
+  };
+  const handleMouseEnter = (e) => {
+    if (!disabled && onMouseEnter) onMouseEnter(e);
+  };
+
+  const modalityKey = modality || 'text';
+  const shortLabel = getModalityShortLabel(i18next.t.bind(i18next), modalityKey);
+  const tagColor = MODALITY_COLOR[modalityKey] || 'grey';
+
+  return (
+    <div style={baseStyle} onClick={handleClick} onMouseEnter={handleMouseEnter}>
+      <Typography.Text
+        strong
+        type={disabled ? 'tertiary' : undefined}
+        style={{
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          flex: 1,
+          minWidth: 0,
+        }}
+      >
+        {label || value}
+      </Typography.Text>
+      <Tag color={tagColor} size='small' shape='circle'>
+        {shortLabel}
+      </Tag>
     </div>
   );
 };

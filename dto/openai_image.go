@@ -32,6 +32,11 @@ type ImageRequest struct {
 	WatermarkEnabled json.RawMessage `json:"watermark_enabled,omitempty"`
 	UserId           json.RawMessage `json:"user_id,omitempty"`
 	Image            json.RawMessage `json:"image,omitempty"`
+	// ExtraBody 是"调用方 -> 特定 adapter"的私有参数透传通道，内容由
+	// 各 channel adapter 自行解析（例如 Gemini Nano Banana 家族读取
+	// aspect_ratio / image_size / seed 等）。未被 adapter 消费的 key 会被
+	// 安全忽略，不影响对公 API 的现有行为。
+	ExtraBody json.RawMessage `json:"extra_body,omitempty"`
 	// 用匿名参数接收额外参数
 	Extra map[string]json.RawMessage `json:"-"`
 }
@@ -86,6 +91,13 @@ func (r ImageRequest) MarshalJSON() ([]byte, error) {
 	//		baseMap[k] = v
 	//	}
 	//}
+
+	// extra_body 只是"调用方 → 特定 adapter"的私有参数通道（例如 Gemini
+	// Nano Banana 家族从这里读 aspect_ratio / image_size 等），不应随
+	// ImageRequest 的默认序列化路径一起透传到上游（比如默认 OpenAI 路径
+	// 会把 ImageRequest 直接 marshal 发出去）。adapter 需要用它时直接读
+	// 结构体字段 r.ExtraBody；这里把序列化里的这个键剔除，避免意外泄漏。
+	delete(baseMap, "extra_body")
 
 	return common.Marshal(baseMap)
 }

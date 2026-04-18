@@ -17,46 +17,57 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState } from 'react';
-import { Card, Select, Typography, Button, Switch, Collapsible } from '@douyinfe/semi-ui';
-import { Sparkles, Users, ToggleLeft, X, Settings, ChevronDown } from 'lucide-react';
+import React from 'react';
+import { Card, Select, Typography, Button, Tag, Banner } from '@douyinfe/semi-ui';
+import { Sparkles, Users, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { renderGroupOption, selectFilter } from '../../helpers';
-import ParameterControl from './ParameterControl';
+import { renderGroupOption, renderModelOption, selectFilter } from '../../helpers';
 import ImageUrlInput from './ImageUrlInput';
-import ConfigManager from './ConfigManager';
-import CustomRequestEditor from './CustomRequestEditor';
+import SessionList from './SessionList';
+import {
+  MODALITY,
+  PLAYGROUND_SUPPORTED_MODALITIES,
+} from '../../constants/playground.constants';
+import { getModalityShortLabel } from '../../constants/modalityLabels';
+import {
+  WORKSPACE_MODALITIES,
+  isModalityInWorkspace,
+} from '../../constants/workspaceTypes';
 
 const SettingsPanel = ({
   inputs,
-  parameterEnabled,
   models,
   groups,
+  currentModality = MODALITY.TEXT,
+  currentWorkspaceType,
   styleState,
-  showDebugPanel,
   customRequestMode,
-  customRequestBody,
   onInputChange,
-  onParameterToggle,
   onCloseSettings,
-  onConfigImport,
-  onConfigReset,
-  onNewChat,
-  onCustomRequestModeChange,
-  onCustomRequestBodyChange,
-  previewPayload,
-  messages,
+  // 会话
+  sessions = [],
+  activeSessionId,
+  onSwitchSession,
+  onCreateSession,
+  onRenameSession,
+  onDeleteSession,
 }) => {
   const { t } = useTranslation();
-  const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const currentConfig = {
-    inputs,
-    parameterEnabled,
-    showDebugPanel,
-    customRequestMode,
-    customRequestBody,
-  };
+  const showImageUrlInput = currentModality === MODALITY.MULTIMODAL;
+  const isUnsupportedModality =
+    !PLAYGROUND_SUPPORTED_MODALITIES.has(currentModality);
+  const modalityLabel = getModalityShortLabel(t, currentModality);
+
+  // 按当前会话的 workspace_type 过滤模型下拉
+  const filteredModels = React.useMemo(() => {
+    if (!currentWorkspaceType) return models;
+    const allowed = WORKSPACE_MODALITIES[currentWorkspaceType];
+    if (!allowed) return models;
+    return models.filter((m) =>
+      isModalityInWorkspace(m.modality || 'text', currentWorkspaceType),
+    );
+  }, [models, currentWorkspaceType]);
 
   return (
     <Card
@@ -69,18 +80,9 @@ const SettingsPanel = ({
         flexDirection: 'column',
       }}
     >
-      {/* 标题区域 - 与调试面板保持一致 */}
-      <div className='flex items-center justify-between mb-6 flex-shrink-0'>
-        <div className='flex items-center'>
-          <div className='w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center mr-3'>
-            <Settings size={20} className='text-white' />
-          </div>
-          <Typography.Title heading={5} className='mb-0'>
-            {t('模型配置')}
-          </Typography.Title>
-        </div>
-
-        {styleState.isMobile && onCloseSettings && (
+      {/* 移动端留一个关闭按钮，桌面端不需要标题栏 */}
+      {styleState.isMobile && onCloseSettings && (
+        <div className='flex items-center justify-end mb-3 flex-shrink-0'>
           <Button
             icon={<X size={16} />}
             onClick={onCloseSettings}
@@ -89,34 +91,11 @@ const SettingsPanel = ({
             size='small'
             className='!rounded-lg'
           />
-        )}
-      </div>
-
-      {/* 移动端配置管理 */}
-      {styleState.isMobile && (
-        <div className='mb-4 flex-shrink-0'>
-          <ConfigManager
-            currentConfig={currentConfig}
-            onConfigImport={onConfigImport}
-            onConfigReset={onConfigReset}
-            onNewChat={onNewChat}
-            styleState={{ ...styleState, isMobile: false }}
-            messages={messages}
-          />
         </div>
       )}
 
       <div className='space-y-6 overflow-y-auto flex-1 pr-2 model-settings-scroll'>
-        {/* 自定义请求体编辑器 */}
-        <CustomRequestEditor
-          customRequestMode={customRequestMode}
-          customRequestBody={customRequestBody}
-          onCustomRequestModeChange={onCustomRequestModeChange}
-          onCustomRequestBodyChange={onCustomRequestBodyChange}
-          defaultPayload={previewPayload}
-        />
-
-        {/* 分组选择 */}
+        {/* 分组选择（会话之上） */}
         <div className={customRequestMode ? 'opacity-50' : ''}>
           <div className='flex items-center gap-2 mb-2'>
             <Users size={16} className='text-gray-500' />
@@ -148,13 +127,16 @@ const SettingsPanel = ({
           />
         </div>
 
-        {/* 模型选择 */}
+        {/* 模型选择（会话之上） */}
         <div className={customRequestMode ? 'opacity-50' : ''}>
           <div className='flex items-center gap-2 mb-2'>
             <Sparkles size={16} className='text-gray-500' />
             <Typography.Text strong className='text-sm'>
               {t('模型')}
             </Typography.Text>
+            <Tag size='small' shape='circle' color='cyan'>
+              {modalityLabel}
+            </Tag>
             {customRequestMode && (
               <Typography.Text className='text-xs text-orange-600'>
                 ({t('已在自定义模式中忽略')})
@@ -171,7 +153,8 @@ const SettingsPanel = ({
             onChange={(value) => onInputChange('model', value)}
             value={inputs.model}
             autoComplete='new-password'
-            optionList={models}
+            optionList={filteredModels}
+            renderOptionItem={renderModelOption}
             style={{ width: '100%' }}
             dropdownStyle={{ width: '100%', maxWidth: '100%' }}
             className='!rounded-lg'
@@ -179,94 +162,43 @@ const SettingsPanel = ({
           />
         </div>
 
-        {/* 图片URL输入 */}
-        <div className={customRequestMode ? 'opacity-50' : ''}>
-          <ImageUrlInput
-            imageUrls={inputs.imageUrls}
-            imageEnabled={inputs.imageEnabled}
-            onImageUrlsChange={(urls) => onInputChange('imageUrls', urls)}
-            onImageEnabledChange={(enabled) =>
-              onInputChange('imageEnabled', enabled)
-            }
-            disabled={customRequestMode}
+        {/* 非支持 modality 的提示 */}
+        {isUnsupportedModality && !customRequestMode && (
+          <Banner
+            type='info'
+            closeIcon={null}
+            description={t(
+              '当前模型类别（{{modality}}）的专属参数界面即将上线，现阶段操练场仅提供基础请求入口。你可以切换到自定义请求体模式手动调参。',
+              { modality: modalityLabel },
+            )}
           />
-        </div>
+        )}
 
-        {/* 高级参数折叠面板 */}
-        <div>
-          <div
-            className='flex items-center gap-3 cursor-pointer group'
-            onClick={() => setAdvancedOpen(!advancedOpen)}
-          >
-            <div className='flex-1 h-px' style={{ backgroundColor: 'var(--semi-color-border)' }} />
-            <div className='flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs transition-colors duration-150' style={{ color: 'var(--semi-color-text-3)' }}>
-              <Settings size={12} />
-              <span>{t('高级参数')}</span>
-              <ChevronDown
-                size={12}
-                className='transition-transform duration-200'
-                style={{
-                  transform: advancedOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                }}
-              />
-            </div>
-            <div className='flex-1 h-px' style={{ backgroundColor: 'var(--semi-color-border)' }} />
+        {/* 图片URL输入 - 仅多模态模型可见 */}
+        {showImageUrlInput && (
+          <div className={customRequestMode ? 'opacity-50' : ''}>
+            <ImageUrlInput
+              imageUrls={inputs.imageUrls}
+              imageEnabled={inputs.imageEnabled}
+              onImageUrlsChange={(urls) => onInputChange('imageUrls', urls)}
+              onImageEnabledChange={(enabled) =>
+                onInputChange('imageEnabled', enabled)
+              }
+              disabled={customRequestMode}
+            />
           </div>
-          <Collapsible isOpen={advancedOpen}>
-            <div className='space-y-6 pt-4'>
-              {/* 参数控制组件 */}
-              <div className={customRequestMode ? 'opacity-50' : ''}>
-                <ParameterControl
-                  inputs={inputs}
-                  parameterEnabled={parameterEnabled}
-                  onInputChange={onInputChange}
-                  onParameterToggle={onParameterToggle}
-                  disabled={customRequestMode}
-                />
-              </div>
+        )}
 
-              {/* 流式输出开关 */}
-              <div className={customRequestMode ? 'opacity-50' : ''}>
-                <div className='flex items-center justify-between'>
-                  <div className='flex items-center gap-2'>
-                    <ToggleLeft size={16} className='text-gray-500' />
-                    <Typography.Text strong className='text-sm'>
-                      {t('流式输出')}
-                    </Typography.Text>
-                    {customRequestMode && (
-                      <Typography.Text className='text-xs text-orange-600'>
-                        ({t('已在自定义模式中忽略')})
-                      </Typography.Text>
-                    )}
-                  </div>
-                  <Switch
-                    checked={inputs.stream}
-                    onChange={(checked) => onInputChange('stream', checked)}
-                    checkedText={t('开')}
-                    uncheckedText={t('关')}
-                    size='small'
-                    disabled={customRequestMode}
-                  />
-                </div>
-              </div>
-            </div>
-          </Collapsible>
-        </div>
+        {/* 会话列表（放到分组/模型之下） */}
+        <SessionList
+          sessions={sessions}
+          activeId={activeSessionId}
+          onSwitch={onSwitchSession}
+          onCreate={onCreateSession}
+          onRename={onRenameSession}
+          onDelete={onDeleteSession}
+        />
       </div>
-
-      {/* 桌面端的配置管理放在底部 */}
-      {!styleState.isMobile && (
-        <div className='flex-shrink-0 pt-3'>
-          <ConfigManager
-            currentConfig={currentConfig}
-            onConfigImport={onConfigImport}
-            onConfigReset={onConfigReset}
-            onNewChat={onNewChat}
-            styleState={styleState}
-            messages={messages}
-          />
-        </div>
-      )}
     </Card>
   );
 };

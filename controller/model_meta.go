@@ -9,9 +9,25 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 
 	"github.com/gin-gonic/gin"
 )
+
+// GetModelModalityMeta 返回 modality 枚举、默认参数 Schema 模板，以及
+// 内置的 modality 匹配模式。供后台模型编辑表单的下拉与"填入内置默认"
+// 按钮使用，也供 Playground 做 fallback。
+func GetModelModalityMeta(c *gin.Context) {
+	templates := make(map[string]json.RawMessage, len(constant.DefaultParamSchemas))
+	for k, v := range constant.DefaultParamSchemas {
+		templates[k] = json.RawMessage(v)
+	}
+	common.ApiSuccess(c, gin.H{
+		"modalities":                constant.ModalityList,
+		"templates":                 templates,
+		"modality_patterns_default": model_setting.DefaultCustomModalityPatterns,
+	})
+}
 
 // GetAllModelsMeta 获取模型列表（分页）
 func GetAllModelsMeta(c *gin.Context) {
@@ -77,6 +93,20 @@ func GetModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, &m)
 }
 
+// validateModalityAndSchema 校验 modality 合法性与 param_schema 的 JSON 合法性。
+func validateModalityAndSchema(m *model.Model) (string, bool) {
+	if !constant.IsValidModality(m.Modality) {
+		return "不支持的模型类别 (modality)", false
+	}
+	if strings.TrimSpace(m.ParamSchema) != "" {
+		var tmp interface{}
+		if err := common.UnmarshalJsonStr(m.ParamSchema, &tmp); err != nil {
+			return "参数 Schema 不是合法 JSON: " + err.Error(), false
+		}
+	}
+	return "", true
+}
+
 // CreateModelMeta 新建模型
 func CreateModelMeta(c *gin.Context) {
 	var m model.Model
@@ -86,6 +116,10 @@ func CreateModelMeta(c *gin.Context) {
 	}
 	if m.ModelName == "" {
 		common.ApiErrorMsg(c, "模型名称不能为空")
+		return
+	}
+	if msg, ok := validateModalityAndSchema(&m); !ok {
+		common.ApiErrorMsg(c, msg)
 		return
 	}
 	// 名称冲突检查
@@ -126,6 +160,10 @@ func UpdateModelMeta(c *gin.Context) {
 			return
 		}
 	} else {
+		if msg, ok := validateModalityAndSchema(&m); !ok {
+			common.ApiErrorMsg(c, msg)
+			return
+		}
 		// 名称冲突检查
 		if dup, err := model.IsModelNameDuplicated(m.Id, m.ModelName); err != nil {
 			common.ApiError(c, err)

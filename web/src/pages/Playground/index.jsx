@@ -31,6 +31,7 @@ import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { usePlaygroundState } from '../../hooks/playground/usePlaygroundState';
 import { useMessageActions } from '../../hooks/playground/useMessageActions';
 import { useApiRequest } from '../../hooks/playground/useApiRequest';
+import { useImageGeneration } from '../../hooks/playground/useImageGeneration';
 import { useSyncMessageAndCustomBody } from '../../hooks/playground/useSyncMessageAndCustomBody';
 import { useMessageEdit } from '../../hooks/playground/useMessageEdit';
 import { useDataLoader } from '../../hooks/playground/useDataLoader';
@@ -53,13 +54,21 @@ import {
 // Components
 import {
   OptimizedSettingsPanel,
-  OptimizedDebugPanel,
   OptimizedMessageContent,
   OptimizedMessageActions,
 } from '../../components/playground/OptimizedComponents';
 import ChatArea from '../../components/playground/ChatArea';
 import FloatingButtons from '../../components/playground/FloatingButtons';
+import PlaygroundRightPanel, {
+  RIGHT_PANEL_TABS,
+} from '../../components/playground/PlaygroundRightPanel';
+import WorkspaceRouter from '../../components/playground/WorkspaceRouter';
+import {
+  parseSchema,
+  defaultsOf,
+} from '../../components/playground/SchemaParamsRenderer';
 import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
+import { WORKSPACE } from '../../constants/workspaceTypes';
 
 // 生成用户头像（灰色背景 + 圆角矩形，与导航头像一致）
 const generateAvatarDataUrl = (username) => {
@@ -106,6 +115,7 @@ const Playground = () => {
     models,
     groups,
     status,
+    modalityMap,
     message,
     debugData,
     activeDebugTab,
@@ -123,6 +133,7 @@ const Playground = () => {
     setModels,
     setGroups,
     setStatus,
+    setModalityMap,
     setMessage,
     setDebugData,
     setActiveDebugTab,
@@ -130,7 +141,45 @@ const Playground = () => {
     setShowDebugPanel,
     setCustomRequestMode,
     setCustomRequestBody,
+    // 会话
+    sessions,
+    activeSessionId,
+    activeSession,
+    currentWorkspaceType,
+    switchSession,
+    createSession,
+    renameSession,
+    deleteSession,
+    touchSession,
   } = state;
+
+  // 当前选中模型的 modality，用于 SettingsPanel 按模态自适应
+  const currentModality =
+    (modalityMap && modalityMap[inputs.model]?.modality) || 'text';
+
+  // image workspace 的参数 schema：完全由管理员在后台为该模型配置的
+  // param_schema 决定；没配就是 null（右栏显示"该模型未声明任何参数"）。
+  // 想给某个模型默认列出"尺寸/质量/宽高比"等，去"模型管理"里填一份 schema。
+  const imageParamSchema = React.useMemo(() => {
+    const raw = modalityMap?.[inputs.model]?.param_schema;
+    return parseSchema(raw);
+  }, [inputs.model, modalityMap]);
+
+  // image workspace 的参数值。schema 变化（切模型/切 workspace）时重置。
+  const [imageParamValues, setImageParamValues] = React.useState({});
+  const imageSchemaSig = React.useMemo(
+    () => JSON.stringify(imageParamSchema || {}),
+    [imageParamSchema],
+  );
+  React.useEffect(() => {
+    setImageParamValues(imageParamSchema ? defaultsOf(imageParamSchema) : {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageSchemaSig]);
+
+  // 右侧面板 Tab 状态：params 或 debug
+  const [rightPanelTab, setRightPanelTab] = React.useState(
+    RIGHT_PANEL_TABS.PARAMS,
+  );
 
   // API 请求相关
   const { sendRequest, onStopGenerator } = useApiRequest(
@@ -142,7 +191,14 @@ const Playground = () => {
   );
 
   // 数据加载
-  useDataLoader(userState, inputs, handleInputChange, setModels, setGroups);
+  useDataLoader(
+    userState,
+    inputs,
+    handleInputChange,
+    setModels,
+    setGroups,
+    setModalityMap,
+  );
 
   // 消息编辑
   const {
@@ -158,6 +214,7 @@ const Playground = () => {
     parameterEnabled,
     sendRequest,
     saveMessagesImmediately,
+    currentModality,
   );
 
   // 消息和自定义请求体同步
@@ -187,6 +244,113 @@ const Playground = () => {
       avatar: getLogo() || generateDefaultLogoDataUrl(actualTheme === 'dark'),
     },
   };
+
+  // 图片生成（image workspace 专用）
+  const { generate: generateImage, loading: imageGenerating } =
+    useImageGeneration({
+      onDebug: (patch) =>
+        setDebugData((prev) => ({ ...prev, ...patch })),
+    });
+
+  // 首条 prompt 自动给会话命名：标题仍是默认名时，用新 prompt 的前若干
+  // 字符填进去。后续 prompt 不改。
+  const maybeAutoNameSession = useCallback(
+    (promptText) => {
+      if (!promptText || !activeSessionId) return;
+      const trimmed = String(promptText).trim();
+      if (!trimmed) return;
+      const sess = sessions.find((s) => s.id === activeSessionId);
+      if (!sess) return;
+      const defaultTitles = ['', '未命名会话', '新会话'];
+      if (!defaultTitles.includes(sess.title || '')) return;
+      const singleLine = trimmed.replace(/\s+/g, ' ');
+      const name =
+        singleLine.length > 20 ? singleLine.slice(0, 20) + '…' : singleLine;
+      renameSession(activeSessionId, name);
+    },
+    [activeSessionId, sessions, renameSession],
+  );
+
+  const handleGenerateImage = useCallback(
+    async ({ prompt }) => {
+      if (!prompt || !prompt.trim()) return;
+      maybeAutoNameSession(prompt);
+      // 真实消息活动：把当前会话顶到列表顶部
+      if (activeSessionId) touchSession?.(activeSessionId);
+      const params = { ...imageParamValues };
+      const userMsg = createMessage(MESSAGE_ROLES.USER, prompt);
+      const loadingMsg = createLoadingAssistantMessage();
+      let newMessages = [];
+      setMessage((prev) => {
+        newMessages = [...prev, userMsg, loadingMsg];
+        return newMessages;
+      });
+      setTimeout(() => saveMessagesImmediately(newMessages), 0);
+
+      const result = await generateImage({
+        model: inputs.model,
+        group: inputs.group,
+        prompt,
+        params,
+      });
+
+      setMessage((prev) => {
+        const next = prev.map((m) => {
+          if (m.id !== loadingMsg.id) return m;
+          if (!result || result.error || !result.images?.length) {
+            return {
+              ...m,
+              status: 'error',
+              errorMessage: result?.error || t('图片生成失败'),
+            };
+          }
+          return {
+            ...m,
+            status: 'complete',
+            content: result.images.map((img) => ({
+              type: 'image_url',
+              image_url: { url: img.url },
+              revised_prompt: img.revisedPrompt,
+            })),
+            meta: {
+              model: inputs.model,
+              params: params || {},
+              usage: result.usage,
+            },
+          };
+        });
+        setTimeout(() => saveMessagesImmediately(next), 0);
+        return next;
+      });
+    },
+    [
+      generateImage,
+      inputs.model,
+      inputs.group,
+      imageParamValues,
+      maybeAutoNameSession,
+      setMessage,
+      saveMessagesImmediately,
+      activeSessionId,
+      touchSession,
+      t,
+    ],
+  );
+
+  const handleDeleteGeneration = useCallback(
+    (generation) => {
+      setMessage((prev) => {
+        const next = prev.filter((m) => {
+          if (generation.promptMessage && m.id === generation.promptMessage.id) return false;
+          if (generation.assistantMessage && m.id === generation.assistantMessage.id) return false;
+          return true;
+        });
+        setTimeout(() => saveMessagesImmediately(next), 0);
+        return next;
+      });
+    },
+    [setMessage, saveMessagesImmediately],
+  );
 
   // 消息操作
   const messageActions = useMessageActions(
@@ -240,16 +404,32 @@ const Playground = () => {
         }
       }
 
-      return buildApiPayload(messages, null, inputs, parameterEnabled);
+      return buildApiPayload(
+        messages,
+        null,
+        inputs,
+        parameterEnabled,
+        currentModality,
+      );
     } catch (error) {
       console.error('构造预览请求体失败:', error);
       return null;
     }
-  }, [inputs, parameterEnabled, message, customRequestMode, customRequestBody]);
+  }, [
+    inputs,
+    parameterEnabled,
+    message,
+    customRequestMode,
+    customRequestBody,
+    currentModality,
+  ]);
 
   // 发送消息
-  function onMessageSend(content, attachment) {
-    console.log('attachment: ', attachment);
+  function onMessageSend(content, _attachment) {
+    // 用首条消息自动命名
+    maybeAutoNameSession(typeof content === 'string' ? content : '');
+    // 真实消息活动：把当前会话顶到列表顶部
+    if (activeSessionId) touchSession?.(activeSessionId);
 
     // 创建用户消息和加载消息
     const userMessage = createMessage(MESSAGE_ROLES.USER, content);
@@ -299,6 +479,7 @@ const Playground = () => {
         null,
         inputs,
         parameterEnabled,
+        currentModality,
       );
       sendRequest(payload, inputs.stream);
 
@@ -487,24 +668,21 @@ const Playground = () => {
             >
               <OptimizedSettingsPanel
                 inputs={inputs}
-                parameterEnabled={parameterEnabled}
                 models={models}
                 groups={groups}
+                currentModality={currentModality}
+                currentWorkspaceType={currentWorkspaceType}
                 styleState={styleState}
                 showSettings={showSettings}
-                showDebugPanel={showDebugPanel}
                 customRequestMode={customRequestMode}
-                customRequestBody={customRequestBody}
                 onInputChange={handleInputChange}
-                onParameterToggle={handleParameterToggle}
                 onCloseSettings={() => setShowSettings(false)}
-                onConfigImport={handleConfigImport}
-                onConfigReset={handleConfigReset}
-                onNewChat={handleNewChat}
-                onCustomRequestModeChange={setCustomRequestMode}
-                onCustomRequestBodyChange={setCustomRequestBody}
-                previewPayload={previewPayload}
-                messages={message}
+                sessions={sessions}
+                activeSessionId={activeSessionId}
+                onSwitchSession={switchSession}
+                onCreateSession={(wsType) => handleNewChat(wsType)}
+                onRenameSession={renameSession}
+                onDeleteSession={deleteSession}
               />
             </Layout.Sider>
           )}
@@ -512,50 +690,103 @@ const Playground = () => {
           <Layout.Content className='relative flex-1 overflow-hidden'>
             <div className='overflow-hidden flex flex-col lg:flex-row h-[calc(100vh-66px)] mt-[60px]'>
               <div className='flex-1 flex flex-col'>
-                <ChatArea
-                  chatRef={chatRef}
-                  message={message}
-                  inputs={inputs}
-                  styleState={styleState}
-                  showDebugPanel={showDebugPanel}
-                  roleInfo={roleInfo}
-                  onMessageSend={onMessageSend}
-                  onMessageCopy={messageActions.handleMessageCopy}
-                  onMessageReset={messageActions.handleMessageReset}
-                  onMessageDelete={messageActions.handleMessageDelete}
-                  onStopGenerator={onStopGenerator}
-                  onClearMessages={handleClearMessages}
-                  onToggleDebugPanel={() => setShowDebugPanel(!showDebugPanel)}
-                  renderCustomChatContent={renderCustomChatContent}
-                  renderChatBoxAction={renderChatBoxAction}
+                <WorkspaceRouter
+                  workspaceType={currentWorkspaceType}
+                  currentModelName={inputs.model}
+                  chatAreaProps={{
+                    chatRef,
+                    message,
+                    inputs,
+                    styleState,
+                    showDebugPanel,
+                    roleInfo,
+                    onMessageSend,
+                    onMessageCopy: messageActions.handleMessageCopy,
+                    onMessageReset: messageActions.handleMessageReset,
+                    onMessageDelete: messageActions.handleMessageDelete,
+                    onStopGenerator,
+                    onClearMessages: handleClearMessages,
+                    onToggleDebugPanel: () => setShowDebugPanel(!showDebugPanel),
+                    renderCustomChatContent,
+                    renderChatBoxAction,
+                  }}
+                  imageWorkspaceProps={{
+                    message,
+                    inputs,
+                    styleState,
+                    loading: imageGenerating,
+                    onGenerate: handleGenerateImage,
+                    onDeleteGeneration: handleDeleteGeneration,
+                    onClearAll: handleClearMessages,
+                    showDebugPanel,
+                    onToggleDebugPanel: () => setShowDebugPanel(!showDebugPanel),
+                  }}
+                  placeholderProps={{
+                    modelName: inputs.model,
+                    styleState,
+                    onSwitchToCustomRequest: () => {
+                      setCustomRequestMode(true);
+                      setRightPanelTab(RIGHT_PANEL_TABS.PARAMS);
+                      if (!showDebugPanel) setShowDebugPanel(true);
+                    },
+                  }}
                 />
               </div>
 
-              {/* 调试面板 - 桌面端 */}
+              {/* 右侧面板 - 桌面端：参数/调试 Tab 切换，可通过右上角按钮收起 */}
               {showDebugPanel && !isMobile && (
                 <div className='w-96 flex-shrink-0 h-full'>
-                  <OptimizedDebugPanel
+                  <PlaygroundRightPanel
+                    styleState={styleState}
+                    activeTab={rightPanelTab}
+                    onActiveTabChange={setRightPanelTab}
+                    inputs={inputs}
+                    parameterEnabled={parameterEnabled}
+                    currentModality={currentModality}
+                    currentWorkspaceType={currentWorkspaceType}
+                    customRequestMode={customRequestMode}
+                    customRequestBody={customRequestBody}
+                    onInputChange={handleInputChange}
+                    onParameterToggle={handleParameterToggle}
+                    onCustomRequestModeChange={setCustomRequestMode}
+                    onCustomRequestBodyChange={setCustomRequestBody}
+                    previewPayload={previewPayload}
+                    paramSchema={imageParamSchema}
+                    paramValues={imageParamValues}
+                    onParamValuesChange={setImageParamValues}
                     debugData={debugData}
                     activeDebugTab={activeDebugTab}
                     onActiveDebugTabChange={setActiveDebugTab}
-                    styleState={styleState}
-                    customRequestMode={customRequestMode}
                   />
                 </div>
               )}
             </div>
 
-            {/* 调试面板 - 移动端覆盖层 */}
+            {/* 右侧面板 - 移动端覆盖层 */}
             {showDebugPanel && isMobile && (
               <div className='fixed top-0 left-0 right-0 bottom-0 z-[1000] bg-white overflow-auto shadow-lg'>
-                <OptimizedDebugPanel
+                <PlaygroundRightPanel
+                  styleState={styleState}
+                  activeTab={rightPanelTab}
+                  onActiveTabChange={setRightPanelTab}
+                  onClose={() => setShowDebugPanel(false)}
+                  inputs={inputs}
+                  parameterEnabled={parameterEnabled}
+                  currentModality={currentModality}
+                  currentWorkspaceType={currentWorkspaceType}
+                  customRequestMode={customRequestMode}
+                  customRequestBody={customRequestBody}
+                  onInputChange={handleInputChange}
+                  onParameterToggle={handleParameterToggle}
+                  onCustomRequestModeChange={setCustomRequestMode}
+                  onCustomRequestBodyChange={setCustomRequestBody}
+                  previewPayload={previewPayload}
+                  paramSchema={imageParamSchema}
+                  paramValues={imageParamValues}
+                  onParamValuesChange={setImageParamValues}
                   debugData={debugData}
                   activeDebugTab={activeDebugTab}
                   onActiveDebugTabChange={setActiveDebugTab}
-                  styleState={styleState}
-                  showDebugPanel={showDebugPanel}
-                  onCloseDebugPanel={() => setShowDebugPanel(false)}
-                  customRequestMode={customRequestMode}
                 />
               </div>
             )}

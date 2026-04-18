@@ -104,7 +104,9 @@ export const DEFAULT_CONFIG = {
     seed: false,
   },
   systemPrompt: '',
-  showDebugPanel: false,
+  // showDebugPanel 控制右侧面板（参数+调试 Tab）是否可见，默认开启，
+  // 用户可用右上角按钮收起以腾出聊天空间。
+  showDebugPanel: true,
   customRequestMode: false,
   customRequestBody: '',
 };
@@ -129,3 +131,35 @@ export const STORAGE_KEYS = {
   CONFIG: 'playground_config',
   MESSAGES: 'playground_messages',
 };
+
+// ========== Modality 枚举 ==========
+// 与后端 constant/modality.go 保持一致。
+export const MODALITY = {
+  TEXT: 'text',
+  MULTIMODAL: 'multimodal',
+  IMAGE: 'image',
+  VIDEO: 'video',
+  AUDIO: 'audio',
+  EMBEDDING: 'embedding',
+  RERANK: 'rerank',
+};
+
+// Modality 的显示文案集中在 constants/modalityLabels.js 管理，方便
+// i18next-cli 静态提取 t() 字面量。
+
+// 第一期 Playground 实际支持参数/交互的 modality。其余显示占位提示。
+export const PLAYGROUND_SUPPORTED_MODALITIES = new Set([
+  MODALITY.TEXT,
+  MODALITY.MULTIMODAL,
+  MODALITY.IMAGE,
+]);
+
+// 纯文本参数，仅 text / multimodal 模态下可见。
+export const TEXT_PARAM_KEYS = [
+  'temperature',
+  'top_p',
+  'frequency_penalty',
+  'presence_penalty',
+  'max_tokens',
+  'seed',
+];

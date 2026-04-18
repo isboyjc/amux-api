@@ -21,8 +21,33 @@ import {
   STORAGE_KEYS,
   DEFAULT_CONFIG,
 } from '../../constants/playground.constants';
+import {
+  getMessages as dbGetMessages,
+  putMessages as dbPutMessages,
+  clearMessages as dbClearMessages,
+} from '../../utils/playgroundDb';
 
-const MESSAGES_STORAGE_KEY = 'playground_messages';
+const ACTIVE_SESSION_KEY = 'playground_active_session_id';
+
+/**
+ * 活动会话 id 存 localStorage，方便刷新后定位到同一个会话。
+ */
+export const getActiveSessionId = () => {
+  try {
+    return localStorage.getItem(ACTIVE_SESSION_KEY) || null;
+  } catch {
+    return null;
+  }
+};
+
+export const setActiveSessionId = (id) => {
+  try {
+    if (id) localStorage.setItem(ACTIVE_SESSION_KEY, id);
+    else localStorage.removeItem(ACTIVE_SESSION_KEY);
+  } catch {
+    // ignore
+  }
+};
 
 /**
  * 保存配置到 localStorage
@@ -41,16 +66,16 @@ export const saveConfig = (config) => {
 };
 
 /**
- * 保存消息到 localStorage
- * @param {Array} messages - 要保存的消息数组
+ * 保存消息。sessionId 缺省时使用当前 active session。已迁移到 IndexedDB，
+ * localStorage 不再承载消息内容——解决 base64 超限导致的丢失问题。
+ * @param {Array} messages
+ * @param {string} [sessionId]
  */
-export const saveMessages = (messages) => {
+export const saveMessages = async (messages, sessionId) => {
+  const sid = sessionId || getActiveSessionId();
+  if (!sid) return;
   try {
-    const messagesToSave = {
-      messages,
-      timestamp: new Date().toISOString(),
-    };
-    localStorage.setItem(STORAGE_KEYS.MESSAGES, JSON.stringify(messagesToSave));
+    await dbPutMessages(sid, messages || []);
   } catch (error) {
     console.error('保存消息失败:', error);
   }
@@ -97,21 +122,40 @@ export const loadConfig = () => {
 };
 
 /**
- * 从 localStorage 加载消息
- * @returns {Array} 消息数组，如果不存在则返回 null
+ * 从 IndexedDB 加载消息。sessionId 缺省时使用当前 active session。
+ * @param {string} [sessionId]
+ * @returns {Promise<Array|null>}
  */
-export const loadMessages = () => {
+export const loadMessages = async (sessionId) => {
+  const sid = sessionId || getActiveSessionId();
+  if (!sid) return null;
   try {
-    const savedMessages = localStorage.getItem(STORAGE_KEYS.MESSAGES);
-    if (savedMessages) {
-      const parsedMessages = JSON.parse(savedMessages);
-      return parsedMessages.messages || null;
-    }
+    return await dbGetMessages(sid);
   } catch (error) {
     console.error('加载消息失败:', error);
+    return null;
   }
+};
 
-  return null;
+/**
+ * 一次性迁移旧 localStorage 里的消息数据到 IndexedDB。返回迁移到的
+ * session id（若有）。供 useSessions 初始化时调用。
+ */
+export const migrateLegacyMessagesIfAny = async (newSessionId) => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.MESSAGES);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const list = parsed?.messages;
+    if (Array.isArray(list) && list.length > 0 && newSessionId) {
+      await dbPutMessages(newSessionId, list);
+    }
+    localStorage.removeItem(STORAGE_KEYS.MESSAGES);
+    return newSessionId;
+  } catch (e) {
+    console.warn('迁移旧消息失败:', e);
+    return null;
+  }
 };
 
 /**
@@ -120,18 +164,20 @@ export const loadMessages = () => {
 export const clearConfig = () => {
   try {
     localStorage.removeItem(STORAGE_KEYS.CONFIG);
-    localStorage.removeItem(STORAGE_KEYS.MESSAGES); // 同时清除消息
+    localStorage.removeItem(STORAGE_KEYS.MESSAGES); // 兼容旧 key
   } catch (error) {
     console.error('清除配置失败:', error);
   }
 };
 
 /**
- * 清除保存的消息
+ * 清除指定会话的消息。
  */
-export const clearMessages = () => {
+export const clearMessages = async (sessionId) => {
+  const sid = sessionId || getActiveSessionId();
+  if (!sid) return;
   try {
-    localStorage.removeItem(STORAGE_KEYS.MESSAGES);
+    await dbClearMessages(sid);
   } catch (error) {
     console.error('清除消息失败:', error);
   }
@@ -176,7 +222,9 @@ export const exportConfig = (config, messages = null) => {
   try {
     const configToExport = {
       ...config,
-      messages: messages || loadMessages(), // 包含消息数据
+      // 如果调用方没传 messages，这里不再自动去 IndexedDB 取（异步开销
+      // 且 exportConfig 本身是同步 API）；调用方应传入当前消息数组。
+      messages: messages || [],
       exportTime: new Date().toISOString(),
       version: '1.0',
     };
@@ -209,12 +257,14 @@ export const importConfig = (file) => {
           const importedConfig = JSON.parse(e.target.result);
 
           if (importedConfig.inputs && importedConfig.parameterEnabled) {
-            // 如果导入的配置包含消息，也一起导入
+            // 如果导入的配置包含消息，写入当前 active session
             if (
               importedConfig.messages &&
               Array.isArray(importedConfig.messages)
             ) {
-              saveMessages(importedConfig.messages);
+              saveMessages(importedConfig.messages).catch((err) =>
+                console.error('导入消息失败:', err),
+              );
             }
 
             resolve(importedConfig);

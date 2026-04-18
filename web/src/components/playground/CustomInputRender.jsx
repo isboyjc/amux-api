@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useRef, useEffect, useCallback } from 'react';
-import { Toast } from '@douyinfe/semi-ui';
-import { ArrowUp, Trash2 } from 'lucide-react';
+import { Toast, Typography } from '@douyinfe/semi-ui';
+import { ArrowUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { usePlayground } from '../../contexts/PlaygroundContext';
 
@@ -27,8 +27,7 @@ const CustomInputRender = (props) => {
   const { t } = useTranslation();
   const { onPasteImage, imageEnabled } = usePlayground();
   const { detailProps } = props;
-  const { clearContextNode, uploadNode, inputNode, sendNode, onClick } =
-    detailProps;
+  const { inputNode, sendNode, onClick } = detailProps;
   const containerRef = useRef(null);
 
   const handlePaste = useCallback(
@@ -103,33 +102,16 @@ const CustomInputRender = (props) => {
     };
   }, [handlePaste]);
 
-  // 清空按钮
-  const styledClearNode = clearContextNode
-    ? React.cloneElement(clearContextNode, {
-        className: `!rounded-lg !bg-gray-100 hover:!bg-red-500 hover:!text-white flex-shrink-0 transition-all ${clearContextNode.props.className || ''}`,
-        style: {
-          ...clearContextNode.props.style,
-          width: '32px',
-          height: '32px',
-          minWidth: '32px',
-          padding: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        icon: <Trash2 size={16} />,
-        children: null,
-      })
-    : null;
-
-  // 发送按钮
+  // 圆形发送按钮
   const styledSendNode = React.cloneElement(sendNode, {
-    className: `!rounded-lg !bg-purple-500 hover:!bg-purple-600 flex-shrink-0 transition-all ${sendNode.props.className || ''}`,
+    className: '!rounded-full flex-shrink-0 ' + (sendNode.props.className || ''),
+    theme: 'solid',
+    type: 'primary',
     style: {
       ...sendNode.props.style,
-      width: '32px',
-      height: '32px',
-      minWidth: '32px',
+      width: 36,
+      height: 36,
+      minWidth: 36,
       padding: 0,
       display: 'flex',
       alignItems: 'center',
@@ -137,21 +119,35 @@ const CustomInputRender = (props) => {
     },
     icon: <ArrowUp size={18} strokeWidth={2.5} />,
     children: null,
+    'aria-label': t('发送'),
   });
 
   return (
-    <div className='p-2 sm:p-4' ref={containerRef}>
+    <div className='px-3 pb-3 sm:px-4 sm:pb-4' ref={containerRef}>
       <div
-        className='flex items-center gap-2 sm:gap-3 p-2 bg-gray-50 rounded-xl sm:rounded-2xl shadow-sm hover:shadow-md transition-shadow'
-        style={{ border: '1px solid var(--semi-color-border)' }}
+        className='rounded-2xl transition-colors focus-within:ring-2 focus-within:ring-offset-0'
+        style={{
+          border: '1px solid var(--semi-color-border)',
+          backgroundColor: 'var(--semi-color-bg-0)',
+          ['--tw-ring-color']:
+            'var(--semi-color-primary-light-hover, rgba(129,140,248,0.35))',
+        }}
         onClick={onClick}
         title={t('支持 Ctrl+V 粘贴图片')}
       >
-        {/* 清空对话按钮 - 左边 */}
-        {styledClearNode}
-        <div className='flex-1'>{inputNode}</div>
-        {/* 发送按钮 - 右边 */}
-        {styledSendNode}
+        {/* 输入框（Semi Chat 注入的 inputNode）顶在上部 */}
+        <div className='px-1 pt-1'>{inputNode}</div>
+        {/* 底部 action 行：左侧快捷键提示，右侧圆形发送按钮 */}
+        <div className='flex items-center justify-between px-2 pb-2'>
+          <Typography.Text
+            type='tertiary'
+            className='text-xs select-none'
+            style={{ paddingLeft: 4 }}
+          >
+            {t('Enter 发送, Shift + Enter 换行')}
+          </Typography.Text>
+          {styledSendNode}
+        </div>
       </div>
     </div>
   );

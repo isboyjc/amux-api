@@ -543,6 +543,40 @@ func GetUserModels(c *gin.Context) {
 			}
 		}
 	}
+
+	// detail=true 时返回 [{name, modality, param_schema}]，供 Playground 按模态
+	// 渲染；保持默认返回 []string 的旧契约以兼容现有 token/console 页面。
+	if c.Query("detail") == "true" {
+		exactMap, ruleMap, _ := model.GetModelRecordsByNames(models)
+		type item struct {
+			Name        string `json:"name"`
+			Modality    string `json:"modality"`
+			ParamSchema string `json:"param_schema,omitempty"`
+		}
+		out := make([]item, 0, len(models))
+		for _, name := range models {
+			it := item{Name: name, Modality: constant.ModalityText}
+			// 分层解析：exact 显式 > exact endpoints > 运行时强信号 >
+			// rule 显式 > rule endpoints > 运行时弱信号 > text 兜底
+			if resolved := model.ResolveModalityForName(name, exactMap[name], ruleMap[name]); resolved != "" {
+				it.Modality = resolved
+			}
+			// param_schema：优先 exact，退 rule
+			if m := exactMap[name]; m != nil && m.ParamSchema != "" {
+				it.ParamSchema = m.ParamSchema
+			} else if m := ruleMap[name]; m != nil {
+				it.ParamSchema = m.ParamSchema
+			}
+			out = append(out, it)
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    out,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

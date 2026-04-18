@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -11,6 +12,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// playgroundRelayFormat 根据 /pg/* 具体子路径决定应该用哪种 RelayFormat
+// 去解析请求体。没匹配上就退到 chat（OpenAI）格式。
+//
+//	/pg/chat/completions     → RelayFormatOpenAI       （GeneralOpenAIRequest）
+//	/pg/images/generations   → RelayFormatOpenAIImage  （ImageRequest）
+//	/pg/images/edits         → RelayFormatOpenAIImage
+func playgroundRelayFormat(path string) types.RelayFormat {
+	if strings.HasPrefix(path, "/pg/images/") {
+		return types.RelayFormatOpenAIImage
+	}
+	return types.RelayFormatOpenAI
+}
 
 func Playground(c *gin.Context) {
 	var newAPIError *types.NewAPIError
@@ -29,7 +43,8 @@ func Playground(c *gin.Context) {
 		return
 	}
 
-	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAI, nil, nil)
+	format := playgroundRelayFormat(c.Request.URL.Path)
+	relayInfo, err := relaycommon.GenRelayInfo(c, format, nil, nil)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 		return
@@ -52,5 +67,5 @@ func Playground(c *gin.Context) {
 	}
 	_ = middleware.SetupContextForToken(c, tempToken)
 
-	Relay(c, types.RelayFormatOpenAI)
+	Relay(c, format)
 }

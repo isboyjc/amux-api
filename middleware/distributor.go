@@ -81,8 +81,16 @@ func Distribute() func(c *gin.Context) {
 				}
 				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				// check path is /pg/chat/completions
-				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
+				// 所有 /pg/* 路径（chat/completions、images/generations 等）
+				// 都允许 Playground 在 JSON body 里带 group 字段；校验后覆盖
+				// usingGroup，让下拉里选的分组生效。
+				// multipart/form-data（/pg/images/edits 等）不做 body 预读，
+				// 避免干扰后续的 MultipartForm 解析——这类请求当前版本的
+				// Playground 还没用到，未来若需要需把 group 放进 form field。
+				contentType := c.Request.Header.Get("Content-Type")
+				isPlaygroundJSON := strings.HasPrefix(c.Request.URL.Path, "/pg/") &&
+					!strings.HasPrefix(contentType, "multipart/")
+				if isPlaygroundJSON {
 					playgroundRequest := &dto.PlayGroundRequest{}
 					err = common.UnmarshalBodyReusable(c, playgroundRequest)
 					if err != nil {
@@ -325,15 +333,21 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		}
 		c.Set("relay_mode", relayMode)
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
-		// playground chat completions
-		req, err := getModelFromRequest(c)
-		if err != nil {
-			return nil, false, err
+	if strings.HasPrefix(c.Request.URL.Path, "/pg/") {
+		// 操练场 JSON 子路径共享 { model, group } 结构。multipart 场景
+		// （如 /pg/images/edits）跳过，避免破坏 multipart 解析。
+		contentType := c.Request.Header.Get("Content-Type")
+		if !strings.HasPrefix(contentType, "multipart/") {
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			if req.Model != "" {
+				modelRequest.Model = req.Model
+			}
+			modelRequest.Group = req.Group
+			common.SetContextKey(c, constant.ContextKeyTokenGroup, modelRequest.Group)
 		}
-		modelRequest.Model = req.Model
-		modelRequest.Group = req.Group
-		common.SetContextKey(c, constant.ContextKeyTokenGroup, modelRequest.Group)
 	}
 
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/responses/compact") && modelRequest.Model != "" {

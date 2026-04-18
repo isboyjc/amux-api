@@ -32,12 +32,15 @@ import {
   Avatar,
   Col,
   Row,
+  Dropdown,
 } from '@douyinfe/semi-ui';
-import { Save, X, FileText } from 'lucide-react';
+import { Save, X, FileText, Sparkles } from 'lucide-react';
 import { IconAlertTriangle, IconLink } from '@douyinfe/semi-icons';
 import { API, showError, showSuccess } from '../../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { getModalityLongLabel } from '../../../../constants/modalityLabels';
+import { MODALITY } from '../../../../constants/playground.constants';
 
 const { Text, Title } = Typography;
 
@@ -59,6 +62,17 @@ const nameRuleOptions = [
   { label: '后缀名称匹配', value: 3 },
 ];
 
+// 后备顺序：当后端没返回 modality 枚举时使用
+const MODALITY_FALLBACK = [
+  MODALITY.TEXT,
+  MODALITY.MULTIMODAL,
+  MODALITY.IMAGE,
+  MODALITY.VIDEO,
+  MODALITY.AUDIO,
+  MODALITY.EMBEDDING,
+  MODALITY.RERANK,
+];
+
 const EditModelModal = (props) => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -74,6 +88,10 @@ const EditModelModal = (props) => {
   const [tagGroups, setTagGroups] = useState([]);
   const [endpointGroups, setEndpointGroups] = useState([]);
 
+  // Modality 枚举与各 modality 的默认 Schema 模板（后端 /api/models/modality-meta）
+  const [modalityList, setModalityList] = useState([]);
+  const [paramSchemaTemplates, setParamSchemaTemplates] = useState({});
+
   // 获取供应商列表
   const fetchVendors = async () => {
     try {
@@ -81,6 +99,20 @@ const EditModelModal = (props) => {
       if (res.data.success) {
         const items = res.data.data.items || res.data.data || [];
         setVendors(Array.isArray(items) ? items : []);
+      }
+    } catch (error) {
+      // ignore
+    }
+  };
+
+  // 获取 modality 枚举和默认 Schema 模板
+  const fetchModalityMeta = async () => {
+    try {
+      const res = await API.get('/api/models/modality-meta');
+      if (res.data.success) {
+        const data = res.data.data || {};
+        setModalityList(data.modalities || []);
+        setParamSchemaTemplates(data.templates || {});
       }
     } catch (error) {
       // ignore
@@ -109,6 +141,7 @@ const EditModelModal = (props) => {
     if (props.visiable) {
       fetchVendors();
       fetchPrefillGroups();
+      fetchModalityMeta();
     }
   }, [props.visiable]);
 
@@ -121,6 +154,8 @@ const EditModelModal = (props) => {
     vendor: '',
     vendor_icon: '',
     endpoints: '',
+    modality: 'text',
+    param_schema: '',
     name_rule: props.editingModel?.model_name ? 0 : undefined, // 通过未配置模型过来的固定为精确匹配
     status: true,
     sync_official: true,
@@ -147,6 +182,14 @@ const EditModelModal = (props) => {
         // endpoints 保持原始 JSON 字符串，若为空设为空串
         if (!data.endpoints) {
           data.endpoints = '';
+        }
+        // modality 缺省按 text
+        if (!data.modality) {
+          data.modality = 'text';
+        }
+        // param_schema 缺省为空串
+        if (!data.param_schema) {
+          data.param_schema = '';
         }
         // 处理status/sync_official，将数字转为布尔值
         data.status = data.status === 1;
@@ -522,6 +565,77 @@ const EditModelModal = (props) => {
                           </Space>
                         )
                       }
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.Select
+                      field='modality'
+                      label={t('模型类别')}
+                      placeholder={t('请选择模型类别')}
+                      optionList={(modalityList.length
+                        ? modalityList
+                        : MODALITY_FALLBACK
+                      ).map((m) => ({
+                        label: getModalityLongLabel(t, m),
+                        value: m,
+                      }))}
+                      extraText={t(
+                        '决定模型在 Playground 中以何种形态呈现（对话/画廊/向量等）',
+                      )}
+                      style={{ width: '100%' }}
+                      rules={[{ required: true, message: t('请选择模型类别') }]}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <div className='flex items-center justify-between mb-2'>
+                      <Typography.Text strong>
+                        {t('参数 Schema (JSON)')}
+                      </Typography.Text>
+                      <Dropdown
+                        trigger='click'
+                        position='bottomRight'
+                        render={
+                          <Dropdown.Menu>
+                            {(modalityList.length
+                              ? modalityList
+                              : MODALITY_FALLBACK
+                            ).map((m) => (
+                              <Dropdown.Item
+                                key={m}
+                                onClick={() => {
+                                  const tmpl = paramSchemaTemplates[m];
+                                  if (!tmpl || !formApiRef.current) return;
+                                  formApiRef.current.setValue(
+                                    'param_schema',
+                                    JSON.stringify(tmpl, null, 2),
+                                  );
+                                }}
+                              >
+                                {getModalityLongLabel(t, m)}
+                              </Dropdown.Item>
+                            ))}
+                          </Dropdown.Menu>
+                        }
+                      >
+                        <Button
+                          size='small'
+                          type='tertiary'
+                          icon={<Sparkles size={14} />}
+                        >
+                          {t('加载模板')}
+                        </Button>
+                      </Dropdown>
+                    </div>
+                    <Form.TextArea
+                      field='param_schema'
+                      placeholder={
+                        '{\n  "type": "object",\n  "properties": {\n    "temperature": { "type": "number", "minimum": 0, "maximum": 2 }\n  }\n}'
+                      }
+                      rows={10}
+                      extraText={t(
+                        '留空时 Playground 将按模型类别使用内置默认模板。填写须为合法 JSON。',
+                      )}
+                      style={{ fontFamily: 'monospace' }}
                     />
                   </Col>
                   <Col span={24}>

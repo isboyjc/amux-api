@@ -35,6 +35,10 @@ import {
   renderLimitedItems,
   renderDescription,
 } from '../../common/ui/RenderUtils';
+import {
+  getModalityLongLabel,
+  MODALITY_COLOR,
+} from '../../../constants/modalityLabels';
 
 const { Text } = Typography;
 
@@ -236,6 +240,18 @@ const renderOperations = (
   );
 };
 
+// 模型类别（modality）徽章渲染
+const renderModality = (modality, t) => {
+  const key = modality || 'text';
+  const label = getModalityLongLabel(t, key);
+  const color = MODALITY_COLOR[key] || 'grey';
+  return (
+    <Tag color={color} size='small' shape='circle'>
+      {label}
+    </Tag>
+  );
+};
+
 // 名称匹配类型渲染（带匹配数量 Tooltip）
 const renderNameRule = (rule, record, t) => {
   const map = {
@@ -302,6 +318,12 @@ export const getModelsColumns = ({
       title: t('匹配类型'),
       dataIndex: 'name_rule',
       render: (val, record) => renderNameRule(val, record, t),
+    },
+    {
+      title: t('类别'),
+      dataIndex: 'modality',
+      width: 110,
+      render: (val) => renderModality(val, t),
     },
     {
       title: t('参与官方同步'),

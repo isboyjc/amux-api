@@ -109,11 +109,15 @@ API.interceptors.response.use(
 // playground
 
 // 构建API请求负载
+// modality：当前模型的类别。非文本/多模态 modality（image、embedding 等）会
+// 跳过文本专属参数（temperature / top_p / penalty 等），避免把无关字段发给
+// 上游，给出和 UI 一致的行为。
 export const buildApiPayload = (
   messages,
   systemPrompt,
   inputs,
   parameterEnabled,
+  modality,
 ) => {
   const processedMessages = messages
     .filter(isValidMessage)
@@ -134,6 +138,13 @@ export const buildApiPayload = (
     messages: processedMessages,
     stream: inputs.stream,
   };
+
+  const isTextLike =
+    !modality || modality === 'text' || modality === 'multimodal';
+
+  if (!isTextLike) {
+    return payload;
+  }
 
   // 添加启用的参数
   const parameterMappings = {
@@ -192,11 +203,27 @@ export const handleApiError = (error, response = null) => {
 };
 
 // 处理模型数据
+// 兼容两种返回形态：
+//   1) 旧接口：string[] —— data 为模型名数组
+//   2) 新接口 (?detail=true)：{name, modality, param_schema}[]
+// 统一输出 { modelOptions, selectedModel, modalityMap }，其中 modalityMap 是
+// { [modelName]: { modality, param_schema } }，便于 Playground 按模态适配 UI。
 export const processModelsData = (data, currentModel) => {
-  const modelOptions = data.map((model) => ({
-    label: model,
-    value: model,
-  }));
+  const list = Array.isArray(data) ? data : [];
+  const modalityMap = {};
+  const modelOptions = list.map((item) => {
+    if (typeof item === 'string') {
+      return { label: item, value: item };
+    }
+    if (item && typeof item === 'object' && item.name) {
+      modalityMap[item.name] = {
+        modality: item.modality || 'text',
+        param_schema: item.param_schema || '',
+      };
+      return { label: item.name, value: item.name, modality: item.modality };
+    }
+    return null;
+  }).filter(Boolean);
 
   const hasCurrentModel = modelOptions.some(
     (option) => option.value === currentModel,
@@ -206,7 +233,7 @@ export const processModelsData = (data, currentModel) => {
       ? currentModel
       : modelOptions[0]?.value;
 
-  return { modelOptions, selectedModel };
+  return { modelOptions, selectedModel, modalityMap };
 };
 
 // 处理分组数据

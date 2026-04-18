@@ -1582,6 +1582,77 @@ func GeminiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	return usage, nil
 }
 
+// GeminiNanoBananaImageHandler 把 Nano Banana 家族通过 generateContent
+// 返回的 inline 图片数据（candidates[].content.parts[].inlineData）转成
+// OpenAI /v1/images/generations 风格的 { created, data:[{b64_json}] }
+// 响应，供 /pg/images/generations 和 /v1/images/generations 统一使用。
+func GeminiNanoBananaImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	responseBody, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, types.NewOpenAIError(readErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	_ = resp.Body.Close()
+
+	var geminiResponse dto.GeminiChatResponse
+	if jsonErr := common.Unmarshal(responseBody, &geminiResponse); jsonErr != nil {
+		return nil, types.NewOpenAIError(jsonErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	openAIResponse := dto.ImageResponse{
+		Created: common.GetTimestamp(),
+		Data:    make([]dto.ImageData, 0),
+	}
+
+	for _, candidate := range geminiResponse.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.InlineData == nil {
+				continue
+			}
+			if !strings.HasPrefix(part.InlineData.MimeType, "image") {
+				continue
+			}
+			openAIResponse.Data = append(openAIResponse.Data, dto.ImageData{
+				B64Json: part.InlineData.Data,
+			})
+		}
+	}
+
+	if len(openAIResponse.Data) == 0 {
+		// 模型可能因安全过滤或参数问题没出图；把原始响应透传给客户端，
+		// 方便调试面板看到具体的 finishReason / promptFeedback。
+		c.Writer.Header().Set("Content-Type", "application/json")
+		c.Writer.WriteHeader(resp.StatusCode)
+		_, _ = c.Writer.Write(responseBody)
+		return nil, types.NewOpenAIError(
+			errors.New("no image returned; check upstream response in debug panel"),
+			types.ErrorCodeBadResponseBody,
+			http.StatusInternalServerError,
+		)
+	}
+
+	jsonResponse, jsonErr := json.Marshal(openAIResponse)
+	if jsonErr != nil {
+		return nil, types.NewError(jsonErr, types.ErrorCodeBadResponseBody)
+	}
+	c.Writer.Header().Set("Content-Type", "application/json")
+	c.Writer.WriteHeader(resp.StatusCode)
+	_, _ = c.Writer.Write(jsonResponse)
+
+	// 用量：优先用上游返回的 UsageMetadata；拿不到就按图片数 × 258 估一个
+	// （和 Imagen 保持一致）。
+	usage := &dto.Usage{}
+	if geminiResponse.UsageMetadata.TotalTokenCount > 0 {
+		usage.PromptTokens = geminiResponse.UsageMetadata.PromptTokenCount
+		usage.CompletionTokens = geminiResponse.UsageMetadata.CandidatesTokenCount
+		usage.TotalTokens = geminiResponse.UsageMetadata.TotalTokenCount
+	} else {
+		const imageTokens = 258
+		usage.PromptTokens = imageTokens * len(openAIResponse.Data)
+		usage.TotalTokens = imageTokens * len(openAIResponse.Data)
+	}
+	return usage, nil
+}
+
 type GeminiModelsResponse struct {
 	Models        []dto.GeminiModel `json:"models"`
 	NextPageToken string            `json:"nextPageToken"`

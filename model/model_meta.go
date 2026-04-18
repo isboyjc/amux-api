@@ -2,6 +2,7 @@ package model
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -28,6 +29,8 @@ type Model struct {
 	Tags         string         `json:"tags,omitempty" gorm:"type:varchar(255)"`
 	VendorID     int            `json:"vendor_id,omitempty" gorm:"index"`
 	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`
+	Modality     string         `json:"modality" gorm:"type:varchar(32);default:'text';index"`
+	ParamSchema  string         `json:"param_schema,omitempty" gorm:"type:text"`
 	Status       int            `json:"status" gorm:"default:1"`
 	SyncOfficial int            `json:"sync_official" gorm:"default:1"`
 	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
@@ -77,7 +80,7 @@ func (mi *Model) Update() error {
 	mi.UpdatedTime = common.GetTimestamp()
 	// 使用 Select 强制更新所有字段，包括零值
 	return DB.Model(&Model{}).Where("id = ?", mi.Id).
-		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "status", "sync_official", "name_rule", "updated_time").
+		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "modality", "param_schema", "status", "sync_official", "name_rule", "updated_time").
 		Updates(mi).Error
 }
 
@@ -107,6 +110,85 @@ func GetAllModels(offset int, limit int) ([]*Model, error) {
 	var models []*Model
 	err := DB.Order("id DESC").Offset(offset).Limit(limit).Find(&models).Error
 	return models, err
+}
+
+// GetModelRecordsByNames 按模型名批量查找元数据记录，**分别**返回精确命中
+// 和规则命中两张 map，便于上层（如 modality 分层解析）分别使用。
+// 规则命中的优先级仍是 前缀 > 后缀 > 包含。
+func GetModelRecordsByNames(names []string) (
+	exactMap map[string]*Model,
+	ruleMap map[string]*Model,
+	err error,
+) {
+	exactMap = make(map[string]*Model)
+	ruleMap = make(map[string]*Model)
+	if len(names) == 0 {
+		return exactMap, ruleMap, nil
+	}
+
+	// 1) 精确命中
+	var exact []*Model
+	if err = DB.Model(&Model{}).
+		Where("model_name IN ? AND name_rule = ?", names, NameRuleExact).
+		Find(&exact).Error; err != nil {
+		return exactMap, ruleMap, err
+	}
+	for _, r := range exact {
+		exactMap[r.ModelName] = r
+	}
+
+	// 2) 规则命中（对"所有"名字都跑一遍，即使有精确记录也可能存在规则记录，
+	//    供上层在需要时使用）
+	var ruleRows []*Model
+	if err = DB.Model(&Model{}).
+		Where("name_rule <> ?", NameRuleExact).
+		Find(&ruleRows).Error; err != nil {
+		return exactMap, ruleMap, err
+	}
+	rulePriority := []int{NameRulePrefix, NameRuleSuffix, NameRuleContains}
+	for _, rule := range rulePriority {
+		for _, n := range names {
+			if _, ok := ruleMap[n]; ok {
+				continue
+			}
+			for _, m := range ruleRows {
+				if m.NameRule != rule {
+					continue
+				}
+				matched := false
+				switch rule {
+				case NameRulePrefix:
+					matched = strings.HasPrefix(n, m.ModelName)
+				case NameRuleSuffix:
+					matched = strings.HasSuffix(n, m.ModelName)
+				case NameRuleContains:
+					matched = strings.Contains(n, m.ModelName)
+				}
+				if matched {
+					ruleMap[n] = m
+					break
+				}
+			}
+		}
+	}
+	return exactMap, ruleMap, nil
+}
+
+// GetModelMetaMapByNames 兼容旧签名：返回 name → *Model 的单一映射，
+// 精确优先，规则兜底。新代码建议使用 GetModelRecordsByNames 获取分层视图。
+func GetModelMetaMapByNames(names []string) (map[string]*Model, error) {
+	exact, rule, err := GetModelRecordsByNames(names)
+	if err != nil {
+		return nil, err
+	}
+	merged := make(map[string]*Model, len(exact)+len(rule))
+	for k, v := range rule {
+		merged[k] = v
+	}
+	for k, v := range exact {
+		merged[k] = v
+	}
+	return merged, nil
 }
 
 func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel, error) {

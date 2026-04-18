@@ -58,8 +58,35 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	// Nano Banana 家族（gemini-*-flash-image / gemini-*-pro-image 等）走
+	// generateContent 端点而非 :predict。调用方（操练场或外部）通过
+	// /v1/images/generations 打过来时，在此直接转成 chat 请求并开启
+	// responseModalities=["TEXT","IMAGE"]，回应会在 DoResponse 里被
+	// GeminiNanoBananaImageHandler 解析成 OpenAI 图片响应。
+	if model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) &&
+		!strings.HasPrefix(info.UpstreamModelName, "imagen") {
+		cfg := dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"TEXT", "IMAGE"},
+		}
+		// 从 request.ExtraBody 里读取操练场 / 外部调用方想要透传的私有参数
+		// （aspect_ratio / image_size / seed / thinking_level / person_generation），
+		// 合并到 generationConfig。未携带时无副作用，对公 API 契约不变。
+		applyGeminiImageExtra(&cfg, parseGeminiImageExtra(request.ExtraBody))
+		return &dto.GeminiChatRequest{
+			Contents: []dto.GeminiChatContent{
+				{
+					Role: "user",
+					Parts: []dto.GeminiPart{
+						{Text: request.Prompt},
+					},
+				},
+			},
+			GenerationConfig: cfg,
+		}, nil
+	}
+
 	if !strings.HasPrefix(info.UpstreamModelName, "imagen") {
-		return nil, errors.New("not supported model for image generation, only imagen models are supported")
+		return nil, errors.New("not supported model for image generation, only imagen and gemini image models are supported")
 	}
 
 	// convert size to aspect ratio but allow user to specify aspect ratio
@@ -261,6 +288,13 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 
 	if strings.HasPrefix(info.UpstreamModelName, "imagen") {
 		return GeminiImageHandler(c, info, resp)
+	}
+
+	// Nano Banana 走 generateContent 返回 inlineData；需要把 chat 响应
+	// 转成 OpenAI 图片响应（data[].b64_json）。
+	if info.RelayMode == constant.RelayModeImagesGenerations &&
+		model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
+		return GeminiNanoBananaImageHandler(c, info, resp)
 	}
 
 	// check if the model is an embedding model

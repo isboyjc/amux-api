@@ -23,6 +23,7 @@ import {
   Col,
   Form,
   Row,
+  Space,
   Spin,
   Banner,
   Tag,
@@ -66,10 +67,33 @@ const chatCompletionsToResponsesPolicyAllChannelsExample = JSON.stringify(
   2,
 );
 
+const customModalityPatternsExample = JSON.stringify(
+  {
+    image: [
+      'gpt-image-',
+      'dall-e-',
+      'prefix:imagen-',
+      'seedream',
+      'flash-image',
+      'pro-image',
+      'image-preview',
+      'suffix:-image',
+    ],
+    video: ['sora', 'veo-', 'kling', 'seedance'],
+    embedding: ['prefix:text-embedding-', 'bge-', '-embedding'],
+    rerank: ['rerank', 'prefix:jina-rerank-'],
+    audio: ['whisper', 'prefix:tts-', '-audio'],
+    multimodal: ['prefix:claude-', 'prefix:gemini-', 'gpt-4o', 'qwen-vl'],
+  },
+  null,
+  2,
+);
+
 const defaultGlobalSettingInputs = {
   'global.pass_through_request_enabled': false,
   'global.thinking_model_blacklist': '[]',
   'global.chat_completions_to_responses_policy': '{}',
+  'global.custom_modality_patterns': '{}',
   'general_setting.ping_interval_enabled': false,
   'general_setting.ping_interval_seconds': 60,
 };
@@ -94,12 +118,38 @@ export default function SettingGlobalModel(props) {
     }
   };
 
+  // "填入内置默认"按钮：从后端拉一份出厂默认 patterns 填进来
+  const loadBuiltinModalityPatterns = async () => {
+    try {
+      const res = await API.get('/api/models/modality-meta');
+      const data = res.data?.data || {};
+      const defaults = data.modality_patterns_default || {};
+      const formatted = JSON.stringify(defaults, null, 2);
+      setInputs((prev) => ({
+        ...prev,
+        'global.custom_modality_patterns': formatted,
+      }));
+      if (refForm.current) {
+        refForm.current.setValue(
+          'global.custom_modality_patterns',
+          formatted,
+        );
+      }
+    } catch (error) {
+      showError(t('加载内置默认失败'));
+    }
+  };
+
   const normalizeValueBeforeSave = (key, value) => {
     if (key === 'global.thinking_model_blacklist') {
       const text = typeof value === 'string' ? value.trim() : '';
       return text === '' ? '[]' : value;
     }
     if (key === 'global.chat_completions_to_responses_policy') {
+      const text = typeof value === 'string' ? value.trim() : '';
+      return text === '' ? '{}' : value;
+    }
+    if (key === 'global.custom_modality_patterns') {
       const text = typeof value === 'string' ? value.trim() : '';
       return text === '' ? '{}' : value;
     }
@@ -157,6 +207,16 @@ export default function SettingGlobalModel(props) {
           }
         }
         if (key === 'global.chat_completions_to_responses_policy') {
+          try {
+            value =
+              value && String(value).trim() !== ''
+                ? JSON.stringify(JSON.parse(value), null, 2)
+                : defaultGlobalSettingInputs[key];
+          } catch (error) {
+            value = defaultGlobalSettingInputs[key];
+          }
+        }
+        if (key === 'global.custom_modality_patterns') {
           try {
             value =
               value && String(value).trim() !== ''
@@ -231,6 +291,78 @@ export default function SettingGlobalModel(props) {
                     })
                   }
                 />
+              </Col>
+            </Row>
+
+            <Row>
+              <Col span={24}>
+                <Form.TextArea
+                  label={t('模型类别自定义匹配规则')}
+                  field={'global.custom_modality_patterns'}
+                  placeholder={t('例如：') + '\n' + customModalityPatternsExample}
+                  rows={10}
+                  rules={[
+                    {
+                      validator: (rule, value) => {
+                        if (!value || value.trim() === '') return true;
+                        return verifyJSON(value);
+                      },
+                      message: t('不是合法的 JSON 字符串'),
+                    },
+                  ]}
+                  extraText={t(
+                    '当模型在"模型管理"里没有记录、或记录里未显式设 modality 时，按这里的模式匹配。支持 contains（默认）/ prefix:（前缀）/ suffix:（后缀）三种语法；优先级：image > video > rerank > embedding > audio > multimodal > text。留空时使用系统内置的出厂默认；自定义值会完全替换默认，建议点「填入内置默认」后再修改。',
+                  )}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'global.custom_modality_patterns': value,
+                    })
+                  }
+                  style={{ fontFamily: 'monospace' }}
+                />
+              </Col>
+            </Row>
+            <Row style={{ marginTop: 8, marginBottom: 16 }}>
+              <Col span={24}>
+                <Space wrap>
+                  <Button
+                    type='secondary'
+                    size='small'
+                    onClick={loadBuiltinModalityPatterns}
+                  >
+                    {t('填入内置默认')}
+                  </Button>
+                  <Button
+                    type='secondary'
+                    size='small'
+                    onClick={() => {
+                      const raw = inputs['global.custom_modality_patterns'];
+                      if (!raw || String(raw).trim() === '') return;
+                      try {
+                        const formatted = JSON.stringify(
+                          JSON.parse(raw),
+                          null,
+                          2,
+                        );
+                        setInputs((prev) => ({
+                          ...prev,
+                          'global.custom_modality_patterns': formatted,
+                        }));
+                        if (refForm.current) {
+                          refForm.current.setValue(
+                            'global.custom_modality_patterns',
+                            formatted,
+                          );
+                        }
+                      } catch (error) {
+                        showError(t('不是合法的 JSON 字符串'));
+                      }
+                    }}
+                  >
+                    {t('格式化 JSON')}
+                  </Button>
+                </Space>
               </Col>
             </Row>
 

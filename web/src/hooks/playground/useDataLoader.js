@@ -28,22 +28,26 @@ export const useDataLoader = (
   handleInputChange,
   setModels,
   setGroups,
+  setModalityMap,
 ) => {
   const { t } = useTranslation();
   const prevGroupRef = useRef(inputs.group);
 
   const loadModels = useCallback(async (group) => {
     try {
-      const params = group && group !== 'auto' ? `?group=${encodeURIComponent(group)}` : '';
-      const res = await API.get(`${API_ENDPOINTS.USER_MODELS}${params}`);
+      const qs = new URLSearchParams();
+      if (group && group !== 'auto') qs.set('group', group);
+      qs.set('detail', 'true');
+      const res = await API.get(`${API_ENDPOINTS.USER_MODELS}?${qs.toString()}`);
       const { success, message, data } = res.data;
 
       if (success) {
-        const { modelOptions, selectedModel } = processModelsData(
+        const { modelOptions, selectedModel, modalityMap } = processModelsData(
           data,
           inputs.model,
         );
         setModels(modelOptions);
+        if (setModalityMap) setModalityMap(modalityMap || {});
 
         if (selectedModel !== inputs.model) {
           handleInputChange('model', selectedModel);
@@ -54,7 +58,7 @@ export const useDataLoader = (
     } catch (error) {
       showError(t('加载模型失败'));
     }
-  }, [inputs.model, handleInputChange, setModels, t]);
+  }, [inputs.model, handleInputChange, setModels, setModalityMap, t]);
 
   const loadGroups = useCallback(async () => {
     try {
