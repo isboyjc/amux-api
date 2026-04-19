@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import ChatArea from './ChatArea';
 import ImageWorkspace from './ImageWorkspace';
+import VideoWorkspace from './VideoWorkspace';
 import PlaceholderWorkspace from './PlaceholderWorkspace';
 import { WORKSPACE } from '../../constants/workspaceTypes';
 
@@ -27,13 +28,15 @@ import { WORKSPACE } from '../../constants/workspaceTypes';
  * 主工作区按当前会话的 workspace_type 分发：
  *   - chat（text / multimodal）→ ChatArea
  *   - image → ImageWorkspace（画廊 + prompt 输入）
- *   - video / audio / embedding / rerank → PlaceholderWorkspace
+ *   - video → VideoWorkspace（视频生成时间线 + 附件抽屉）
+ *   - audio / embedding / rerank → PlaceholderWorkspace
  */
 const WorkspaceRouter = ({
   workspaceType = WORKSPACE.CHAT,
   currentModelName,
   chatAreaProps,
   imageWorkspaceProps,
+  videoWorkspaceProps,
   placeholderProps,
 }) => {
   if (workspaceType === WORKSPACE.CHAT) {
@@ -41,6 +44,9 @@ const WorkspaceRouter = ({
   }
   if (workspaceType === WORKSPACE.IMAGE) {
     return <ImageWorkspace {...imageWorkspaceProps} />;
+  }
+  if (workspaceType === WORKSPACE.VIDEO) {
+    return <VideoWorkspace {...videoWorkspaceProps} />;
   }
   return (
     <PlaceholderWorkspace

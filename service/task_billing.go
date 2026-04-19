@@ -296,6 +296,24 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio * otherMultiplier
 	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
-	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
+	// 明确指出结算方向（补扣 / 退还）与金额，前端日志更易读；reason 会被
+	// 直接写入 billing log 的 content 字段。
+	delta := actualQuota - task.Quota
+	verb := "预扣准确"
+	if delta > 0 {
+		verb = fmt.Sprintf("补扣 %s", logger.LogQuota(delta))
+	} else if delta < 0 {
+		verb = fmt.Sprintf("退还 %s", logger.LogQuota(-delta))
+	}
+	reason := fmt.Sprintf(
+		"按 token 重算：实际 %s（%d tokens × modelRatio %.2f × groupRatio %.2f × otherMultiplier %.4f），预扣 %s → %s",
+		logger.LogQuota(actualQuota),
+		totalTokens,
+		modelRatio,
+		finalGroupRatio,
+		otherMultiplier,
+		logger.LogQuota(task.Quota),
+		verb,
+	)
 	RecalculateTaskQuota(ctx, task, actualQuota, reason)
 }

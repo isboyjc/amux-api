@@ -71,6 +71,9 @@ const SessionList = ({
   const [open, setOpen] = useState(defaultOpen);
   const [renamingId, setRenamingId] = useState(null);
   const [renameDraft, setRenameDraft] = useState('');
+  // 新建会话下拉受控：手动控制 visible 状态，点 Item 后主动收起——
+  // Semi 的 Dropdown.Item 默认不会因为 Item 的 onClick 自动关闭 menu。
+  const [createMenuVisible, setCreateMenuVisible] = useState(false);
   const renameInputRef = useRef(null);
 
   useEffect(() => {
@@ -119,6 +122,8 @@ const SessionList = ({
         <Dropdown
           trigger='click'
           position='bottomRight'
+          visible={createMenuVisible}
+          onVisibleChange={setCreateMenuVisible}
           render={
             <Dropdown.Menu>
               {WORKSPACE_PICK_ORDER.map((ws) => {
@@ -128,9 +133,13 @@ const SessionList = ({
                   <Dropdown.Item
                     key={ws}
                     disabled={!enabled}
-                    onClick={(e) => {
-                      e?.stopPropagation?.();
+                    onClick={() => {
                       if (!enabled || !onCreate) return;
+                      // 选中后手动关闭下拉，否则菜单会停留在打开状态。
+                      // 注意：这里不再 e.stopPropagation()——之前的阻止冒泡
+                      // 反而干扰了 Semi 内部的关闭逻辑；Dropdown 渲染到 portal
+                      // 里，事件不会冒泡到 SessionList 的折叠 header。
+                      setCreateMenuVisible(false);
                       onCreate(ws);
                     }}
                   >

@@ -56,7 +56,11 @@ export const MODALITY_TO_WORKSPACE = {
 };
 
 // 一期 Playground 实际可以使用的 workspace。其他创建入口先灰化。
-export const V1_ENABLED_WORKSPACES = new Set([WORKSPACE.CHAT, WORKSPACE.IMAGE]);
+export const V1_ENABLED_WORKSPACES = new Set([
+  WORKSPACE.CHAT,
+  WORKSPACE.IMAGE,
+  WORKSPACE.VIDEO,
+]);
 
 // "+新建会话"菜单里展示的顺序
 export const WORKSPACE_PICK_ORDER = [

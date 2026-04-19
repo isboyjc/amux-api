@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/samber/lo"
 )
@@ -444,7 +445,8 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
 			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-			task.PrivateData.ResultURL = taskResult.Url
+			// 经过管理员配置的前缀脱敏，避免把上游资源直链直接落到用户可见的 URL。
+			task.PrivateData.ResultURL = operation_setting.ApplyTaskURLRewrite(taskResult.Url)
 		} else {
 			// No URL from adaptor — construct proxy URL using public task ID
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
@@ -533,6 +535,13 @@ func truncateBase64(s string) string {
 		return s
 	}
 	return s[:maxKeep] + "..."
+}
+
+// SettleTaskBillingOnComplete 是 settleTaskBillingOnComplete 的导出包装，
+// 供非轮询路径（例如 relay 包里的 tryRealtimeFetch）在任务成功终态时复用同
+// 一套差额结算逻辑，避免重复实现导致的计费偏差。
+func SettleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
+	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 }
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。

@@ -151,18 +151,44 @@ export const putSession = async (session) => {
  * 只有"发送新消息"这样的真实活动才应该让会话跳到顶部；切会话时的 model/
  * group/modality 同步、迁移、重命名等元数据变更都不应重新排序。需要刷新
  * 时显式传 `{ touch: true }` 或使用 `touchSession(id)`。
+ *
+ * 实现要点：get + put 放在同一个 readwrite IDB 事务里完成，避免两个并发
+ * patchSession 之间发生 read-modify-write 竞态（例如 rename 刚写完
+ * title，touchSession 后起但先读，又用老 title 覆盖回去）。IDB 天然对
+ * 同一 store 上的事务串行化，合并成一笔能保证原子性。
  */
 export const patchSession = async (id, patch, { touch = false } = {}) => {
-  const current = await getSession(id);
-  if (!current) return null;
-  const merged = {
-    ...current,
-    ...patch,
-    id,
-    ...(touch ? { updated_at: Date.now() } : {}),
-  };
-  await putSession(merged);
-  return merged;
+  if (!id) return null;
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction([STORE_SESSIONS], 'readwrite');
+    const store = transaction.objectStore(STORE_SESSIONS);
+
+    let merged = null;
+
+    const getReq = store.get(id);
+    getReq.onsuccess = () => {
+      const current = getReq.result;
+      if (!current) {
+        merged = null;
+        return;
+      }
+      merged = {
+        ...current,
+        ...patch,
+        id,
+        ...(touch ? { updated_at: Date.now() } : {}),
+      };
+      // 同一事务里接着 put。如果 put 失败，oncomplete 不会触发，
+      // 由 onabort / onerror 走拒绝路径。
+      store.put(merged);
+    };
+    getReq.onerror = () => reject(getReq.error);
+
+    transaction.oncomplete = () => resolve(merged);
+    transaction.onabort = () => reject(transaction.error);
+    transaction.onerror = () => reject(transaction.error);
+  });
 };
 
 /**

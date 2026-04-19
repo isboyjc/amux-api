@@ -254,7 +254,11 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			shouldSelectChannel = false
 		}
 		c.Set("relay_mode", relayMode)
-	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") {
+	} else if strings.Contains(c.Request.URL.Path, "/v1/video/generations") ||
+		strings.Contains(c.Request.URL.Path, "/pg/video/generations") {
+		// /pg/video/generations 是操练场专用入口，和对外 /v1/video/generations
+		// 走同一套 relay 任务流程（模型选择、预扣费、上游 adapter），仅在
+		// 路由鉴权（UserAuth vs TokenAuth）上不同。
 		relayMode := relayconstant.RelayModeUnknown
 		if c.Request.Method == http.MethodPost {
 			req, err := getModelFromRequest(c)

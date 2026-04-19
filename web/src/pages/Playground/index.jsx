@@ -32,6 +32,7 @@ import { usePlaygroundState } from '../../hooks/playground/usePlaygroundState';
 import { useMessageActions } from '../../hooks/playground/useMessageActions';
 import { useApiRequest } from '../../hooks/playground/useApiRequest';
 import { useImageGeneration } from '../../hooks/playground/useImageGeneration';
+import { useVideoGeneration } from '../../hooks/playground/useVideoGeneration';
 import { useSyncMessageAndCustomBody } from '../../hooks/playground/useSyncMessageAndCustomBody';
 import { useMessageEdit } from '../../hooks/playground/useMessageEdit';
 import { useDataLoader } from '../../hooks/playground/useDataLoader';
@@ -252,23 +253,81 @@ const Playground = () => {
         setDebugData((prev) => ({ ...prev, ...patch })),
     });
 
-  // 首条 prompt 自动给会话命名：标题仍是默认名时，用新 prompt 的前若干
-  // 字符填进去。后续 prompt 不改。
+  // 视频生成（video workspace 专用）—— hook 内部维护"提交 → 轮询 → 状态
+  // 上报"的闭环，Playground 只负责把每一轮 onUpdate(patch) 合并回对应
+  // assistant 消息并触发保存。
+  const {
+    generate: generateVideo,
+    loading: videoGenerating,
+    startPolling: startVideoPolling,
+  } = useVideoGeneration({
+    onDebug: (patch) =>
+      setDebugData((prev) => ({ ...prev, ...patch })),
+  });
+
+  // 本轮已自动命名过的 session id 集合。避免同一会话多次触发 rename。
+  const autoNamedSessionsRef = useRef(new Set());
+
+  // 首条 prompt 自动给会话命名的统一入口。
+  //
+  // 判断逻辑（放宽以确保三种 workspace 都能触发）：
+  //   1) 当前 session 尚未在本轮 ref 里打标 → 允许尝试
+  //   2) prompt 非空 → 允许尝试
+  //   3) 不再依赖 activeSession.title 的精确字面量匹配（之前多个默认标题
+  //      变体会漏网）。只要 (a) 标题是空/在默认集合内 或 (b) 这条会话当前
+  //      没有任何 message（= 名副其实的"第一次发送"），就执行 rename。
+  //
+  // 用 ref 防重入，renameSession 失败再清除 ref 允许下一次重试。
   const maybeAutoNameSession = useCallback(
     (promptText) => {
       if (!promptText || !activeSessionId) return;
+      if (autoNamedSessionsRef.current.has(activeSessionId)) return;
       const trimmed = String(promptText).trim();
       if (!trimmed) return;
-      const sess = sessions.find((s) => s.id === activeSessionId);
-      if (!sess) return;
-      const defaultTitles = ['', '未命名会话', '新会话'];
-      if (!defaultTitles.includes(sess.title || '')) return;
+
+      const defaultTitles = new Set([
+        '',
+        '未命名会话',
+        '未命名會話',
+        '未命名',
+        '新会话',
+        '新會話',
+        '新对话',
+        '新對話',
+      ]);
+      const currentTitle = String(activeSession?.title || '').trim();
+      const titleLooksDefault = defaultTitles.has(currentTitle);
+      // 在发消息前 message 还保持 pre-submit 状态；空即"此次是首发"。
+      const isFirstMessage = Array.isArray(message) && message.length === 0;
+
+      if (!titleLooksDefault && !isFirstMessage) {
+        // 用户已手动命过名、且已有消息，视为定名，不再覆盖
+        autoNamedSessionsRef.current.add(activeSessionId);
+        return;
+      }
+
       const singleLine = trimmed.replace(/\s+/g, ' ');
       const name =
         singleLine.length > 20 ? singleLine.slice(0, 20) + '…' : singleLine;
-      renameSession(activeSessionId, name);
+      // 先记标记再异步 rename，防止短时间内重复触发
+      autoNamedSessionsRef.current.add(activeSessionId);
+      try {
+        const result = renameSession(activeSessionId, name);
+        if (result && typeof result.catch === 'function') {
+          result.catch((err) => {
+            // rename 失败则撤销标记，下次还能再试
+            autoNamedSessionsRef.current.delete(activeSessionId);
+            // eslint-disable-next-line no-console
+            console.warn('[playground] auto-rename failed', err);
+          });
+        }
+      } catch (err) {
+        autoNamedSessionsRef.current.delete(activeSessionId);
+        // eslint-disable-next-line no-console
+        console.warn('[playground] auto-rename threw', err);
+      }
     },
-    [activeSessionId, sessions, renameSession],
+    [activeSessionId, activeSession, message, renameSession],
   );
 
   const handleGenerateImage = useCallback(
@@ -351,6 +410,160 @@ const Playground = () => {
     },
     [setMessage, saveMessagesImmediately],
   );
+
+  // ========== 视频生成（异步任务） ==========
+
+  // 把 hook 返回的 patch 合并到对应的 assistant 消息上。
+  // status=complete 时同时拼出 content（[{type:'video_url'}, {type:'image_url' last-frame}?]）。
+  const applyVideoUpdate = useCallback(
+    (assistantId, patch) => {
+      setMessage((prev) => {
+        const next = prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          const merged = { ...m };
+          if (patch.status) merged.status = patch.status;
+          if (typeof patch.progress === 'number') merged.progress = patch.progress;
+          if (patch.errorMessage) merged.errorMessage = patch.errorMessage;
+          if (patch.status === 'complete') {
+            if (patch.videoUrl) {
+              const content = [
+                {
+                  type: 'video_url',
+                  video_url: { url: patch.videoUrl },
+                },
+              ];
+              // 末帧 URL 在 raw.metadata.last_frame_url 或 raw.content.last_frame_url
+              // 上游可能放在不同字段里，这里两处都兜一下
+              const lastFrame =
+                patch.raw?.metadata?.last_frame_url ||
+                patch.raw?.content?.last_frame_url;
+              if (lastFrame) {
+                content.push({
+                  type: 'image_url',
+                  image_url: { url: lastFrame },
+                });
+              }
+              merged.content = content;
+            } else {
+              // 上游认为任务已完成，但响应里找不到 URL。把它视作 error 让
+              // 用户能看到反馈（否则 UI 上什么都不显示，像"卡死"）。
+              merged.status = 'error';
+              merged.errorMessage = t('任务已完成但响应中未携带视频链接，请查看任务日志');
+            }
+          }
+          return merged;
+        });
+        setTimeout(() => saveMessagesImmediately(next), 0);
+        return next;
+      });
+    },
+    [setMessage, saveMessagesImmediately],
+  );
+
+  const handleGenerateVideo = useCallback(
+    async ({ prompt, attachments }) => {
+      if (!prompt || !prompt.trim()) return;
+      maybeAutoNameSession(prompt);
+      if (activeSessionId) touchSession?.(activeSessionId);
+      const params = { ...imageParamValues };
+
+      // attachments 是 [{type:'image_url', image_url:{url}, role}, ...]，
+      // 直接当作 metadata.content 数组发给后端。
+      const content = Array.isArray(attachments) ? attachments : [];
+
+      // user 消息也把 attachments 一并持久化，方便渲染成 badge。
+      const userMsg = {
+        ...createMessage(MESSAGE_ROLES.USER, prompt),
+        attachments: content,
+      };
+      const loadingMsg = {
+        ...createLoadingAssistantMessage(),
+        status: 'loading',
+        progress: 0,
+      };
+      let newMessages = [];
+      setMessage((prev) => {
+        newMessages = [...prev, userMsg, loadingMsg];
+        return newMessages;
+      });
+      setTimeout(() => saveMessagesImmediately(newMessages), 0);
+
+      const result = await generateVideo({
+        model: inputs.model,
+        group: inputs.group,
+        prompt,
+        params,
+        content,
+        onUpdate: (patch) => applyVideoUpdate(loadingMsg.id, patch),
+      });
+
+      if (!result || result.error) {
+        setMessage((prev) => {
+          const next = prev.map((m) => {
+            if (m.id !== loadingMsg.id) return m;
+            return {
+              ...m,
+              status: 'error',
+              errorMessage: result?.error || t('视频生成任务提交失败'),
+            };
+          });
+          setTimeout(() => saveMessagesImmediately(next), 0);
+          return next;
+        });
+        return;
+      }
+
+      // 提交成功：把 taskId + meta 写回 assistant 消息，后续轮询靠
+      // onUpdate 更新 status/content。
+      setMessage((prev) => {
+        const next = prev.map((m) => {
+          if (m.id !== loadingMsg.id) return m;
+          return {
+            ...m,
+            taskId: result.taskId,
+            status: 'polling',
+            pollStartedAt: Date.now(),
+            meta: {
+              model: inputs.model,
+              params: params || {},
+            },
+          };
+        });
+        setTimeout(() => saveMessagesImmediately(next), 0);
+        return next;
+      });
+    },
+    [
+      generateVideo,
+      inputs.model,
+      inputs.group,
+      imageParamValues,
+      maybeAutoNameSession,
+      setMessage,
+      saveMessagesImmediately,
+      activeSessionId,
+      touchSession,
+      applyVideoUpdate,
+      t,
+    ],
+  );
+
+  // 扫一遍 message 里还在 polling 的视频任务，把没跑轮询的补上。
+  //   - 切会话 → message 由 IDB 异步加载进来，这时触发一次恢复
+  //   - 刷新页面 → 同上
+  //   - 新提交任务 → message 已经包含 loading/polling 行，顺带触发也无害
+  // startVideoPolling 内部按 taskId 去重，重复调用直接 no-op；所以这里
+  // 依赖 message 整体即可——虽然轮询过程中 message 会频繁变更导致 effect
+  // 多次执行，但都是 idempotent 的空跑。
+  React.useEffect(() => {
+    if (!Array.isArray(message) || message.length === 0) return;
+    message.forEach((m) => {
+      if (!m || m.role !== MESSAGE_ROLES.ASSISTANT) return;
+      if (!m.taskId) return;
+      if (m.status === 'complete' || m.status === 'error') return;
+      startVideoPolling(m.taskId, (patch) => applyVideoUpdate(m.id, patch));
+    });
+  }, [message, startVideoPolling, applyVideoUpdate]);
 
   // 消息操作
   const messageActions = useMessageActions(
@@ -716,6 +929,17 @@ const Playground = () => {
                     styleState,
                     loading: imageGenerating,
                     onGenerate: handleGenerateImage,
+                    onDeleteGeneration: handleDeleteGeneration,
+                    onClearAll: handleClearMessages,
+                    showDebugPanel,
+                    onToggleDebugPanel: () => setShowDebugPanel(!showDebugPanel),
+                  }}
+                  videoWorkspaceProps={{
+                    message,
+                    inputs,
+                    styleState,
+                    loading: videoGenerating,
+                    onGenerate: handleGenerateVideo,
                     onDeleteGeneration: handleDeleteGeneration,
                     onClearAll: handleClearMessages,
                     showDebugPanel,

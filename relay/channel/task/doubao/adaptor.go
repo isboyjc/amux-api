@@ -239,6 +239,11 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 }
 
 // EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+//
+// 折扣查表优先级：UpstreamModelName（考虑 channel 的 model_mapping）> 原始
+// OriginModelName。这样无论管理员用"官方端点名直接上"还是"配 model_mapping
+// 把别名映射过去"，都能命中；GetVideoInputRatio 内部还会再走一遍别名归一，
+// 兜底"没有配 model_mapping 也没改名"的场景。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	// Check if this is Doubao raw format
 	if c.GetBool("doubao_raw_format") {
@@ -248,7 +253,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		}
 		reqMap := originalReq.(map[string]interface{})
 		if hasVideoInRawContent(reqMap) {
-			if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
+			if ratio, ok := lookupVideoInputRatio(info); ok {
 				return map[string]float64{"video_input": ratio}
 			}
 		}
@@ -261,11 +266,22 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 	if hasVideoInMetadata(req.Metadata) {
-		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
+		if ratio, ok := lookupVideoInputRatio(info); ok {
 			return map[string]float64{"video_input": ratio}
 		}
 	}
 	return nil
+}
+
+// lookupVideoInputRatio 先尝试 UpstreamModelName（含 model_mapping 结果），
+// 再退回 OriginModelName。两个都经过 GetVideoInputRatio 的别名归一。
+func lookupVideoInputRatio(info *relaycommon.RelayInfo) (float64, bool) {
+	if info.UpstreamModelName != "" {
+		if r, ok := GetVideoInputRatio(info.UpstreamModelName); ok {
+			return r, true
+		}
+	}
+	return GetVideoInputRatio(info.OriginModelName)
 }
 
 // hasVideoInRawContent checks if raw Doubao request contains video_url
@@ -342,6 +358,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 
 		// Handle model mapping
+		// 只按 channel 的 model_mapping 决定最终上游模型名；不做任何
+		// 厂商别名的"自动归一"。原因：上游可能是官方 Volcengine Ark，也可能
+		// 是只接受 seedance-2.0-api 这种对外别名的第三方聚合器——替换成
+		// 官方的 doubao-seedance-2-0-260128 会被后者直接拒掉。需要改写名字
+		// 的场景（例如对接官方 Ark + 对外暴露友好别名），管理员通过后台
+		// model_mapping 显式配置即可。
 		if info.IsModelMapped {
 			body.Model = info.UpstreamModelName
 		} else {
@@ -352,7 +374,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err != nil {
 			return nil, err
 		}
-		
+
 		return bytes.NewReader(data), nil
 	}
 
@@ -635,25 +657,54 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
-	var dResp responseTask
-	if err := common.Unmarshal(originTask.Data, &dResp); err != nil {
-		return nil, errors.Wrap(err, "unmarshal doubao task data failed")
-	}
-
 	openAIVideo := dto.NewOpenAIVideo()
 	openAIVideo.ID = originTask.TaskID
 	openAIVideo.TaskID = originTask.TaskID
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
-	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
-	if dResp.Status == "failed" {
-		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: dResp.Error.Message,
-			Code:    dResp.Error.Code,
+	// 视频 URL 以 task.PrivateData.ResultURL 为权威来源——ParseTaskResult
+	// 在官方 Doubao 格式和 ZeroCut 聚合器格式下都已经正确提取 url 到这里，
+	// 比在这里再重新反序列化 task.Data 更可靠。Data 仅用来取额外元数据
+	// （如错误详情、revised_prompt 等）。
+	openAIVideo.SetMetadata("url", originTask.GetResultURL())
+
+	// 尝试解析 task.Data 获取错误详情 / revised_prompt 等元数据。
+	// 两种上游格式都宽容处理：
+	//   1) 官方 Doubao：{status, content:{video_url}, error:{code,message}}
+	//   2) ZeroCut 聚合器：{code, data:{status, output:{url, error, revised_prompt}}}
+	if len(originTask.Data) > 0 {
+		// 官方 Doubao 格式
+		var dResp responseTask
+		if err := common.Unmarshal(originTask.Data, &dResp); err == nil {
+			if dResp.Status == "failed" && dResp.Error.Message != "" {
+				openAIVideo.Error = &dto.OpenAIVideoError{
+					Message: dResp.Error.Message,
+					Code:    dResp.Error.Code,
+				}
+			}
+		}
+		// ZeroCut 聚合器格式（兜底）
+		if openAIVideo.Error == nil && originTask.Status == model.TaskStatusFailure {
+			var zResp zeroCutResponse
+			if err := common.Unmarshal(originTask.Data, &zResp); err == nil && zResp.Data.Output != nil {
+				if zResp.Data.Output.Error != "" {
+					openAIVideo.Error = &dto.OpenAIVideoError{
+						Message: zResp.Data.Output.Error,
+						Code:    "zerocut_error",
+					}
+				}
+			}
+		}
+		// 任何格式都没解析出具体错误信息时，回退到 task.FailReason
+		if openAIVideo.Error == nil && originTask.Status == model.TaskStatusFailure {
+			openAIVideo.Error = &dto.OpenAIVideoError{
+				Message: originTask.FailReason,
+				Code:    "task_failed",
+			}
 		}
 	}
 

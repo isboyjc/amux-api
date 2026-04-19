@@ -2,12 +2,14 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -19,6 +21,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -376,7 +379,11 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 
-	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	// /pg/video/generations/:task_id 是操练场专用查询入口，前端按 OpenAI
+	// Video 响应结构（id/status/progress/metadata.url）消费，所以这里与
+	// /v1/videos/:task_id 走同一条格式分支。
+	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/") ||
+		strings.HasPrefix(c.Request.RequestURI, "/pg/video/generations/")
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
@@ -473,14 +480,58 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 	if strings.HasPrefix(ti.Url, "data:") {
 		// data: URI — kept in Data, not ResultURL
 	} else if ti.Url != "" {
-		task.PrivateData.ResultURL = ti.Url
+		// 对上游直链做一次前缀脱敏（见 operation_setting.TaskURLRewriteSetting）。
+		// 管理员可以把 https://resource.xxx.com/... 映射为自家反向代理域名，
+		// 避免把上游资源地址暴露给终端用户。功能默认关闭，未命中规则时等价于原值。
+		task.PrivateData.ResultURL = operation_setting.ApplyTaskURLRewrite(ti.Url)
 	} else if task.Status == model.TaskStatusSuccess {
 		// No URL from adaptor — construct proxy URL using public task ID
 		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 	}
 
+	// 把上游原始响应体写回 task.Data。否则 ConvertToOpenAIVideo（及其它
+	// 下游 converter）会拿到"提交时写入的旧 Data"——例如 Doubao 初次提交
+	// 只返回 {id}，没有 content.video_url；而我们这里的 realtime fetch 才
+	// 能拿到带 video_url 的完整任务记录。此前只更新了 Status/ResultURL，
+	// OpenAIVideo 响应里的 metadata.url 因此为空，操练场前端拿不到视频。
+	// 与后台轮询 updateVideoSingleTask 的行为保持一致。
+	if len(body) > 0 {
+		task.Data = body
+	}
+
+	// 对齐后台轮询的生命周期：进入 InProgress 记 StartTime，到达终态记
+	// FinishTime；任务日志里的"结束时间/耗时"字段都依赖这两个 timestamp。
+	// 如果只有实时查询路径跑了（例如操练场 3s 轮询抢在 15s 后台轮询前命中
+	// SUCCESS），后台轮询会因任务已非 unfinished 而跳过，这两个字段就永远
+	// 不会被填——用户看到的就是"无结束时间、无耗时"。
+	now := time.Now().Unix()
+	if task.Status == model.TaskStatusInProgress && task.StartTime == 0 {
+		task.StartTime = now
+	}
+	if (task.Status == model.TaskStatusSuccess ||
+		task.Status == model.TaskStatusFailure) && task.FinishTime == 0 {
+		task.FinishTime = now
+	}
+
+	// 终态转换：复用后台轮询的差额结算/退款路径，否则按 token 计费的任务
+	// 会一直停留在预扣额度，实际 completion_tokens 的扣费不会被兑现。
+	becameSuccess := task.Status == model.TaskStatusSuccess && snap.Status != model.TaskStatusSuccess
+	becameFailure := task.Status == model.TaskStatusFailure && snap.Status != model.TaskStatusFailure
+
 	if !snap.Equal(task.Snapshot()) {
-		_, _ = task.UpdateWithStatus(snap.Status)
+		won, err := task.UpdateWithStatus(snap.Status)
+		if err != nil || !won {
+			// CAS 失败：已经被别的路径（例如后台轮询）先推进过；退出不做
+			// 后续结算，避免重复扣/退。
+			return nil
+		}
+		if becameSuccess {
+			if pollingAdaptor, ok := adaptor.(service.TaskPollingAdaptor); ok {
+				service.SettleTaskBillingOnComplete(context.Background(), pollingAdaptor, task, ti)
+			}
+		} else if becameFailure {
+			service.RefundTaskQuota(context.Background(), task, task.FailReason)
+		}
 	}
 
 	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理

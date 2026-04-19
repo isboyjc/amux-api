@@ -28,6 +28,7 @@ import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
 import SettingsUserAutoUpgrade from '../../pages/Setting/Operation/SettingsUserAutoUpgrade';
+import SettingsTaskURLRewrite from '../../pages/Setting/Operation/SettingsTaskURLRewrite';
 import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
@@ -88,6 +89,10 @@ const OperationSetting = () => {
     /* 用户自动升级设置 */
     'user_upgrade_setting.auto_upgrade_enabled': false,
     'user_upgrade_setting.upgrade_rules': '[]',
+
+    /* 任务结果 URL 脱敏设置 */
+    'task_url_rewrite_setting.enabled': false,
+    'task_url_rewrite_setting.rules': '[]',
   });
 
   let [loading, setLoading] = useState(false);
@@ -164,6 +169,10 @@ const OperationSetting = () => {
         {/* 签到设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsCheckin options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 任务结果 URL 脱敏设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsTaskURLRewrite options={inputs} refresh={onRefresh} />
         </Card>
       </Spin>
     </>

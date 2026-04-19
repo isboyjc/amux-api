@@ -67,6 +67,11 @@ func SetRelayRouter(router *gin.Engine) {
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 		playgroundRouter.POST("/images/generations", controller.Playground)
 		playgroundRouter.POST("/images/edits", controller.Playground)
+		// 视频生成是异步任务：POST 提交 → 返回 task_id；GET 用 task_id 拉
+		// 当前状态/结果。对外 /v1/video/generations 的契约一致，只是换成
+		// 操练场专用的 /pg/video/generations，使用 UserAuth。
+		playgroundRouter.POST("/video/generations", controller.PlaygroundTask)
+		playgroundRouter.GET("/video/generations/:task_id", controller.PlaygroundTaskFetch)
 	}
 	relayV1Router := router.Group("/v1")
 	relayV1Router.Use(middleware.RouteTag("relay"))
