@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,6 +22,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
+)
+
+// APIType represents the type of upstream API
+type APIType int
+
+const (
+	APITypeDoubaoOfficial APIType = iota // Doubao official API
+	APITypeZeroCut                       // ZeroCut API
 )
 
 // ============================
@@ -96,6 +105,45 @@ type responseTask struct {
 	UpdatedAt int64 `json:"updated_at"`
 }
 
+// ZeroCut API response structure (for task query - full format)
+type zeroCutResponse struct {
+	Code      int    `json:"code"`
+	Message   string `json:"message"`
+	Data      struct {
+		ID     int    `json:"id"`  // Used in query response
+		Type   string `json:"type"`
+		Status string `json:"status"` // RUNNING, SUCCESS, FAILED, PENDING
+		Param  map[string]interface{} `json:"param"`
+		Output *struct {
+			URL            string `json:"url"`
+			Error          string `json:"error"` // Error message for failed tasks
+			Ratio          string `json:"ratio"`
+			Duration       int    `json:"duration"`
+			Resolution     string `json:"resolution"`
+			RevisedPrompt  string `json:"revised_prompt"`
+			Usage          struct {
+				Credits        int    `json:"credits"`
+				TotalTokens    int    `json:"total_tokens"`
+				TransactionID  string `json:"transactionId"`
+			} `json:"usage"`
+		} `json:"output"`
+		CreatedAt string `json:"created_at"`
+		UpdatedAt string `json:"updated_at"`
+	} `json:"data"`
+	Timestamp string `json:"timestamp"`
+}
+
+// ZeroCut create response (for task creation)
+type zeroCutCreateResponse struct {
+	Code      int    `json:"code"`
+	Message   string `json:"message"`
+	Data      struct {
+		WorkflowId int    `json:"workflowId"`  // Note: different field name than query response
+		Status     string `json:"status"`
+	} `json:"data"`
+	Timestamp string `json:"timestamp"`
+}
+
 // ============================
 // Adaptor implementation
 // ============================
@@ -105,23 +153,81 @@ type TaskAdaptor struct {
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	apiType     APIType
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
+
+	// Detect API type based on Base URL
+	if strings.Contains(a.baseURL, "zerocut.cn") {
+		a.apiType = APITypeZeroCut
+	} else {
+		a.apiType = APITypeDoubaoOfficial
+	}
 }
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	// Accept only POST /v1/video/generations as "generate" action.
+	// Check if this is Doubao raw format (from /api/v3 route)
+	if c.GetBool("doubao_raw_format") {
+		return a.validateDoubaoRawRequest(c, info)
+	}
+	// OpenAI format (from /v1 route) uses standard validation
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+}
+
+// validateDoubaoRawRequest validates Doubao official API format
+func (a *TaskAdaptor) validateDoubaoRawRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	originalReq, exists := c.Get("doubao_original_request")
+	if !exists {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("doubao original request not found"), "invalid_request", http.StatusBadRequest)
+	}
+
+	reqMap, ok := originalReq.(map[string]interface{})
+	if !ok {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("invalid request format"), "invalid_request", http.StatusBadRequest)
+	}
+
+	// Validate content array
+	contentRaw, ok := reqMap["content"]
+	if !ok {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content is required"), "invalid_request", http.StatusBadRequest)
+	}
+
+	contentArray, ok := contentRaw.([]interface{})
+	if !ok || len(contentArray) == 0 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content must be non-empty array"), "invalid_request", http.StatusBadRequest)
+	}
+
+	// Validate at least one text item exists
+	hasText := false
+	for _, item := range contentArray {
+		if itemMap, ok := item.(map[string]interface{}); ok {
+			if typeVal, ok := itemMap["type"].(string); ok && typeVal == "text" {
+				hasText = true
+				break
+			}
+		}
+	}
+	if !hasText {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content must contain at least one text item"), "invalid_request", http.StatusBadRequest)
+	}
+
+	info.Action = constant.TaskActionGenerate
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) {
-	return fmt.Sprintf("%s/api/v3/contents/generations/tasks", a.baseURL), nil
+	switch a.apiType {
+	case APITypeZeroCut:
+		return fmt.Sprintf("%s/api/video-service/seedance/create", a.baseURL), nil
+	default:
+		return fmt.Sprintf("%s/api/v3/contents/generations/tasks", a.baseURL), nil
+	}
 }
 
 // BuildRequestHeader sets required headers.
@@ -134,6 +240,22 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 
 // EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	// Check if this is Doubao raw format
+	if c.GetBool("doubao_raw_format") {
+		originalReq, exists := c.Get("doubao_original_request")
+		if !exists {
+			return nil
+		}
+		reqMap := originalReq.(map[string]interface{})
+		if hasVideoInRawContent(reqMap) {
+			if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
+				return map[string]float64{"video_input": ratio}
+			}
+		}
+		return nil
+	}
+
+	// OpenAI format
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
@@ -144,6 +266,31 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		}
 	}
 	return nil
+}
+
+// hasVideoInRawContent checks if raw Doubao request contains video_url
+func hasVideoInRawContent(reqMap map[string]interface{}) bool {
+	contentRaw, ok := reqMap["content"]
+	if !ok {
+		return false
+	}
+	contentArray, ok := contentRaw.([]interface{})
+	if !ok {
+		return false
+	}
+	for _, item := range contentArray {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if itemMap["type"] == "video_url" {
+			return true
+		}
+		if _, has := itemMap["video_url"]; has {
+			return true
+		}
+	}
+	return false
 }
 
 // hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，
@@ -177,6 +324,39 @@ func hasVideoInMetadata(metadata map[string]interface{}) bool {
 
 // BuildRequestBody converts request into Doubao specific format.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	// Check if this is Doubao raw format (from /api/v3 route)
+	if c.GetBool("doubao_raw_format") {
+		// Use original request directly without conversion
+		originalReq, exists := c.Get("doubao_original_request")
+		if !exists {
+			return nil, fmt.Errorf("doubao original request not found")
+		}
+
+		reqMap := originalReq.(map[string]interface{})
+
+		// Both Doubao and ZeroCut accept the same content array format
+		body := &requestPayload{}
+		bodyBytes, _ := common.Marshal(reqMap)
+		if err := common.Unmarshal(bodyBytes, body); err != nil {
+			return nil, errors.Wrap(err, "unmarshal doubao raw request failed")
+		}
+
+		// Handle model mapping
+		if info.IsModelMapped {
+			body.Model = info.UpstreamModelName
+		} else {
+			info.UpstreamModelName = body.Model
+		}
+
+		data, err := common.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		
+		return bytes.NewReader(data), nil
+	}
+
+	// OpenAI format: use standard conversion logic
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil, err
@@ -212,16 +392,71 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 	_ = resp.Body.Close()
 
-	// Parse Doubao response
-	var dResp responsePayload
-	if err := common.Unmarshal(responseBody, &dResp); err != nil {
-		taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+	// Check for error response first (common format for both APIs)
+	var errorResp struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := common.Unmarshal(responseBody, &errorResp); err == nil && errorResp.Error.Code != "" {
+		taskErr = service.TaskErrorWrapper(
+			fmt.Errorf("%s: %s", errorResp.Error.Code, errorResp.Error.Message),
+			"upstream_api_error",
+			resp.StatusCode,
+		)
 		return
 	}
 
-	if dResp.ID == "" {
-		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
-		return
+	// Try to parse as ZeroCut create response first (for task creation)
+	var zeroCutCreateResp zeroCutCreateResponse
+	var dResp responsePayload
+
+	if err := common.Unmarshal(responseBody, &zeroCutCreateResp); err == nil && zeroCutCreateResp.Code > 0 && zeroCutCreateResp.Data.WorkflowId > 0 {
+		// ZeroCut create format detected
+		
+		// Check for error (non-200 code)
+		if zeroCutCreateResp.Code != 200 {
+			taskErr = service.TaskErrorWrapper(
+				fmt.Errorf("ZeroCut error (code %d): %s", zeroCutCreateResp.Code, zeroCutCreateResp.Message),
+				"zerocut_api_error",
+				resp.StatusCode,
+			)
+			return
+		}
+		
+		// Convert ZeroCut response to standard format
+		dResp.ID = strconv.Itoa(zeroCutCreateResp.Data.WorkflowId)
+	} else {
+		// Try ZeroCut query format (for task query)
+		var zeroCutResp zeroCutResponse
+		if err := common.Unmarshal(responseBody, &zeroCutResp); err == nil && zeroCutResp.Code > 0 && zeroCutResp.Data.ID > 0 {
+			// ZeroCut query format detected
+			
+			// Check for error (non-200 code)
+			if zeroCutResp.Code != 200 {
+				taskErr = service.TaskErrorWrapper(
+					fmt.Errorf("ZeroCut error (code %d): %s", zeroCutResp.Code, zeroCutResp.Message),
+					"zerocut_api_error",
+					resp.StatusCode,
+				)
+				return
+			}
+			
+			// Convert ZeroCut response to standard format
+			dResp.ID = strconv.Itoa(zeroCutResp.Data.ID)
+		} else {
+			// Parse as Doubao response
+			if err := common.Unmarshal(responseBody, &dResp); err != nil {
+				taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
+				return
+			}
+			
+			if dResp.ID == "" {
+				taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
+				return
+			}
+		}
 	}
 
 	ov := dto.NewOpenAIVideo()
@@ -241,7 +476,15 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", baseUrl, taskID)
+	var uri string
+	// Detect API type based on Base URL
+	if strings.Contains(baseUrl, "zerocut.cn") {
+		// ZeroCut API: /api/video-service/omni/:id
+		uri = fmt.Sprintf("%s/api/video-service/omni/%s", baseUrl, taskID)
+	} else {
+		// Doubao official API
+		uri = fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", baseUrl, taskID)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
@@ -304,13 +547,63 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	taskResult := relaycommon.TaskInfo{
+		Code: 0,
+	}
+
+	// Try to parse as ZeroCut format first
+	var zeroCutResp zeroCutResponse
+	if err := common.Unmarshal(respBody, &zeroCutResp); err == nil && zeroCutResp.Code > 0 && zeroCutResp.Data.ID > 0 {
+		// ZeroCut format detected
+		
+		// Check for error response
+		if zeroCutResp.Code != 200 {
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Progress = "100%"
+			taskResult.Reason = fmt.Sprintf("code %d: %s", zeroCutResp.Code, zeroCutResp.Message)
+			return &taskResult, nil
+		}
+		
+		// Parse status
+		switch zeroCutResp.Data.Status {
+		case "PENDING":
+			taskResult.Status = model.TaskStatusQueued
+			taskResult.Progress = "10%"
+		case "RUNNING":
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "50%"
+		case "SUCCESS":
+			taskResult.Status = model.TaskStatusSuccess
+			taskResult.Progress = "100%"
+			// Extract output data
+			if zeroCutResp.Data.Output != nil {
+				taskResult.Url = zeroCutResp.Data.Output.URL
+				// Map credits to tokens
+				taskResult.CompletionTokens = zeroCutResp.Data.Output.Usage.Credits
+				taskResult.TotalTokens = zeroCutResp.Data.Output.Usage.TotalTokens
+			}
+		case "FAILED":
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Progress = "100%"
+			// Extract error message from output.error first, fallback to top-level message
+			if zeroCutResp.Data.Output != nil && zeroCutResp.Data.Output.Error != "" {
+				taskResult.Reason = zeroCutResp.Data.Output.Error
+			} else {
+				taskResult.Reason = zeroCutResp.Message
+			}
+			// Ensure Url is empty for failed tasks
+			taskResult.Url = ""
+		default:
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "50%"
+		}
+		return &taskResult, nil
+	}
+
+	// Fallback to Doubao official format
 	resTask := responseTask{}
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
-	}
-
-	taskResult := relaycommon.TaskInfo{
-		Code: 0,
 	}
 
 	// Map Doubao status to internal status

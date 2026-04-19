@@ -31,3 +31,4 @@ data/
 tmp/
 
 token_estimator_test.go
+.cursor
