@@ -163,6 +163,14 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "EmailDomainBlacklistEnabled":
+		if option.Value == "true" && len(common.EmailDomainBlacklist) == 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "无法启用邮箱域名黑名单，请先填入要禁止的邮箱域名！",
+			})
+			return
+		}
 	case "WeChatAuthEnabled":
 		if option.Value == "true" && common.WeChatServerAddress == "" {
 			c.JSON(http.StatusOK, gin.H{

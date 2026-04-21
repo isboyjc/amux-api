@@ -24,6 +24,7 @@ import {
   isValidMessage,
 } from './utils';
 import axios from 'axios';
+import i18n from '../i18n/i18n';
 import { MESSAGE_ROLES } from '../constants/playground.constants';
 
 export let API = axios.create({
@@ -49,6 +50,19 @@ function redirectToOAuthUrl(url, options = {}) {
   window.location.assign(targetUrl);
 }
 
+
+function attachAcceptLanguage(instance) {
+  instance.interceptors.request.use((config) => {
+    const lang = i18n?.language;
+    if (lang) {
+      config.headers = config.headers || {};
+      config.headers['Accept-Language'] = lang;
+    }
+    return config;
+  });
+}
+
+attachAcceptLanguage(API);
 
 function patchAPIInstance(instance) {
   const originalGet = instance.get.bind(instance);
@@ -91,6 +105,7 @@ export function updateAPI() {
     },
   });
 
+  attachAcceptLanguage(API);
   patchAPIInstance(API);
 }
 

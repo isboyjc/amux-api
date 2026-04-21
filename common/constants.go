@@ -51,7 +51,8 @@ var TelegramOAuthEnabled = false
 var TurnstileCheckEnabled = false
 var RegisterEnabled = true
 
-var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名限制
+var EmailDomainRestrictionEnabled = false // 是否启用邮箱域名白名单
+var EmailDomainBlacklistEnabled = false   // 是否启用邮箱域名黑名单
 var EmailAliasRestrictionEnabled = false  // 是否启用邮箱别名限制
 var EmailDomainWhitelist = []string{
 	"gmail.com",
@@ -64,6 +65,7 @@ var EmailDomainWhitelist = []string{
 	"yahoo.com",
 	"foxmail.com",
 }
+var EmailDomainBlacklist = []string{}
 var EmailLoginAuthServerList = []string{
 	"smtp.sendcloud.net",
 	"smtp.azurecomm.net",
@@ -104,8 +106,8 @@ var TelegramBotName = ""
 var QuotaForNewUser = 0
 var QuotaForInviter = 0
 var QuotaForInvitee = 0
-var AffRebateRatio = 0.0       // 充值返现比例 (0-100)
-var AffShowInvitees = false    // 是否允许用户查看受邀用户列表
+var AffRebateRatio = 0.0    // 充值返现比例 (0-100)
+var AffShowInvitees = false // 是否允许用户查看受邀用户列表
 var ChannelDisableThreshold = 5.0
 var AutomaticDisableChannelEnabled = false
 var AutomaticEnableChannelEnabled = false

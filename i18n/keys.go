@@ -236,17 +236,18 @@ const (
 
 // Setting related messages
 const (
-	MsgSettingInvalidType      = "setting.invalid_type"
-	MsgSettingWebhookEmpty     = "setting.webhook_empty"
-	MsgSettingWebhookInvalid   = "setting.webhook_invalid"
-	MsgSettingEmailInvalid     = "setting.email_invalid"
-	MsgSettingBarkUrlEmpty     = "setting.bark_url_empty"
-	MsgSettingBarkUrlInvalid   = "setting.bark_url_invalid"
-	MsgSettingGotifyUrlEmpty   = "setting.gotify_url_empty"
-	MsgSettingGotifyTokenEmpty = "setting.gotify_token_empty"
-	MsgSettingGotifyUrlInvalid = "setting.gotify_url_invalid"
-	MsgSettingUrlMustHttp      = "setting.url_must_http"
-	MsgSettingSaved            = "setting.saved"
+	MsgSettingInvalidType       = "setting.invalid_type"
+	MsgSettingWebhookEmpty      = "setting.webhook_empty"
+	MsgSettingWebhookInvalid    = "setting.webhook_invalid"
+	MsgSettingEmailInvalid      = "setting.email_invalid"
+	MsgSettingBarkUrlEmpty      = "setting.bark_url_empty"
+	MsgSettingBarkUrlInvalid    = "setting.bark_url_invalid"
+	MsgSettingGotifyUrlEmpty    = "setting.gotify_url_empty"
+	MsgSettingGotifyTokenEmpty  = "setting.gotify_token_empty"
+	MsgSettingGotifyUrlInvalid  = "setting.gotify_url_invalid"
+	MsgSettingUrlMustHttp       = "setting.url_must_http"
+	MsgSettingSaved             = "setting.saved"
+	MsgSettingEmailNotSupported = "setting.email_not_supported"
 )
 
 // Deployment related messages (io.net)

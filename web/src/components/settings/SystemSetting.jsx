@@ -89,10 +89,12 @@ const SystemSetting = () => {
     'passkey.user_verification': 'preferred',
     'passkey.attachment_preference': '',
     EmailDomainRestrictionEnabled: '',
+    EmailDomainBlacklistEnabled: '',
     EmailAliasRestrictionEnabled: '',
     SMTPSSLEnabled: '',
     SMTPForceAuthLogin: '',
     EmailDomainWhitelist: [],
+    EmailDomainBlacklist: [],
     TelegramOAuthEnabled: '',
     TelegramBotToken: '',
     TelegramBotName: '',
@@ -117,10 +119,12 @@ const SystemSetting = () => {
   const [isLoaded, setIsLoaded] = useState(false);
   const formApiRef = useRef(null);
   const [emailDomainWhitelist, setEmailDomainWhitelist] = useState([]);
+  const [emailDomainBlacklist, setEmailDomainBlacklist] = useState([]);
   const [showPasswordLoginConfirmModal, setShowPasswordLoginConfirmModal] =
     useState(false);
   const [linuxDOOAuthEnabled, setLinuxDOOAuthEnabled] = useState(false);
   const [emailToAdd, setEmailToAdd] = useState('');
+  const [blacklistEmailToAdd, setBlacklistEmailToAdd] = useState('');
   const [domainFilterMode, setDomainFilterMode] = useState(true);
   const [ipFilterMode, setIpFilterMode] = useState(true);
   const [domainList, setDomainList] = useState([]);
@@ -140,6 +144,9 @@ const SystemSetting = () => {
             break;
           case 'EmailDomainWhitelist':
             setEmailDomainWhitelist(item.value ? item.value.split(',') : []);
+            break;
+          case 'EmailDomainBlacklist':
+            setEmailDomainBlacklist(item.value ? item.value.split(',') : []);
             break;
           case 'fetch_setting.allow_private_ip':
           case 'fetch_setting.enable_ssrf_protection':
@@ -181,6 +188,7 @@ const SystemSetting = () => {
           case 'RegisterEnabled':
           case 'TurnstileCheckEnabled':
           case 'EmailDomainRestrictionEnabled':
+          case 'EmailDomainBlacklistEnabled':
           case 'EmailAliasRestrictionEnabled':
           case 'SMTPSSLEnabled':
           case 'SMTPForceAuthLogin':
@@ -362,6 +370,19 @@ const SystemSetting = () => {
     }
   };
 
+  const submitEmailDomainBlacklist = async () => {
+    if (Array.isArray(emailDomainBlacklist)) {
+      await updateOptions([
+        {
+          key: 'EmailDomainBlacklist',
+          value: emailDomainBlacklist.join(','),
+        },
+      ]);
+    } else {
+      showError(t('邮箱域名黑名单格式不正确'));
+    }
+  };
+
   const submitSSRF = async () => {
     const options = [];
 
@@ -423,6 +444,28 @@ const SystemSetting = () => {
       setEmailDomainWhitelist([...emailDomainWhitelist, domain]);
       setEmailToAdd('');
       showSuccess(t('已添加到白名单'));
+    }
+  };
+
+  const handleAddBlacklistEmail = () => {
+    if (blacklistEmailToAdd && blacklistEmailToAdd.trim() !== '') {
+      const domain = blacklistEmailToAdd.trim();
+
+      const domainRegex =
+        /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+      if (!domainRegex.test(domain)) {
+        showError(t('邮箱域名格式不正确，请输入有效的域名，如 gmail.com'));
+        return;
+      }
+
+      if (emailDomainBlacklist.includes(domain)) {
+        showError(t('该域名已存在于黑名单中'));
+        return;
+      }
+
+      setEmailDomainBlacklist([...emailDomainBlacklist, domain]);
+      setBlacklistEmailToAdd('');
+      showSuccess(t('已添加到黑名单'));
     }
   };
 
@@ -1287,6 +1330,62 @@ const SystemSetting = () => {
                     style={{ marginTop: 10 }}
                   >
                     {t('保存邮箱域名白名单设置')}
+                  </Button>
+                </Form.Section>
+              </Card>
+
+              <Card>
+                <Form.Section text={t('配置邮箱域名黑名单')}>
+                  <Text>
+                    {t(
+                      '黑名单优先级高于白名单，命中即禁止注册，适合屏蔽常见的临时邮箱域名',
+                    )}
+                  </Text>
+                  <Row
+                    gutter={{ xs: 8, sm: 16, md: 24, lg: 24, xl: 24, xxl: 24 }}
+                  >
+                    <Col xs={24} sm={24} md={12} lg={12} xl={12}>
+                      <Form.Checkbox
+                        field='EmailDomainBlacklistEnabled'
+                        noLabel
+                        onChange={(e) =>
+                          handleCheckboxChange(
+                            'EmailDomainBlacklistEnabled',
+                            e,
+                          )
+                        }
+                      >
+                        {t('启用邮箱域名黑名单')}
+                      </Form.Checkbox>
+                    </Col>
+                  </Row>
+                  <TagInput
+                    value={emailDomainBlacklist}
+                    onChange={setEmailDomainBlacklist}
+                    placeholder={t('输入域名后回车')}
+                    style={{ width: '100%', marginTop: 16 }}
+                  />
+                  <Form.Input
+                    placeholder={t('输入要添加的邮箱域名')}
+                    value={blacklistEmailToAdd}
+                    onChange={(value) => setBlacklistEmailToAdd(value)}
+                    style={{ marginTop: 16 }}
+                    suffix={
+                      <Button
+                        theme='solid'
+                        type='primary'
+                        onClick={handleAddBlacklistEmail}
+                      >
+                        {t('添加')}
+                      </Button>
+                    }
+                    onEnterPress={handleAddBlacklistEmail}
+                  />
+                  <Button
+                    onClick={submitEmailDomainBlacklist}
+                    style={{ marginTop: 10 }}
+                  >
+                    {t('保存邮箱域名黑名单设置')}
                   </Button>
                 </Form.Section>
               </Card>

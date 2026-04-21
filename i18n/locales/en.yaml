@@ -209,6 +209,7 @@ setting.gotify_token_empty: "Gotify token cannot be empty"
 setting.gotify_url_invalid: "Invalid Gotify server URL"
 setting.url_must_http: "URL must start with http:// or https://"
 setting.saved: "Settings updated"
+setting.email_not_supported: "This email address is not supported for registration. Please use another email."
 
 # Deployment messages (io.net)
 deployment.not_enabled: "io.net model deployment is not enabled or API key is missing"
