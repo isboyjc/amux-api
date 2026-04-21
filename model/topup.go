@@ -26,6 +26,15 @@ type TopUp struct {
 	Status           string  `json:"status" gorm:"index:idx_user_status,priority:2"`
 }
 
+// TopupListItem 管理员账单列表项，携带用户名、邮箱及该用户的成功充值序次/累计金额
+type TopupListItem struct {
+	TopUp
+	Username        string  `json:"username" gorm:"column:username"`
+	Email           string  `json:"email" gorm:"column:email"`
+	TopupSeq        int     `json:"topup_seq" gorm:"column:topup_seq"`
+	TopupCumulative float64 `json:"topup_cumulative" gorm:"column:topup_cumulative"`
+}
+
 var ErrPaymentMethodMismatch = errors.New("payment method mismatch")
 
 func (topUp *TopUp) Insert() error {
@@ -157,8 +166,16 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 	return topups, total, nil
 }
 
+// topupListItemSelectSQL 管理员账单列表的 SELECT 片段：
+// 通过关联子查询计算当前行在该用户成功充值中的序次（topup_seq）与累计金额（topup_cumulative）。
+// 兼容 SQLite/MySQL 5.7+/PostgreSQL（不依赖窗口函数）。
+const topupListItemSelectSQL = `top_ups.*, users.username AS username, users.email AS email,
+	(SELECT COUNT(*) FROM top_ups t2 WHERE t2.user_id = top_ups.user_id AND t2.status = 'success' AND t2.id <= top_ups.id) AS topup_seq,
+	(SELECT COALESCE(SUM(t3.money), 0) FROM top_ups t3 WHERE t3.user_id = top_ups.user_id AND t3.status = 'success' AND t3.id <= top_ups.id) AS topup_cumulative`
+
 // GetAllTopUps 获取全平台的充值记录（管理员使用）
-func GetAllTopUps(pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
+// status 为空字符串表示不过滤
+func GetAllTopUps(status string, pageInfo *common.PageInfo) (topups []*TopupListItem, total int64, err error) {
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return nil, 0, tx.Error
@@ -169,12 +186,22 @@ func GetAllTopUps(pageInfo *common.PageInfo) (topups []*TopUp, total int64, err 
 		}
 	}()
 
-	if err = tx.Model(&TopUp{}).Count(&total).Error; err != nil {
+	countQuery := tx.Model(&TopUp{})
+	if status != "" {
+		countQuery = countQuery.Where("status = ?", status)
+	}
+	if err = countQuery.Count(&total).Error; err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
-	if err = tx.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
+	listQuery := tx.Table("top_ups").
+		Select(topupListItemSelectSQL).
+		Joins("LEFT JOIN users ON users.id = top_ups.user_id")
+	if status != "" {
+		listQuery = listQuery.Where("top_ups.status = ?", status)
+	}
+	if err = listQuery.Order("top_ups.id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Scan(&topups).Error; err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
@@ -220,8 +247,9 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 	return topups, total, nil
 }
 
-// SearchAllTopUps 按订单号搜索全平台充值记录（管理员使用）
-func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
+// SearchAllTopUps 按订单号 / 用户名 / 邮箱搜索全平台充值记录（管理员使用）
+// status 为空字符串表示不过滤
+func SearchAllTopUps(keyword string, status string, pageInfo *common.PageInfo) (topups []*TopupListItem, total int64, err error) {
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return nil, 0, tx.Error
@@ -232,18 +260,31 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 		}
 	}()
 
-	query := tx.Model(&TopUp{})
+	baseQuery := tx.Table("top_ups").
+		Joins("LEFT JOIN users ON users.id = top_ups.user_id")
+
 	if keyword != "" {
-		like := "%%" + keyword + "%%"
-		query = query.Where("trade_no LIKE ?", like)
+		like := "%" + keyword + "%"
+		baseQuery = baseQuery.Where(
+			"top_ups.trade_no LIKE ? OR users.username LIKE ? OR users.email LIKE ?",
+			like, like, like,
+		)
+	}
+	if status != "" {
+		baseQuery = baseQuery.Where("top_ups.status = ?", status)
 	}
 
-	if err = query.Count(&total).Error; err != nil {
+	if err = baseQuery.Count(&total).Error; err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
-	if err = query.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
+	if err = baseQuery.
+		Select(topupListItemSelectSQL).
+		Order("top_ups.id desc").
+		Limit(pageInfo.GetPageSize()).
+		Offset(pageInfo.GetStartIdx()).
+		Scan(&topups).Error; err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}

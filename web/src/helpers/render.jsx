@@ -79,6 +79,7 @@ import {
   Package,
   Server,
   CalendarClock,
+  Receipt,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -143,6 +144,8 @@ export function getLucideIcon(key, selected = false) {
     case 'user':
     case 'personal':
       return <User {...commonProps} color={iconColor} />;
+    case 'billing':
+      return <Receipt {...commonProps} color={iconColor} />;
     case 'models':
       return <Package {...commonProps} color={iconColor} />;
     case 'deployment':

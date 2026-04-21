@@ -441,16 +441,21 @@ func GetUserTopUps(c *gin.Context) {
 func GetAllTopUps(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	keyword := c.Query("keyword")
+	// status 支持: success / pending / failed / expired，空字符串或 "all" 表示全部
+	status := c.DefaultQuery("status", common.TopUpStatusSuccess)
+	if status == "all" {
+		status = ""
+	}
 
 	var (
-		topups []*model.TopUp
+		topups []*model.TopupListItem
 		total  int64
 		err    error
 	)
 	if keyword != "" {
-		topups, total, err = model.SearchAllTopUps(keyword, pageInfo)
+		topups, total, err = model.SearchAllTopUps(keyword, status, pageInfo)
 	} else {
-		topups, total, err = model.GetAllTopUps(pageInfo)
+		topups, total, err = model.GetAllTopUps(status, pageInfo)
 	}
 	if err != nil {
 		common.ApiError(c, err)
