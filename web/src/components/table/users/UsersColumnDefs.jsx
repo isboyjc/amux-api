@@ -176,6 +176,25 @@ const renderQuotaUsage = (text, record, t) => {
 };
 
 /**
+ * Render topup information (successful topups only)
+ */
+const renderTopupInfo = (text, record, currencySymbol, t) => {
+  const count = Number(record.topup_count) || 0;
+  const amount = Number(record.topup_amount) || 0;
+  return (
+    <Space spacing={1}>
+      <Tag color='white' shape='circle' className='!text-xs'>
+        {t('充值次数')}: {count}
+      </Tag>
+      <Tag color='white' shape='circle' className='!text-xs'>
+        {t('累计充值')}: {currencySymbol}
+        {amount.toFixed(2)}
+      </Tag>
+    </Space>
+  );
+};
+
+/**
  * Render invite information
  */
 const renderInviteInfo = (text, record, t) => {
@@ -305,6 +324,7 @@ const renderOperations = (
  */
 export const getUsersColumns = ({
   t,
+  currencySymbol = '$',
   setEditingUser,
   setShowEditUser,
   showPromoteModal,
@@ -354,6 +374,12 @@ export const getUsersColumns = ({
       render: (text, record, index) => {
         return <div>{renderRole(text, t)}</div>;
       },
+    },
+    {
+      title: t('充值信息'),
+      dataIndex: 'topup',
+      render: (text, record) =>
+        renderTopupInfo(text, record, currencySymbol, t),
     },
     {
       title: t('邀请信息'),

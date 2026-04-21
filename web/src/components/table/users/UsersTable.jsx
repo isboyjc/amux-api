@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
 import { Empty } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
+import { StatusContext } from '../../../context/Status';
 import { getUsersColumns } from './UsersColumnDefs';
 import PromoteUserModal from './modals/PromoteUserModal';
 import DemoteUserModal from './modals/DemoteUserModal';
@@ -64,6 +65,9 @@ const UsersTable = (usersData) => {
   const [showResetTwoFAModal, setShowResetTwoFAModal] = useState(false);
   const [showUserSubscriptionsModal, setShowUserSubscriptionsModal] =
     useState(false);
+  const [statusState] = useContext(StatusContext);
+  const currencySymbol =
+    statusState?.status?.stripe_currency_symbol || '$';
 
   // Modal handlers
   const showPromoteUserModal = (user) => {
@@ -132,6 +136,7 @@ const UsersTable = (usersData) => {
   const columns = useMemo(() => {
     return getUsersColumns({
       t,
+      currencySymbol,
       setEditingUser,
       setShowEditUser,
       showPromoteModal: showPromoteUserModal,
@@ -144,6 +149,7 @@ const UsersTable = (usersData) => {
     });
   }, [
     t,
+    currencySymbol,
     setEditingUser,
     setShowEditUser,
     showPromoteUserModal,

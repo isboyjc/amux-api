@@ -54,6 +54,14 @@ type User struct {
 	CreatedTime      int64          `json:"created_time" gorm:"bigint"`
 }
 
+// UserListItem 用于管理端用户列表返回，在 User 基础上附带成功充值聚合信息。
+// 这些字段不写入 users 表，因此不放在 User 结构体上，避免被 GORM 自动选入常规查询。
+type UserListItem struct {
+	User
+	TopupCount  int     `json:"topup_count" gorm:"column:topup_count"`
+	TopupAmount float64 `json:"topup_amount" gorm:"column:topup_amount"`
+}
+
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
 		Id:       user.Id,
@@ -190,7 +198,7 @@ func GetMaxUserId() int {
 	return user.Id
 }
 
-func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err error) {
+func GetAllUsers(pageInfo *common.PageInfo) (users []*UserListItem, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -209,11 +217,21 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 		return nil, 0, err
 	}
 
-	// Get paginated users within same transaction
-	err = tx.Unscoped().Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error
+	// Get paginated users with aggregated topup info (successful topups only)
+	err = tx.Table("users").
+		Select("users.*, COALESCE(SUM(top_ups.money), 0) AS topup_amount, COUNT(top_ups.id) AS topup_count").
+		Joins("LEFT JOIN top_ups ON users.id = top_ups.user_id AND top_ups.status = ?", common.TopUpStatusSuccess).
+		Group("users.id").
+		Order("users.id desc").
+		Limit(pageInfo.GetPageSize()).
+		Offset(pageInfo.GetStartIdx()).
+		Scan(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
+	}
+	for _, u := range users {
+		u.Password = ""
 	}
 
 	// Commit transaction
@@ -224,8 +242,8 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, int64, error) {
-	var users []*User
+func SearchUsers(keyword string, group string, startIdx int, num int) ([]*UserListItem, int64, error) {
+	var users []*UserListItem
 	var total int64
 	var err error
 
@@ -240,47 +258,57 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 		}
 	}()
 
-	// 构建基础查询
-	query := tx.Unscoped().Model(&User{})
+	// 构建搜索条件（使用 users. 前缀以便与后续 JOIN top_ups 查询共用同一 WHERE，避免歧义列）
+	likeCondition := "users.username LIKE ? OR users.email LIKE ? OR users.display_name LIKE ? OR users.remark LIKE ?"
 
-	// 构建搜索条件
-	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ? OR remark LIKE ?"
+	var whereClause string
+	var whereArgs []any
 
 	// 尝试将关键字转换为整数ID
-	keywordInt, err := strconv.Atoi(keyword)
-	if err == nil {
+	keywordInt, convErr := strconv.Atoi(keyword)
+	if convErr == nil {
 		// 如果是数字，同时搜索ID和其他字段
-		likeCondition = "id = ? OR " + likeCondition
+		likeCondition = "users.id = ? OR " + likeCondition
 		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
+			whereClause = "(" + likeCondition + ") AND users." + commonGroupCol + " = ?"
+			whereArgs = []any{keywordInt, "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", group}
 		} else {
-			query = query.Where(likeCondition,
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+			whereClause = likeCondition
+			whereArgs = []any{keywordInt, "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%"}
 		}
 	} else {
 		// 非数字关键字，只搜索字符串字段
 		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
+			whereClause = "(" + likeCondition + ") AND users." + commonGroupCol + " = ?"
+			whereArgs = []any{"%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", group}
 		} else {
-			query = query.Where(likeCondition,
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+			whereClause = likeCondition
+			whereArgs = []any{"%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%"}
 		}
 	}
 
 	// 获取总数
-	err = query.Count(&total).Error
+	err = tx.Unscoped().Model(&User{}).Where(whereClause, whereArgs...).Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
-	// 获取分页数据
-	err = query.Omit("password").Order("id desc").Limit(num).Offset(startIdx).Find(&users).Error
+	// 获取分页数据（附带成功充值聚合信息）
+	err = tx.Table("users").
+		Select("users.*, COALESCE(SUM(top_ups.money), 0) AS topup_amount, COUNT(top_ups.id) AS topup_count").
+		Joins("LEFT JOIN top_ups ON users.id = top_ups.user_id AND top_ups.status = ?", common.TopUpStatusSuccess).
+		Where(whereClause, whereArgs...).
+		Group("users.id").
+		Order("users.id desc").
+		Limit(num).Offset(startIdx).
+		Scan(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
+	}
+	for _, u := range users {
+		u.Password = ""
 	}
 
 	// 提交事务
