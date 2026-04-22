@@ -261,26 +261,30 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		return
 	}
 
-	// 获取用户和组的倍率信息
-	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
-		}
-	}
-	if group == "" {
-		return
-	}
-
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
+	// 分组倍率：优先使用 BillingContext 中提交时的快照，保证与预扣费一致。
+	// 特别是 VIP 等"父分组"下配置了可用子分组折扣时，必须按 (UserGroup, UsingGroup)
+	// 查 GroupGroupRatio，而 task.Group 只存了 UsingGroup，无法在此处还原。
 	var finalGroupRatio float64
-	if hasUserGroupRatio {
-		finalGroupRatio = userGroupRatio
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.GroupRatio > 0 {
+		finalGroupRatio = bc.GroupRatio
 	} else {
-		finalGroupRatio = groupRatio
+		// 兼容旧任务：BillingContext 缺失时，结合 user.Group(UserGroup) 与 task.Group(UsingGroup) 查找
+		usingGroup := task.Group
+		userGroup := ""
+		if user, err := model.GetUserById(task.UserId, false); err == nil {
+			userGroup = user.Group
+		}
+		if usingGroup == "" {
+			usingGroup = userGroup
+		}
+		if usingGroup == "" {
+			return
+		}
+		if r, ok := ratio_setting.GetGroupGroupRatio(userGroup, usingGroup); ok {
+			finalGroupRatio = r
+		} else {
+			finalGroupRatio = ratio_setting.GetGroupRatio(usingGroup)
+		}
 	}
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）
