@@ -81,16 +81,14 @@ func Distribute() func(c *gin.Context) {
 				}
 				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				// 所有 /pg/* 路径（chat/completions、images/generations 等）
-				// 都允许 Playground 在 JSON body 里带 group 字段；校验后覆盖
-				// usingGroup，让下拉里选的分组生效。
-				// multipart/form-data（/pg/images/edits 等）不做 body 预读，
-				// 避免干扰后续的 MultipartForm 解析——这类请求当前版本的
-				// Playground 还没用到，未来若需要需把 group 放进 form field。
-				contentType := c.Request.Header.Get("Content-Type")
-				isPlaygroundJSON := strings.HasPrefix(c.Request.URL.Path, "/pg/") &&
-					!strings.HasPrefix(contentType, "multipart/")
-				if isPlaygroundJSON {
+				// 所有 /pg/* 路径（chat/completions、images/generations、
+				// images/edits 等）都允许 Playground 在 body 里带 group 字段；
+				// 校验后覆盖 usingGroup 用于渠道选择。
+				//
+				// UnmarshalBodyReusable 内部已经区分 JSON / x-www-form-urlencoded /
+				// multipart，都会落到 PlayGroundRequest 的 model / group 字段，
+				// 且读完后自动 seek 回 0，对后续 c.MultipartForm() 无副作用。
+				if strings.HasPrefix(c.Request.URL.Path, "/pg/") {
 					playgroundRequest := &dto.PlayGroundRequest{}
 					err = common.UnmarshalBodyReusable(c, playgroundRequest)
 					if err != nil {
@@ -320,8 +318,14 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") {
 		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
-	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
-		//modelRequest.Model = common.GetStringIfEmpty(c.PostForm("model"), "gpt-image-1")
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") ||
+		strings.HasPrefix(c.Request.URL.Path, "/pg/images/edits") {
+		// /v1/images/edits —— OpenAI 兼容外部接口
+		// /pg/images/edits —— 操练场参考图/编辑请求（multipart）
+		// 都在 body 的 form field 里带 model，必须在这里解析出来，否则
+		// 下面的 modelRequest.Model == "" 检查会直接 400。
+		// group 不在此处理：/pg/ 路径的 group 覆盖逻辑在 Distribute 主体
+		// 里（会影响 ContextKeyUsingGroup，用于渠道选择），见下方处理块。
 		contentType := c.ContentType()
 		if slices.Contains([]string{gin.MIMEPOSTForm, gin.MIMEMultipartPOSTForm}, contentType) {
 			req, err := getModelFromRequest(c)

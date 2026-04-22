@@ -22,6 +22,18 @@ import { useTranslation } from 'react-i18next';
 import { API, showError } from '../../helpers';
 
 const IMAGE_ENDPOINT = '/pg/images/generations';
+const IMAGE_EDITS_ENDPOINT = '/pg/images/edits';
+
+// hasAnyFile 判断 inputs 里是否有真正的 File。用于决定走 JSON generations
+// 还是 multipart edits 两条路径。空对象、空数组、null 都视为无图。
+const hasAnyFile = (inputs) => {
+  if (!inputs || typeof inputs !== 'object') return false;
+  for (const v of Object.values(inputs)) {
+    if (v instanceof File) return true;
+    if (Array.isArray(v) && v.some((x) => x instanceof File)) return true;
+  }
+  return false;
+};
 
 /**
  * 规范化 OpenAI 兼容的图片生成响应：
@@ -38,8 +50,11 @@ const normalizeImageResponse = (data) => {
     .map((it) => {
       if (!it) return null;
       if (typeof it.b64_json === 'string' && it.b64_json.length > 0) {
+        const url = it.b64_json.startsWith('data:')
+          ? it.b64_json
+          : `data:image/png;base64,${it.b64_json}`;
         return {
-          url: `data:image/png;base64,${it.b64_json}`,
+          url,
           revisedPrompt: it.revised_prompt,
         };
       }
@@ -67,7 +82,7 @@ export const useImageGeneration = ({ onDebug } = {}) => {
   const [loading, setLoading] = useState(false);
 
   const generate = useCallback(
-    async ({ model, group, prompt, params = {}, extra }) => {
+    async ({ model, group, prompt, params = {}, inputs = {}, extra }) => {
       if (!prompt || !prompt.trim()) {
         showError(t('请输入 Prompt'));
         return null;
@@ -92,6 +107,10 @@ export const useImageGeneration = ({ onDebug } = {}) => {
         'user',
         'background',
         'watermark',
+        'output_format',
+        'output_compression',
+        'moderation',
+        'partial_images',
       ]);
       const topParams = {};
       const extraBody = {};
@@ -100,27 +119,98 @@ export const useImageGeneration = ({ onDebug } = {}) => {
         if (OPENAI_STD_KEYS.has(k)) topParams[k] = v;
         else extraBody[k] = v;
       }
-      const payload = {
-        model,
-        group,
-        prompt: prompt.trim(),
-        response_format: 'b64_json',
-        ...topParams,
-      };
-      if (Object.keys(extraBody).length > 0) payload.extra_body = extraBody;
-      if (extra && typeof extra === 'object') Object.assign(payload, extra);
 
+      const hasImages = hasAnyFile(inputs);
       const requestTs = new Date().toISOString();
-      onDebug?.({
-        previewRequest: JSON.stringify(payload, null, 2),
-        previewTimestamp: requestTs,
-        request: JSON.stringify(payload, null, 2),
-        timestamp: requestTs,
-      });
-
       setLoading(true);
       try {
-        const res = await API.post(IMAGE_ENDPOINT, payload);
+        let res;
+        let previewForDebug;
+
+        if (!hasImages) {
+          // 路径 A：纯文生图。和改造前一字不差，JSON 打到 /pg/images/generations。
+          const payload = {
+            model,
+            group,
+            prompt: prompt.trim(),
+            response_format: 'b64_json',
+            ...topParams,
+          };
+          if (Object.keys(extraBody).length > 0) payload.extra_body = extraBody;
+          if (extra && typeof extra === 'object') Object.assign(payload, extra);
+          previewForDebug = JSON.stringify(payload, null, 2);
+          onDebug?.({
+            previewRequest: previewForDebug,
+            previewTimestamp: requestTs,
+            request: previewForDebug,
+            timestamp: requestTs,
+          });
+          res = await API.post(IMAGE_ENDPOINT, payload);
+        } else {
+          // 路径 B：带参考图，走 /pg/images/edits multipart。
+          // 约定：schema 声明了图像输入槽 → 这里的 inputs[key] 就是 File / File[]。
+          //   - 单槽：直接以 key 为表单字段名追加
+          //   - 多槽：单文件仍用 key，多文件用 key[]（贴合 OpenAI image[] 惯例）
+          // 非图像标量参数和 generations 一条同样走 topParams + extra_body。
+          const fd = new FormData();
+          fd.append('model', model);
+          if (group) fd.append('group', group);
+          fd.append('prompt', prompt.trim());
+          fd.append('response_format', 'b64_json');
+          Object.entries(topParams).forEach(([k, v]) => {
+            fd.append(k, typeof v === 'string' ? v : String(v));
+          });
+          if (Object.keys(extraBody).length > 0) {
+            fd.append('extra_body', JSON.stringify(extraBody));
+          }
+          // 调试预览：把文件部分用占位符代替，避免把 base64 塞进面板
+          const filesPreview = {};
+          Object.entries(inputs).forEach(([key, val]) => {
+            if (val instanceof File) {
+              fd.append(key, val, val.name);
+              filesPreview[key] = `<File: ${val.name} (${val.size} bytes)>`;
+            } else if (Array.isArray(val)) {
+              const usable = val.filter((x) => x instanceof File);
+              if (usable.length === 0) return;
+              const field = usable.length > 1 ? `${key}[]` : key;
+              usable.forEach((f) => fd.append(field, f, f.name));
+              filesPreview[key] = usable.map(
+                (f) => `<File: ${f.name} (${f.size} bytes)>`,
+              );
+            }
+          });
+          if (extra && typeof extra === 'object') {
+            Object.entries(extra).forEach(([k, v]) => {
+              if (v === undefined || v === null) return;
+              fd.append(k, typeof v === 'string' ? v : String(v));
+            });
+          }
+          previewForDebug = JSON.stringify(
+            {
+              _endpoint: IMAGE_EDITS_ENDPOINT,
+              _format: 'multipart/form-data',
+              model,
+              group,
+              prompt: prompt.trim(),
+              ...topParams,
+              ...(Object.keys(extraBody).length > 0
+                ? { extra_body: extraBody }
+                : {}),
+              ...filesPreview,
+            },
+            null,
+            2,
+          );
+          onDebug?.({
+            previewRequest: previewForDebug,
+            previewTimestamp: requestTs,
+            request: previewForDebug,
+            timestamp: requestTs,
+          });
+          // 不要设置 Content-Type：浏览器会自动带 boundary
+          res = await API.post(IMAGE_EDITS_ENDPOINT, fd);
+        }
+
         const body = res?.data;
         const responseTs = new Date().toISOString();
         onDebug?.({

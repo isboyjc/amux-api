@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -155,8 +156,56 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			imageRequest.ResponseFormat = formData.Get("response_format")
 			if imageValue := formData.Get("image"); imageValue != "" {
-				imageRequest.Image, _ = json.Marshal(imageValue)
+				imageRequest.Image, _ = common.Marshal(imageValue)
+			}
+
+			// 透传 GPT image / 其他厂商扩展字段到 DTO：操练场（及外部调用方）
+			// 在 multipart 场景下可用这些表单字段携带非文件参数，和 JSON
+			// 路径保持语义一致。json.RawMessage 字段按"先尝试数字，失败退字符串"
+			// 编码，避免下游 adaptor 拿到错误的 JSON 类型。
+			marshalFormValue := func(raw string) json.RawMessage {
+				if n, err := strconv.Atoi(raw); err == nil {
+					b, _ := common.Marshal(n)
+					return b
+				}
+				if b, err := strconv.ParseBool(raw); err == nil {
+					bs, _ := common.Marshal(b)
+					return bs
+				}
+				b, _ := common.Marshal(raw)
+				return b
+			}
+			if v := formData.Get("style"); v != "" {
+				imageRequest.Style = marshalFormValue(v)
+			}
+			if v := formData.Get("user"); v != "" {
+				imageRequest.User = marshalFormValue(v)
+			}
+			if v := formData.Get("background"); v != "" {
+				imageRequest.Background = marshalFormValue(v)
+			}
+			if v := formData.Get("moderation"); v != "" {
+				imageRequest.Moderation = marshalFormValue(v)
+			}
+			if v := formData.Get("output_format"); v != "" {
+				imageRequest.OutputFormat = marshalFormValue(v)
+			}
+			if v := formData.Get("output_compression"); v != "" {
+				imageRequest.OutputCompression = marshalFormValue(v)
+			}
+			if v := formData.Get("partial_images"); v != "" {
+				imageRequest.PartialImages = marshalFormValue(v)
+			}
+			// extra_body 本身就是 JSON 字符串；校验合法后直接作为 RawMessage 保留，
+			// 下游 Gemini/Vertex 等 adaptor 才能继续读取其中的私有参数。
+			if v := formData.Get("extra_body"); v != "" {
+				raw := json.RawMessage(v)
+				var probe any
+				if common.Unmarshal(raw, &probe) == nil {
+					imageRequest.ExtraBody = raw
+				}
 			}
 
 			if imageRequest.Model == "gpt-image-1" {

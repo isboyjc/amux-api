@@ -29,17 +29,25 @@ import {
 } from '@douyinfe/semi-ui';
 import {
   ArrowUp,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Eye,
   EyeOff,
+  Paperclip,
+  Pencil,
   Trash2,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { MESSAGE_ROLES } from '../../constants/playground.constants';
-import { getLogo, showSuccess } from '../../helpers';
+import { getLogo, showError, showSuccess } from '../../helpers';
 import { useActualTheme } from '../../context/Theme';
 import { buildDefaultPlaygroundLogo } from './workspaceLogo';
+import {
+  SchemaInputsRenderer,
+  hasImageInputSlot,
+} from './SchemaParamsRenderer';
 
 // 一次生成 = 一条 user + 一条 assistant
 const groupIntoGenerations = (messages) => {
@@ -103,6 +111,8 @@ const GenerationCard = ({
   generation,
   onCopyPrompt,
   onDelete,
+  onContinueEdit,
+  supportsContinueEdit,
   t,
 }) => {
   const prompt = getPromptText(generation.promptMessage);
@@ -232,6 +242,13 @@ const GenerationCard = ({
           <div className={images.length > 1 ? 'grid grid-cols-2 gap-2' : ''}>
             {images.map((img, i) => {
               const capH = images.length > 1 ? 420 : 560;
+              // "继续编辑"按钮只在：模型 schema 声明了 image 槽 + 图本身是
+              // data URL（可以在浏览器里直接转 blob，没有 CORS 问题）时出现。
+              // 远程 url 不显示，避免跨域拿不到 blob 的静默失败。
+              const canContinue =
+                supportsContinueEdit &&
+                typeof img.url === 'string' &&
+                img.url.startsWith('data:');
               return (
                 <div
                   key={i}
@@ -266,6 +283,29 @@ const GenerationCard = ({
                           'linear-gradient(to top, rgba(0,0,0,0.25) 0%, transparent 40%)',
                       }}
                     />
+                    {canContinue && (
+                      <Tooltip content={t('以此图继续编辑')}>
+                        <Button
+                          icon={<Pencil size={14} />}
+                          size='small'
+                          theme='solid'
+                          type='tertiary'
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onContinueEdit?.(img);
+                          }}
+                          className='!absolute'
+                          style={{
+                            bottom: 8,
+                            right: 8,
+                            background: 'rgba(0,0,0,0.55)',
+                            color: 'white',
+                            border: 'none',
+                            backdropFilter: 'blur(4px)',
+                          }}
+                        />
+                      </Tooltip>
+                    )}
                   </div>
                 </div>
               );
@@ -294,6 +334,9 @@ const GenerationCard = ({
 /**
  * ImageWorkspace 只负责画廊 + prompt 输入。参数（schema 驱动）由右栏"参数"
  * Tab 提供，调用 onGenerate 时由父层拼装完整 payload。
+ *
+ * 图像输入槽（format:image 的 schema 字段）由此处的 SchemaInputsRenderer
+ * 渲染，值通过受控 props `inputsValues` / `onInputsChange` 和父层双向绑定。
  */
 const ImageWorkspace = ({
   message = [],
@@ -305,6 +348,9 @@ const ImageWorkspace = ({
   onClearAll,
   showDebugPanel,
   onToggleDebugPanel,
+  inputsSchema,
+  inputsValues,
+  onInputsChange,
 }) => {
   const { t } = useTranslation();
   const [prompt, setPrompt] = useState('');
@@ -315,6 +361,32 @@ const ImageWorkspace = ({
   const actualTheme = useActualTheme();
   const logoUrl =
     getLogo() || buildDefaultPlaygroundLogo(actualTheme === 'dark');
+  const supportsImageInput = hasImageInputSlot(inputsSchema);
+
+  // 附件面板折叠：默认折叠，带附件时顶部小徽标显示数量。
+  // 自动展开时机：
+  //   1) 数量从 0 → >0（比如"继续编辑"或首次拖拽上传）——让用户能立刻
+  //      看到文件落位；
+  //   2) 用户手动点顶部条目。
+  // 自动收起时机：
+  //   - 发送后 inputs 被父层清空，数量回到 0，自动折叠让界面回到纯净态。
+  const [inputsExpanded, setInputsExpanded] = useState(false);
+  const inputsFileCount = useMemo(() => {
+    if (!inputsValues) return 0;
+    let n = 0;
+    for (const v of Object.values(inputsValues)) {
+      if (v instanceof File) n += 1;
+      else if (Array.isArray(v)) n += v.filter((x) => x instanceof File).length;
+    }
+    return n;
+  }, [inputsValues]);
+  const prevInputsCountRef = useRef(0);
+  useEffect(() => {
+    const prev = prevInputsCountRef.current;
+    if (prev === 0 && inputsFileCount > 0) setInputsExpanded(true);
+    if (prev > 0 && inputsFileCount === 0) setInputsExpanded(false);
+    prevInputsCountRef.current = inputsFileCount;
+  }, [inputsFileCount]);
 
   // 原生 textarea 的 auto-grow：在 value 变化时按 scrollHeight 调高度
   useEffect(() => {
@@ -335,8 +407,64 @@ const ImageWorkspace = ({
   const handleSubmit = async () => {
     if (!prompt.trim() || loading) return;
     const text = prompt;
+    const capturedInputs = inputsValues;
     setPrompt('');
-    await onGenerate?.({ prompt: text });
+    // 清空附件：发送是一次性的，防止下一次意外带上上次的图
+    onInputsChange?.({});
+    await onGenerate?.({ prompt: text, inputs: capturedInputs || {} });
+  };
+
+  // 继续编辑：把生成出来的图转成 File 塞进 image 槽。
+  // 仅支持 data URL（浏览器内存转换，无 CORS 风险）；远程 https URL 的
+  // 按钮在 GenerationCard 那边已经被隐藏。
+  const handleContinueEdit = async (img) => {
+    if (!img?.url || !img.url.startsWith('data:')) return;
+    try {
+      const blob = await fetch(img.url).then((r) => r.blob());
+      const mime = blob.type || 'image/png';
+      const ext = mime.split('/')[1] || 'png';
+      const file = new File([blob], `continue-${Date.now()}.${ext}`, {
+        type: mime,
+      });
+      // 语义约定：schema 里有 image 字段时优先填它；否则退一步填第一个
+      // 声明过的图像槽。这样对 OpenAI / Gemini 以及未来厂商都兼容。
+      const props = inputsSchema?.properties || {};
+      let targetKey = Object.prototype.hasOwnProperty.call(props, 'image')
+        ? 'image'
+        : null;
+      let targetDef = targetKey ? props[targetKey] : null;
+      if (!targetKey) {
+        const firstEntry = Object.entries(props).find(([, def]) => {
+          if (!def) return false;
+          if (def.format === 'image') return true;
+          if (def.type === 'array' && def.items?.format === 'image') return true;
+          return false;
+        });
+        if (firstEntry) {
+          targetKey = firstEntry[0];
+          targetDef = firstEntry[1];
+        }
+      }
+      if (!targetKey) {
+        showError(t('当前模型未声明图像输入，无法继续编辑'));
+        return;
+      }
+      const next = { ...(inputsValues || {}) };
+      if (targetDef?.type === 'array') {
+        const prev = Array.isArray(next[targetKey])
+          ? next[targetKey].filter((x) => x instanceof File)
+          : [];
+        const maxItems = targetDef?.maxItems ?? 4;
+        next[targetKey] = [...prev, file].slice(0, maxItems);
+      } else {
+        next[targetKey] = file;
+      }
+      onInputsChange?.(next);
+      showSuccess(t('已填入参考图'));
+      textareaRef.current?.focus?.();
+    } catch (err) {
+      showError(err?.message || t('填入参考图失败'));
+    }
   };
 
   const handleCopyPrompt = async (text) => {
@@ -427,6 +555,8 @@ const ImageWorkspace = ({
                 t={t}
                 onCopyPrompt={handleCopyPrompt}
                 onDelete={onDeleteGeneration}
+                onContinueEdit={handleContinueEdit}
+                supportsContinueEdit={supportsImageInput}
               />
             ))}
           </div>
@@ -447,6 +577,59 @@ const ImageWorkspace = ({
               'var(--semi-color-primary-light-hover, rgba(129,140,248,0.35))',
           }}
         >
+          {/* 附件区：模型 schema 声明了 format:image 输入槽时才渲染。
+              默认折叠成一条细条（只占一行），减少空态时的占位。点击或
+              首次添加附件时自动展开；发送后 inputs 被清空自动折叠回去。 */}
+          {supportsImageInput && (
+            <div
+              style={{
+                borderBottom: inputsExpanded
+                  ? '1px solid var(--semi-color-fill-0)'
+                  : 'none',
+              }}
+            >
+              <div
+                role='button'
+                tabIndex={0}
+                onClick={() => setInputsExpanded((v) => !v)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setInputsExpanded((v) => !v);
+                  }
+                }}
+                className='flex items-center gap-2 px-3 py-1.5 cursor-pointer select-none transition-colors'
+                style={{ color: 'var(--semi-color-text-2)' }}
+              >
+                <Paperclip size={13} />
+                <Typography.Text type='tertiary' className='text-xs'>
+                  {t('参考图')}
+                </Typography.Text>
+                {inputsFileCount > 0 && (
+                  <Tag size='small' shape='circle' color='blue'>
+                    {inputsFileCount}
+                  </Tag>
+                )}
+                <span style={{ marginLeft: 'auto', display: 'flex' }}>
+                  {inputsExpanded ? (
+                    <ChevronUp size={13} />
+                  ) : (
+                    <ChevronDown size={13} />
+                  )}
+                </span>
+              </div>
+              {inputsExpanded && (
+                <div className='px-3 pb-2'>
+                  <SchemaInputsRenderer
+                    schema={inputsSchema}
+                    values={inputsValues || {}}
+                    onChange={onInputsChange}
+                    disabled={loading}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {/* 用原生 textarea + 手动 auto-grow。之前 Semi <TextArea> 的
               autosize 在初次挂载时偶发不测量，语言切换等再渲染才纠回，
               这里直接用 DOM，时序可控、视觉一致。 */}

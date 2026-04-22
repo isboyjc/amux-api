@@ -67,6 +67,7 @@ import WorkspaceRouter from '../../components/playground/WorkspaceRouter';
 import {
   parseSchema,
   defaultsOf,
+  splitSchema,
 } from '../../components/playground/SchemaParamsRenderer';
 import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
 import { WORKSPACE } from '../../constants/workspaceTypes';
@@ -161,19 +162,36 @@ const Playground = () => {
   // image workspace 的参数 schema：完全由管理员在后台为该模型配置的
   // param_schema 决定；没配就是 null（右栏显示"该模型未声明任何参数"）。
   // 想给某个模型默认列出"尺寸/质量/宽高比"等，去"模型管理"里填一份 schema。
-  const imageParamSchema = React.useMemo(() => {
+  //
+  // schema 里 format:"image" 的字段会被 splitSchema 拆到 inputsSchema，
+  // 由 ImageWorkspace 的附件条渲染；其余旋钮留在 paramsSchema 给右栏。
+  const imageSchemaSplit = React.useMemo(() => {
     const raw = modalityMap?.[inputs.model]?.param_schema;
-    return parseSchema(raw);
+    const parsed = parseSchema(raw);
+    if (!parsed) {
+      const empty = { type: 'object', properties: {} };
+      return { paramsSchema: empty, inputsSchema: empty, rawSchema: null };
+    }
+    const split = splitSchema(parsed);
+    return { ...split, rawSchema: parsed };
   }, [inputs.model, modalityMap]);
+  const imageParamSchema = imageSchemaSplit.paramsSchema;
+  const imageInputsSchema = imageSchemaSplit.inputsSchema;
 
   // image workspace 的参数值。schema 变化（切模型/切 workspace）时重置。
   const [imageParamValues, setImageParamValues] = React.useState({});
+  // image workspace 的图像输入槽值。{ [key]: File | File[] | null }
+  const [imageInputsValues, setImageInputsValues] = React.useState({});
   const imageSchemaSig = React.useMemo(
-    () => JSON.stringify(imageParamSchema || {}),
-    [imageParamSchema],
+    () => JSON.stringify(imageSchemaSplit.rawSchema || {}),
+    [imageSchemaSplit.rawSchema],
   );
   React.useEffect(() => {
-    setImageParamValues(imageParamSchema ? defaultsOf(imageParamSchema) : {});
+    setImageParamValues(
+      imageSchemaSplit.rawSchema ? defaultsOf(imageParamSchema) : {},
+    );
+    // 切模型 / 切 schema 时附件一并清空，避免把上一个模型的图带到新模型上
+    setImageInputsValues({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageSchemaSig]);
 
@@ -331,7 +349,7 @@ const Playground = () => {
   );
 
   const handleGenerateImage = useCallback(
-    async ({ prompt }) => {
+    async ({ prompt, inputs: imageInputs }) => {
       if (!prompt || !prompt.trim()) return;
       maybeAutoNameSession(prompt);
       // 真实消息活动：把当前会话顶到列表顶部
@@ -351,6 +369,7 @@ const Playground = () => {
         group: inputs.group,
         prompt,
         params,
+        inputs: imageInputs,
       });
 
       setMessage((prev) => {
@@ -933,6 +952,9 @@ const Playground = () => {
                     onClearAll: handleClearMessages,
                     showDebugPanel,
                     onToggleDebugPanel: () => setShowDebugPanel(!showDebugPanel),
+                    inputsSchema: imageInputsSchema,
+                    inputsValues: imageInputsValues,
+                    onInputsChange: setImageInputsValues,
                   }}
                   videoWorkspaceProps={{
                     message,

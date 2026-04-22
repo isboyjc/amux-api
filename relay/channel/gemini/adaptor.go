@@ -1,10 +1,14 @@
 package gemini
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -58,6 +62,30 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	// /v1/images/edits（含操练场 /pg/images/edits）：multipart 形态，除
+	// 文本 prompt 外还会携带一至多张参考图。Gemini Nano Banana 家族上游
+	// 的 :generateContent 本身就支持在 contents.parts 里混合 text 和
+	// inlineData，所以这里把每张上传图转 base64 拼进 Parts 即可，响应
+	// 路径仍由 GeminiNanoBananaImageHandler 统一处理。
+	if info.RelayMode == constant.RelayModeImagesEdits &&
+		model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) &&
+		!strings.HasPrefix(info.UpstreamModelName, "imagen") {
+		parts, err := collectGeminiImageParts(c, request.Prompt)
+		if err != nil {
+			return nil, err
+		}
+		cfg := dto.GeminiChatGenerationConfig{
+			ResponseModalities: []string{"TEXT", "IMAGE"},
+		}
+		applyGeminiImageExtra(&cfg, parseGeminiImageExtra(request.ExtraBody))
+		return &dto.GeminiChatRequest{
+			Contents: []dto.GeminiChatContent{
+				{Role: "user", Parts: parts},
+			},
+			GenerationConfig: cfg,
+		}, nil
+	}
+
 	// Nano Banana 家族（gemini-*-flash-image / gemini-*-pro-image 等）走
 	// generateContent 端点而非 :predict。调用方（操练场或外部）通过
 	// /v1/images/generations 打过来时，在此直接转成 chat 请求并开启
@@ -291,8 +319,10 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	}
 
 	// Nano Banana 走 generateContent 返回 inlineData；需要把 chat 响应
-	// 转成 OpenAI 图片响应（data[].b64_json）。
-	if info.RelayMode == constant.RelayModeImagesGenerations &&
+	// 转成 OpenAI 图片响应（data[].b64_json）。Generations 和 Edits 两种
+	// RelayMode 下上游都走同一条 :generateContent 端点，解析逻辑一致。
+	if (info.RelayMode == constant.RelayModeImagesGenerations ||
+		info.RelayMode == constant.RelayModeImagesEdits) &&
 		model_setting.IsGeminiModelSupportImagine(info.UpstreamModelName) {
 		return GeminiNanoBananaImageHandler(c, info, resp)
 	}
@@ -318,4 +348,90 @@ func (a *Adaptor) GetModelList() []string {
 
 func (a *Adaptor) GetChannelName() string {
 	return ChannelName
+}
+
+// collectGeminiImageParts 从 multipart/form-data 里收集所有图像文件转成
+// Gemini 的 GeminiPart 列表，前置一个 text part 承载 prompt。
+//
+// 和 OpenAI :edits 不同，Gemini 的 :generateContent 没有"主图 / 蒙版"的
+// 位置语义——所有 inlineData part 都等价，含义由上下文（prompt 文字）
+// 决定。因此这里不对 schema 里的 key 做区分，把 image / image[] /
+// style_reference 等**所有图像文件字段**按字段名字典序依次加入，保证
+// 渲染顺序稳定（同一字段内的多个文件保留客户端顺序）。
+func collectGeminiImageParts(c *gin.Context, prompt string) ([]dto.GeminiPart, error) {
+	parts := []dto.GeminiPart{{Text: prompt}}
+
+	mf := c.Request.MultipartForm
+	if mf == nil {
+		if _, err := c.MultipartForm(); err != nil {
+			return nil, fmt.Errorf("failed to parse multipart form: %w", err)
+		}
+		mf = c.Request.MultipartForm
+	}
+	if mf == nil || len(mf.File) == 0 {
+		return parts, nil
+	}
+
+	keys := make([]string, 0, len(mf.File))
+	for k := range mf.File {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		for _, fh := range mf.File[key] {
+			f, err := fh.Open()
+			if err != nil {
+				return nil, fmt.Errorf("open image %q: %w", fh.Filename, err)
+			}
+			data, readErr := io.ReadAll(f)
+			_ = f.Close()
+			if readErr != nil {
+				return nil, fmt.Errorf("read image %q: %w", fh.Filename, readErr)
+			}
+			parts = append(parts, dto.GeminiPart{
+				InlineData: &dto.GeminiInlineData{
+					MimeType: geminiDetectImageMime(fh, data),
+					Data:     base64.StdEncoding.EncodeToString(data),
+				},
+			})
+		}
+	}
+	return parts, nil
+}
+
+// geminiDetectImageMime 优先信任客户端声明的 Content-Type（浏览器 File API
+// 会填），其次按文件后缀猜，最后退化到 http.DetectContentType 嗅探字节。
+// Content-Type 可能带 "; charset=..." 后缀，这里只取 media type 部分。
+func geminiDetectImageMime(fh *multipart.FileHeader, data []byte) string {
+	if ct := fh.Header.Get("Content-Type"); ct != "" {
+		if semi := strings.IndexByte(ct, ';'); semi >= 0 {
+			ct = strings.TrimSpace(ct[:semi])
+		}
+		if strings.HasPrefix(ct, "image/") {
+			return ct
+		}
+	}
+	switch strings.ToLower(filepath.Ext(fh.Filename)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
+	}
+	sniff := http.DetectContentType(data)
+	if semi := strings.IndexByte(sniff, ';'); semi >= 0 {
+		sniff = strings.TrimSpace(sniff[:semi])
+	}
+	if strings.HasPrefix(sniff, "image/") {
+		return sniff
+	}
+	return "image/png"
 }
