@@ -55,6 +55,19 @@ const ENDPOINT_TEMPLATE = {
   'image-generation': { path: '/v1/images/generations', method: 'POST' },
 };
 
+// 价格参考模板：用于在模型广场详情页展示官方价 vs 本站价对比
+const PRICING_REFERENCE_TEMPLATE = {
+  note: '按 token 计费，实际价格受分辨率与时长影响',
+  items: [
+    {
+      scenario: '720P 1s 视频',
+      official: '1 CNY',
+      ours: '0.7 CNY',
+      discount: '7折',
+    },
+  ],
+};
+
 const nameRuleOptions = [
   { label: '精确名称匹配', value: 0 },
   { label: '前缀名称匹配', value: 1 },
@@ -156,6 +169,7 @@ const EditModelModal = (props) => {
     endpoints: '',
     modality: 'text',
     param_schema: '',
+    pricing_reference: '',
     name_rule: props.editingModel?.model_name ? 0 : undefined, // 通过未配置模型过来的固定为精确匹配
     status: true,
     sync_official: true,
@@ -190,6 +204,10 @@ const EditModelModal = (props) => {
         // param_schema 缺省为空串
         if (!data.param_schema) {
           data.param_schema = '';
+        }
+        // pricing_reference 缺省为空串
+        if (!data.pricing_reference) {
+          data.pricing_reference = '';
         }
         // 处理status/sync_official，将数字转为布尔值
         data.status = data.status === 1;
@@ -636,6 +654,26 @@ const EditModelModal = (props) => {
                         '留空时 Playground 将按模型类别使用内置默认模板。填写须为合法 JSON。',
                       )}
                       style={{ fontFamily: 'monospace' }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <JSONEditor
+                      field='pricing_reference'
+                      label={t('价格参考（展示于模型广场详情）')}
+                      placeholder={
+                        '{\n  "note": "按 token 计费，实际价格受分辨率与时长影响",\n  "items": [\n    { "scenario": "720P 1s 视频", "official": "1 CNY", "ours": "0.7 CNY", "discount": "7折" }\n  ]\n}'
+                      }
+                      value={values.pricing_reference}
+                      onChange={(val) =>
+                        formApiRef.current?.setValue('pricing_reference', val)
+                      }
+                      formApi={formApiRef.current}
+                      editorType='object'
+                      template={PRICING_REFERENCE_TEMPLATE}
+                      templateLabel={t('填入模板')}
+                      extraText={t(
+                        '用于视频等按 token 计费、用户不易估算成本的模型。留空则不展示。',
+                      )}
                     />
                   </Col>
                   <Col span={24}>

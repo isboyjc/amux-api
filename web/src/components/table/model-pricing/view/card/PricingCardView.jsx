@@ -26,7 +26,7 @@ import {
   Button,
   Avatar,
 } from '@douyinfe/semi-ui';
-import { IconHelpCircle } from '@douyinfe/semi-icons';
+import { IconHelpCircle, IconCreditCard } from '@douyinfe/semi-icons';
 import { Copy } from 'lucide-react';
 import {
   IllustrationNoResult,
@@ -38,6 +38,7 @@ import {
   formatPriceInfo,
   getLobeHubIcon,
   getModelPriceItems,
+  parsePricingReference,
 } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
 import ModelHealthTimeline from '../common/ModelHealthTimeline';
@@ -513,6 +514,128 @@ const PricingCardView = ({
                     {getModelDescription(model)}
                   </p>
                 </div>
+
+                {/* 价格参考（紧凑版：首条高亮，多条以"+N"悬浮展开） */}
+                {(() => {
+                  const ref = parsePricingReference(model.pricing_reference);
+                  if (!ref || ref.items.length === 0) return null;
+                  const first = ref.items[0];
+                  const rest = ref.items.slice(1);
+                  const restTooltip = (
+                    <div className='text-xs' style={{ minWidth: 180 }}>
+                      {ref.note && (
+                        <div className='mb-1 text-gray-400'>{ref.note}</div>
+                      )}
+                      {ref.items.map((it, i) => (
+                        <div
+                          key={i}
+                          className='flex items-center gap-1 py-0.5'
+                        >
+                          <span className='font-medium'>
+                            {it.scenario || '-'}
+                          </span>
+                          {it.official && (
+                            <span className='line-through text-gray-400'>
+                              {it.official}
+                            </span>
+                          )}
+                          {it.ours && (
+                            <span className='font-semibold text-green-500'>
+                              {it.ours}
+                            </span>
+                          )}
+                          {it.discount && (
+                            <span className='text-green-500'>
+                              ({it.discount})
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                  return (
+                    <Tooltip content={restTooltip} position='top'>
+                      <div
+                        className='mb-2 rounded-lg px-2 py-1.5 flex items-center gap-1.5 text-xs'
+                        style={{
+                          backgroundColor:
+                            'var(--semi-color-success-light-default)',
+                          border:
+                            '1px solid var(--semi-color-success-light-active)',
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <IconCreditCard
+                          size={12}
+                          style={{ color: 'var(--semi-color-success)' }}
+                        />
+                        <div className='flex-1 min-w-0 flex items-center gap-1.5 flex-wrap'>
+                          {first.scenario && (
+                            <span
+                              className='font-medium'
+                              style={{
+                                color: 'var(--semi-color-text-0)',
+                              }}
+                            >
+                              {first.scenario}
+                            </span>
+                          )}
+                          {first.official && (
+                            <span
+                              className='line-through'
+                              style={{
+                                color: 'var(--semi-color-text-2)',
+                              }}
+                            >
+                              {first.official}
+                            </span>
+                          )}
+                          {first.ours && (
+                            <span
+                              className='font-semibold'
+                              style={{
+                                color: 'var(--semi-color-success)',
+                              }}
+                            >
+                              {first.ours}
+                            </span>
+                          )}
+                          {first.discount && (
+                            <Tag
+                              size='small'
+                              color='green'
+                              shape='circle'
+                              style={{
+                                fontSize: '10px',
+                                padding: '0 6px',
+                                height: 16,
+                                lineHeight: '16px',
+                              }}
+                            >
+                              {first.discount}
+                            </Tag>
+                          )}
+                        </div>
+                        {rest.length > 0 && (
+                          <Tag
+                            size='small'
+                            color='white'
+                            shape='circle'
+                            style={{
+                              fontSize: '10px',
+                              padding: '0 6px',
+                              height: 16,
+                              lineHeight: '16px',
+                              flexShrink: 0,
+                            }}
+                          >
+                            +{rest.length}
+                          </Tag>
+                        )}
+                      </div>
+                    </Tooltip>
+                  );
+                })()}
 
                 {/* 健康状态时间线 */}
                 {healthData && (

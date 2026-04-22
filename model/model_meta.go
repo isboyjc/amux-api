@@ -31,6 +31,10 @@ type Model struct {
 	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`
 	Modality     string         `json:"modality" gorm:"type:varchar(32);default:'text';index"`
 	ParamSchema  string         `json:"param_schema,omitempty" gorm:"type:text"`
+	// PricingReference 存储"价格参考"卡片的 JSON，例如：
+	// {"note":"按 token 计费","items":[{"scenario":"720P 1s","official":"1 CNY","ours":"0.7 CNY","discount":"7折"}]}
+	// 前端在模型详情侧栏渲染对比表格。无值时不展示。
+	PricingReference string `json:"pricing_reference,omitempty" gorm:"type:text"`
 	Status       int            `json:"status" gorm:"default:1"`
 	SyncOfficial int            `json:"sync_official" gorm:"default:1"`
 	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
@@ -80,7 +84,7 @@ func (mi *Model) Update() error {
 	mi.UpdatedTime = common.GetTimestamp()
 	// 使用 Select 强制更新所有字段，包括零值
 	return DB.Model(&Model{}).Where("id = ?", mi.Id).
-		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "modality", "param_schema", "status", "sync_official", "name_rule", "updated_time").
+		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "modality", "param_schema", "pricing_reference", "status", "sync_official", "name_rule", "updated_time").
 		Updates(mi).Error
 }
 
