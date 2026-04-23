@@ -1722,7 +1722,7 @@ export function renderModelPrice(opts) {
     completion_tokens: completionTokens = 0,
     model_ratio: modelRatio = 0,
     model_price: modelPrice = -1,
-    completion_ratio: completionRatio,
+    completion_ratio: _completionRatio,
     group_ratio: _groupRatio,
     user_group_ratio,
     cache_tokens: cacheTokens = 0,
@@ -1748,6 +1748,7 @@ export function renderModelPrice(opts) {
     user_group_ratio,
   );
   let groupRatio = effectiveGroupRatio;
+  const completionRatio = _completionRatio ?? 0;
 
   const { symbol, rate } = getCurrencyConfig();
 
@@ -1774,9 +1775,6 @@ export function renderModelPrice(opts) {
       ]);
     }
 
-    if (completionRatio === undefined) {
-      completionRatio = 0;
-    }
     const inputRatioPrice = modelRatio * 2.0;
     const completionRatioPrice = modelRatio * 2.0 * completionRatio;
     const cacheRatioPrice = modelRatio * 2.0 * cacheRatio;
@@ -1985,10 +1983,6 @@ export function renderModelPrice(opts) {
         ratioType: ratioLabel,
       },
     );
-  }
-
-  if (completionRatio === undefined) {
-    completionRatio = 0;
   }
 
   const modelRatioValue = formatRatioValue(modelRatio);
@@ -2487,11 +2481,11 @@ export function renderAudioModelPrice(opts) {
     completion_tokens: completionTokens = 0,
     model_ratio: modelRatio = 0,
     model_price: modelPrice = -1,
-    completion_ratio: completionRatio,
+    completion_ratio: _completionRatio,
     audio_input: audioInputTokens = 0,
     audio_output: audioCompletionTokens = 0,
-    audio_ratio: audioRatio,
-    audio_completion_ratio: audioCompletionRatio,
+    audio_ratio: _audioRatio,
+    audio_completion_ratio: _audioCompletionRatio,
     group_ratio: _groupRatio,
     user_group_ratio,
     cache_tokens: cacheTokens = 0,
@@ -2503,6 +2497,9 @@ export function renderAudioModelPrice(opts) {
     user_group_ratio,
   );
   let groupRatio = effectiveGroupRatio;
+  const completionRatio = _completionRatio ?? 0;
+  const audioRatio = parseFloat(_audioRatio ?? 0).toFixed(6);
+  const audioCompletionRatio = _audioCompletionRatio ?? 0;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -2529,10 +2526,6 @@ export function renderAudioModelPrice(opts) {
       ]);
     }
 
-    if (completionRatio === undefined) {
-      completionRatio = 0;
-    }
-    audioRatio = parseFloat(audioRatio).toFixed(6);
     const inputRatioPrice = modelRatio * 2.0;
     const completionRatioPrice = modelRatio * 2.0 * completionRatio;
     const textPrice =
@@ -2618,10 +2611,6 @@ export function renderAudioModelPrice(opts) {
         ratioType: ratioLabel,
       },
     );
-  }
-
-  if (completionRatio === undefined) {
-    completionRatio = 0;
   }
 
   const modelRatioValue = formatRatioValue(modelRatio);
@@ -2774,7 +2763,7 @@ export function renderClaudeModelPrice(opts) {
     completion_tokens: completionTokens = 0,
     model_ratio: modelRatio = 0,
     model_price: modelPrice = -1,
-    completion_ratio: completionRatio,
+    completion_ratio: _completionRatio,
     group_ratio: _groupRatio,
     user_group_ratio,
     cache_tokens: cacheTokens = 0,
@@ -2792,6 +2781,7 @@ export function renderClaudeModelPrice(opts) {
     user_group_ratio,
   );
   let groupRatio = effectiveGroupRatio;
+  const completionRatio = _completionRatio ?? 0;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -2816,10 +2806,6 @@ export function renderClaudeModelPrice(opts) {
           },
         ),
       ]);
-    }
-
-    if (completionRatio === undefined) {
-      completionRatio = 0;
     }
 
     const inputRatioPrice = modelRatio * 2.0;
@@ -3003,10 +2989,6 @@ export function renderClaudeModelPrice(opts) {
         total: (modelPrice * groupRatio * rate).toFixed(6),
       },
     );
-  }
-
-  if (completionRatio === undefined) {
-    completionRatio = 0;
   }
 
   const modelRatioValue = formatRatioValue(modelRatio);
