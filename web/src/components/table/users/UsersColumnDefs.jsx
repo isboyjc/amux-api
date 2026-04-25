@@ -36,6 +36,8 @@ import {
   timestamp2string,
 } from '../../../helpers';
 
+const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
+
 /**
  * Render user role
  */
@@ -389,7 +391,12 @@ export const getUsersColumns = ({
     {
       title: t('注册时间'),
       dataIndex: 'created_time',
-      render: (text) => <div>{text ? timestamp2string(text) : '-'}</div>,
+      render: renderTimestamp,
+    },
+    {
+      title: t('最后登录'),
+      dataIndex: 'last_login_at',
+      render: renderTimestamp,
     },
     {
       title: '',
