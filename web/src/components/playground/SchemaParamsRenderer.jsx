@@ -92,6 +92,34 @@ export const splitSchema = (schema) => {
   };
 };
 
+// 按当前分组过滤 schema 的 properties。约定 schema 字段里可加扩展键
+// `x-disabled-group-prefixes: ["special"]` 来声明「当用户选的分组前缀
+// 命中其中任一项时，这个参数就不渲染、也不参与发送」。
+//
+// 设计上是「负向声明」——大多数参数官方/反代都通用，只有少数（如 n、
+// background:transparent 这种反代不可靠的字段）需要显式标记。group key
+// 用前缀匹配是因为我们只有两类约定：special* / premium*。
+export const filterSchemaByGroup = (schema, group) => {
+  if (!schema || typeof schema !== 'object') return schema;
+  const props = schema.properties || {};
+  if (!group || Object.keys(props).length === 0) return schema;
+
+  const next = {};
+  Object.entries(props).forEach(([key, def]) => {
+    const disabled = def?.['x-disabled-group-prefixes'];
+    if (
+      Array.isArray(disabled) &&
+      disabled.some(
+        (p) => typeof p === 'string' && p && group.startsWith(p),
+      )
+    ) {
+      return; // 当前分组命中黑名单前缀 → 跳过该字段
+    }
+    next[key] = def;
+  });
+  return { ...schema, properties: next };
+};
+
 // hasImageInputSlot 快速判断 schema 是否声明了至少一个图像槽，
 // 供 ImageWorkspace 决定是否显示附件条 / "继续编辑"按钮。
 export const hasImageInputSlot = (schema) => {

@@ -457,6 +457,84 @@ code {
   column-gap: 0 !important;
 }
 
+/* 操练场输入框工具栏按钮：默认无边框透明背景，hover 出 fill-1 灰底；
+   所有按钮（模式选择、模型选择 pill、新会话等）共用，唯独右侧发送按钮
+   保持 solid 主色不走这套。 */
+.playground-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 10px;
+  border: none;
+  background: transparent;
+  color: var(--semi-color-text-0);
+  cursor: pointer;
+  font-family: inherit;
+  outline: none;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+.playground-toolbar-btn:hover:not(:disabled) {
+  background: var(--semi-color-fill-1);
+}
+.playground-toolbar-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* 聊天气泡：去掉左右两侧的头像；用「尖角朝向自己」的不对称圆角传达
+   消息归属——用户气泡右上角收成 2px、AI 文本气泡左上角收成 2px，
+   类似 iMessage 那种「这条话从哪一侧说出来」的视觉。
+   通用圆角拉大到 16px，整体观感更柔和；图片/视频气泡的 14px 圆角
+   规则在另一处定义，不冲突。 */
+.semi-chat-chatBox-avatar {
+  display: none !important;
+}
+.semi-chat-chatBox {
+  /* 头像没了，去掉头像-内容之间的 12px gap，避免气泡左/右出现莫名留白 */
+  column-gap: 0 !important;
+}
+.semi-chat-chatBox-content {
+  border-radius: 16px !important;
+}
+.semi-chat-chatBox-right .semi-chat-chatBox-content {
+  border-top-right-radius: 2px !important;
+}
+.semi-chat-chatBox:not(.semi-chat-chatBox-right)
+  .semi-chat-chatBox-content:not(:has(.playground-image-bubble)) {
+  border-top-left-radius: 2px !important;
+}
+
+/* 工具栏「快捷参数滚动条」：image/video 模型可能有多个 enum 参数挤在
+   一行，超出时允许横向滚动但隐藏滚动条；不影响 send 按钮固定在右侧。 */
+.playground-toolbar-params {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.playground-toolbar-params::-webkit-scrollbar {
+  display: none;
+}
+
+/* 自定义 renderChatBoxAction 渲染出来的按钮排：默认隐藏，hover 到该消息
+   气泡时再显示。只控制可见性，不动布局/间距/边距。 */
+.playground-message-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease;
+}
+.semi-chat-chatBox:hover .playground-message-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* 触屏设备没有 hover——直接常显，避免无法触发的死锁 */
+@media (hover: none) {
+  .playground-message-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
 .semi-chat-inputBox-clearButton.semi-button .semi-icon {
   font-size: 20px !important;
 }
@@ -771,6 +849,44 @@ code {
 
 .image-list-scroll::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ==================== 操练场 · 生成中骨架 ====================
+   图片 / 视频 loading 气泡里，按目标尺寸的同比例渲染一块带 shimmer 动效的
+   占位卡。`aspect-ratio` CSS 由组件内联设置，这里只管动效与配色。 */
+
+.playground-skeleton {
+  position: relative;
+  width: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--semi-color-fill-0) 0%,
+    var(--semi-color-fill-1) 50%,
+    var(--semi-color-fill-0) 100%
+  );
+  background-size: 200% 100%;
+  animation: playgroundShimmer 1.4s ease-in-out infinite;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+@keyframes playgroundShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* 图片/视频气泡：保留 Semi Chat 助手气泡的背景/描边（meta 信息条需要这块
+   surface），去掉默认内边距让媒体贴到气泡顶部和左右边沿；同时把整块气泡
+   外层的圆角拉大到 14px 并 overflow:hidden，让媒体在气泡顶部呈现圆角。
+   :has() 现代浏览器都支持；老版本环境降级回默认 padding，无副作用。 */
+.semi-chat-chatBox-content:has(.playground-image-bubble) {
+  padding: 0 !important;
+  border-radius: 14px !important;
+  overflow: hidden !important;
+}
+.playground-image-bubble-meta {
+  /* 元信息行：自补 padding，对齐原来的气泡内边距感 */
+  padding: 10px 14px 12px;
 }
 
 /* ==================== 同步倍率 - 渠道选择器 ==================== */

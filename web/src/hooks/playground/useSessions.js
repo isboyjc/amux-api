@@ -31,11 +31,6 @@ import {
   setActiveSessionId,
   migrateLegacyMessagesIfAny,
 } from '../../components/playground/configStorage';
-import {
-  WORKSPACE,
-  inferWorkspaceFromModality,
-} from '../../constants/workspaceTypes';
-
 const DEFAULT_TITLE = '未命名会话';
 
 /**
@@ -53,23 +48,12 @@ export const useSessions = () => {
     return list;
   }, []);
 
-  // 首次挂载：加载列表、迁移老数据、建默认会话。
+  // 首次挂载：加载列表、建默认会话。
+  // 旧版本会话曾经带 workspace_type 字段，现已废弃；保留在 IDB 里不动，
+  // 新代码读 session.modality 即可，向前向后都兼容。
   useEffect(() => {
     (async () => {
       let list = await listSessions();
-      // 迁移：给旧会话补 workspace_type 字段（按 modality 推断）。这是纯
-      // 客户端数据，写回一次 IDB 就永久修复。
-      const migrations = [];
-      list.forEach((s) => {
-        if (!s.workspace_type) {
-          const ws = inferWorkspaceFromModality(s.modality);
-          s.workspace_type = ws;
-          migrations.push(patchSession(s.id, { workspace_type: ws }));
-        }
-      });
-      if (migrations.length > 0) {
-        await Promise.all(migrations);
-      }
 
       if (list.length === 0) {
         const id = genSessionId();
@@ -77,7 +61,6 @@ export const useSessions = () => {
         const newSession = {
           id,
           title: DEFAULT_TITLE,
-          workspace_type: WORKSPACE.CHAT,
           modality: 'text',
           model: '',
           group: '',
@@ -108,17 +91,12 @@ export const useSessions = () => {
   }, []);
 
   const createSession = useCallback(
-    async ({ title, workspaceType, modality, model, group } = {}) => {
+    async ({ title, modality, model, group } = {}) => {
       const id = genSessionId();
       const now = Date.now();
-      const ws =
-        workspaceType ||
-        inferWorkspaceFromModality(modality) ||
-        WORKSPACE.CHAT;
       const record = {
         id,
         title: title || DEFAULT_TITLE,
-        workspace_type: ws,
         modality: modality || 'text',
         model: model || '',
         group: group || '',

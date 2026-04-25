@@ -104,9 +104,10 @@ export const DEFAULT_CONFIG = {
     seed: false,
   },
   systemPrompt: '',
-  // showDebugPanel 控制右侧面板（参数+调试 Tab）是否可见，默认开启，
-  // 用户可用右上角按钮收起以腾出聊天空间。
-  showDebugPanel: true,
+  // showDebugPanel 控制右侧面板（参数+调试 Tab）是否可见，默认收起，
+  // 用户可用右上角按钮展开。常用参数已经移到输入框上方的工具栏，普通
+  // 使用流程不需要打开右栏。
+  showDebugPanel: false,
   customRequestMode: false,
   customRequestBody: '',
 };

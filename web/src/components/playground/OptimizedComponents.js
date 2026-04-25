@@ -66,10 +66,9 @@ export const OptimizedSettingsPanel = React.memo(
       JSON.stringify(prevProps.inputs) === JSON.stringify(nextProps.inputs) &&
       JSON.stringify(prevProps.parameterEnabled) ===
         JSON.stringify(nextProps.parameterEnabled) &&
-      JSON.stringify(prevProps.models) === JSON.stringify(nextProps.models) &&
-      JSON.stringify(prevProps.groups) === JSON.stringify(nextProps.groups) &&
+      JSON.stringify(prevProps.modelEntries) ===
+        JSON.stringify(nextProps.modelEntries) &&
       prevProps.currentModality === nextProps.currentModality &&
-      prevProps.currentWorkspaceType === nextProps.currentWorkspaceType &&
       prevProps.customRequestMode === nextProps.customRequestMode &&
       prevProps.customRequestBody === nextProps.customRequestBody &&
       prevProps.showDebugPanel === nextProps.showDebugPanel &&

@@ -39,7 +39,6 @@ import {
   PLAYGROUND_SUPPORTED_MODALITIES,
 } from '../../constants/playground.constants';
 import { getModalityShortLabel } from '../../constants/modalityLabels';
-import { WORKSPACE } from '../../constants/workspaceTypes';
 
 const RIGHT_PANEL_TABS = {
   PARAMS: 'params',
@@ -56,7 +55,6 @@ const PlaygroundRightPanel = ({
   inputs,
   parameterEnabled,
   currentModality = MODALITY.TEXT,
-  currentWorkspaceType = WORKSPACE.CHAT,
   customRequestMode,
   customRequestBody,
   onInputChange,
@@ -75,11 +73,16 @@ const PlaygroundRightPanel = ({
 }) => {
   const { t } = useTranslation();
 
-  const isChatWorkspace = currentWorkspaceType === WORKSPACE.CHAT;
-  const isImageWorkspace = currentWorkspaceType === WORKSPACE.IMAGE;
+  // workspace 概念已被合并到「按消息 modality 自适应」的统一窗口里。
+  // 右侧参数面板按当前选中的模型 modality 动态切换：
+  //   text / multimodal → 显示 chat 标准参数（temp/top_p/...）+ 流式开关
+  //   image            → 显示 schema 驱动的参数（size/quality/...）
+  //   其它             → Banner 提示，建议用自定义请求体
   const isTextLike =
     currentModality === MODALITY.TEXT ||
     currentModality === MODALITY.MULTIMODAL;
+  const isChatWorkspace = isTextLike;
+  const isImageWorkspace = currentModality === MODALITY.IMAGE;
   const isUnsupportedModality =
     !PLAYGROUND_SUPPORTED_MODALITIES.has(currentModality);
   const modalityLabel = getModalityShortLabel(t, currentModality);

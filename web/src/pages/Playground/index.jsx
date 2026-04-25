@@ -20,7 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useContext, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Layout, Toast, Modal } from '@douyinfe/semi-ui';
+import { Layout, Toast } from '@douyinfe/semi-ui';
 
 // Context
 import { UserContext } from '../../context/User';
@@ -53,24 +53,22 @@ import {
 } from '../../helpers';
 
 // Components
-import {
-  OptimizedSettingsPanel,
-  OptimizedMessageContent,
-  OptimizedMessageActions,
-} from '../../components/playground/OptimizedComponents';
 import ChatArea from '../../components/playground/ChatArea';
 import FloatingButtons from '../../components/playground/FloatingButtons';
 import PlaygroundRightPanel, {
   RIGHT_PANEL_TABS,
 } from '../../components/playground/PlaygroundRightPanel';
-import WorkspaceRouter from '../../components/playground/WorkspaceRouter';
+import SessionList from '../../components/playground/SessionList';
 import {
   parseSchema,
   defaultsOf,
   splitSchema,
+  filterSchemaByGroup,
+  hasImageInputSlot,
 } from '../../components/playground/SchemaParamsRenderer';
 import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
-import { WORKSPACE } from '../../constants/workspaceTypes';
+import { MODALITY } from '../../constants/playground.constants';
+import { inferMessageModality } from '../../components/playground/messageModality';
 
 // 生成用户头像（灰色背景 + 圆角矩形，与导航头像一致）
 const generateAvatarDataUrl = (username) => {
@@ -114,9 +112,8 @@ const Playground = () => {
     customRequestMode,
     customRequestBody,
     showSettings,
-    models,
-    groups,
-    status,
+    modelEntries,
+    currentModelEntry,
     modalityMap,
     message,
     debugData,
@@ -125,16 +122,14 @@ const Playground = () => {
     sseSourceRef,
     chatRef,
     handleInputChange,
+    handleModelGroupChange,
     handleParameterToggle,
     debouncedSaveConfig,
     saveMessagesImmediately,
-    handleConfigImport,
-    handleConfigReset,
     handleNewChat,
     setShowSettings,
-    setModels,
+    setModelEntries,
     setGroups,
-    setStatus,
     setModalityMap,
     setMessage,
     setDebugData,
@@ -147,15 +142,13 @@ const Playground = () => {
     sessions,
     activeSessionId,
     activeSession,
-    currentWorkspaceType,
     switchSession,
-    createSession,
     renameSession,
     deleteSession,
     touchSession,
   } = state;
 
-  // 当前选中模型的 modality，用于 SettingsPanel 按模态自适应
+  // 当前选中模型的 modality，驱动 ChatArea / UnifiedInputBar / 右栏的形态
   const currentModality =
     (modalityMap && modalityMap[inputs.model]?.modality) || 'text';
 
@@ -172,11 +165,39 @@ const Playground = () => {
       const empty = { type: 'object', properties: {} };
       return { paramsSchema: empty, inputsSchema: empty, rawSchema: null };
     }
-    const split = splitSchema(parsed);
-    return { ...split, rawSchema: parsed };
-  }, [inputs.model, modalityMap]);
+    // 先按当前分组过滤掉它不支持的字段（schema 里通过
+    // `x-disabled-group-prefixes` 声明），再做 image-input 拆分。
+    // 这样不仅 UI 上隐藏，imageSchemaSig 变化也会触发 imageParamValues
+    // 重置，避免之前在 premium 设的值（比如 n=4）被偷偷发到 special。
+    const filtered = filterSchemaByGroup(parsed, inputs.group);
+    const split = splitSchema(filtered);
+    return { ...split, rawSchema: filtered };
+  }, [inputs.model, inputs.group, modalityMap]);
   const imageParamSchema = imageSchemaSplit.paramsSchema;
   const imageInputsSchema = imageSchemaSplit.inputsSchema;
+
+  // 「参考图槽位 key」：优先 'image' / 'reference_image' / 'images'，否则
+  // schema 里第一个 format:image 的字段。返回 { key, isArray }。
+  // 提到 useState/useCallback 之前，避免 handleGenerateImage 闭包引用时
+  // 出现 const TDZ 报错。
+  const imageSlotInfo = React.useMemo(() => {
+    const props = imageInputsSchema?.properties || {};
+    const pickKey = ['image', 'reference_image', 'images'].find(
+      (k) => k in props,
+    );
+    const key =
+      pickKey ||
+      Object.keys(props).find((k) => {
+        const def = props[k];
+        return (
+          def?.format === 'image' ||
+          (def?.type === 'array' && def?.items?.format === 'image')
+        );
+      });
+    if (!key) return null;
+    const def = props[key];
+    return { key, isArray: def?.type === 'array' };
+  }, [imageInputsSchema]);
 
   // image workspace 的参数值。schema 变化（切模型/切 workspace）时重置。
   const [imageParamValues, setImageParamValues] = React.useState({});
@@ -209,12 +230,12 @@ const Playground = () => {
     saveMessagesImmediately,
   );
 
-  // 数据加载
+  // 数据加载（一次性聚合所有可用分组下的模型，提供给合并后的模型选择器）
   useDataLoader(
     userState,
     inputs,
     handleInputChange,
-    setModels,
+    setModelEntries,
     setGroups,
     setModalityMap,
   );
@@ -355,8 +376,59 @@ const Playground = () => {
       // 真实消息活动：把当前会话顶到列表顶部
       if (activeSessionId) touchSession?.(activeSessionId);
       const params = { ...imageParamValues };
-      const userMsg = createMessage(MESSAGE_ROLES.USER, prompt);
-      const loadingMsg = createLoadingAssistantMessage();
+
+      // 收集本次发送的「参考图」并读成 base64 data URL，嵌入用户消息的
+      // content 数组（OpenAI multimodal 同款形态：[{text}, ...{image_url}]）。
+      // 之后 MessageContent / RefImageGrid 直接渲染这些图，气泡里展示
+      // 「参考图 + 文字 prompt」的完整一次发送。
+      const slotKey = imageSlotInfo?.key;
+      const slotVal = slotKey ? imageInputs?.[slotKey] : null;
+      const refFiles = Array.isArray(slotVal)
+        ? slotVal.filter((x) => x instanceof File)
+        : slotVal instanceof File
+          ? [slotVal]
+          : [];
+      const refUrls =
+        refFiles.length > 0
+          ? await Promise.all(
+              refFiles.map(
+                (f) =>
+                  new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsDataURL(f);
+                  }),
+              ),
+            )
+          : [];
+
+      const userContent =
+        refUrls.length > 0
+          ? [
+              { type: 'text', text: prompt },
+              ...refUrls.map((url) => ({
+                type: 'image_url',
+                image_url: { url },
+              })),
+            ]
+          : prompt;
+
+      // 在统一对话窗口里：用户消息和助手消息都打 modality='image' 标，
+      // 让 AssistantBubbleRouter 渲染图片气泡，并把这些消息排除出后续
+      // chat 模型的上下文。
+      const userMsg = {
+        ...createMessage(MESSAGE_ROLES.USER, userContent),
+        modality: MODALITY.IMAGE,
+        meta: { model: inputs.model, group: inputs.group },
+      };
+      const loadingMsg = {
+        ...createLoadingAssistantMessage(),
+        modality: MODALITY.IMAGE,
+        // 把当前参数（size / aspect_ratio / quality 等）带到 loading 消息上，
+        // 让 ImageBubble 的骨架占位能按目标尺寸的同比例渲染。
+        meta: { model: inputs.model, group: inputs.group, params },
+      };
       let newMessages = [];
       setMessage((prev) => {
         newMessages = [...prev, userMsg, loadingMsg];
@@ -385,6 +457,7 @@ const Playground = () => {
           return {
             ...m,
             status: 'complete',
+            modality: MODALITY.IMAGE,
             content: result.images.map((img) => ({
               type: 'image_url',
               image_url: { url: img.url },
@@ -392,6 +465,7 @@ const Playground = () => {
             })),
             meta: {
               model: inputs.model,
+              group: inputs.group,
               params: params || {},
               usage: result.usage,
             },
@@ -406,6 +480,7 @@ const Playground = () => {
       inputs.model,
       inputs.group,
       imageParamValues,
+      imageSlotInfo,
       maybeAutoNameSession,
       setMessage,
       saveMessagesImmediately,
@@ -494,11 +569,16 @@ const Playground = () => {
       const userMsg = {
         ...createMessage(MESSAGE_ROLES.USER, prompt),
         attachments: content,
+        modality: MODALITY.VIDEO,
+        meta: { model: inputs.model, group: inputs.group },
       };
       const loadingMsg = {
         ...createLoadingAssistantMessage(),
         status: 'loading',
         progress: 0,
+        modality: MODALITY.VIDEO,
+        // 同 image：把 resolution / ratio / duration 带过来，骨架按比例渲染
+        meta: { model: inputs.model, group: inputs.group, params },
       };
       let newMessages = [];
       setMessage((prev) => {
@@ -541,9 +621,11 @@ const Playground = () => {
             ...m,
             taskId: result.taskId,
             status: 'polling',
+            modality: MODALITY.VIDEO,
             pollStartedAt: Date.now(),
             meta: {
               model: inputs.model,
+              group: inputs.group,
               params: params || {},
             },
           };
@@ -656,31 +738,32 @@ const Playground = () => {
     currentModality,
   ]);
 
-  // 发送消息
-  function onMessageSend(content, _attachment) {
-    // 用首条消息自动命名
-    maybeAutoNameSession(typeof content === 'string' ? content : '');
-    // 真实消息活动：把当前会话顶到列表顶部
-    if (activeSessionId) touchSession?.(activeSessionId);
+  // chat / multimodal 路径：拼 chat completions 请求
+  // 把过往的 image / video 消息从上下文里剔除（它们是 side outputs，
+  // 不参与对话语义）；保留的 image_url 视觉附件由 multimodal 模型消费。
+  function handleChatSend(content) {
+    const userMessage = {
+      ...createMessage(MESSAGE_ROLES.USER, content),
+      modality:
+        currentModality === MODALITY.MULTIMODAL || inputs.imageEnabled
+          ? MODALITY.MULTIMODAL
+          : MODALITY.TEXT,
+      meta: { model: inputs.model, group: inputs.group },
+    };
+    const loadingMessage = {
+      ...createLoadingAssistantMessage(),
+      modality:
+        currentModality === MODALITY.MULTIMODAL ? MODALITY.MULTIMODAL : MODALITY.TEXT,
+      meta: { model: inputs.model, group: inputs.group },
+    };
 
-    // 创建用户消息和加载消息
-    const userMessage = createMessage(MESSAGE_ROLES.USER, content);
-    const loadingMessage = createLoadingAssistantMessage();
-
-    // 如果是自定义请求体模式
     if (customRequestMode && customRequestBody) {
       try {
         const customPayload = JSON.parse(customRequestBody);
-
         setMessage((prevMessage) => {
           const newMessages = [...prevMessage, userMessage, loadingMessage];
-
-          // 发送自定义请求体
           sendRequest(customPayload, customPayload.stream !== false);
-
-          // 发送消息后保存，传入新消息列表
           setTimeout(() => saveMessagesImmediately(newMessages), 0);
-
           return newMessages;
         });
         return;
@@ -691,23 +774,28 @@ const Playground = () => {
       }
     }
 
-    // 默认模式
     const validImageUrls = inputs.imageUrls.filter((url) => url.trim() !== '');
     const messageContent = buildMessageContent(
       content,
       validImageUrls,
       inputs.imageEnabled,
     );
-    const userMessageWithImages = createMessage(
-      MESSAGE_ROLES.USER,
-      messageContent,
-    );
+    const userMessageWithImages = {
+      ...createMessage(MESSAGE_ROLES.USER, messageContent),
+      modality: inputs.imageEnabled ? MODALITY.MULTIMODAL : MODALITY.TEXT,
+      meta: { model: inputs.model, group: inputs.group },
+    };
 
     setMessage((prevMessage) => {
       const newMessages = [...prevMessage, userMessageWithImages];
-
+      // 上下文裁剪：只把 text / multimodal 消息送给 chat 模型；图片/视频
+      // 气泡是 side outputs，不参与对话上下文。
+      const chatHistory = newMessages.filter((m) => {
+        const mod = inferMessageModality(m);
+        return mod === MODALITY.TEXT || mod === MODALITY.MULTIMODAL;
+      });
       const payload = buildApiPayload(
-        newMessages,
+        chatHistory,
         null,
         inputs,
         parameterEnabled,
@@ -715,19 +803,48 @@ const Playground = () => {
       );
       sendRequest(payload, inputs.stream);
 
-      // 禁用图片模式
-      if (inputs.imageEnabled) {
-        setTimeout(() => {
-          handleInputChange('imageEnabled', false);
-        }, 100);
-      }
-
-      // 发送消息后保存，传入新消息列表（包含用户消息和加载消息）
       const messagesWithLoading = [...newMessages, loadingMessage];
       setTimeout(() => saveMessagesImmediately(messagesWithLoading), 0);
-
       return messagesWithLoading;
     });
+  }
+
+  // 统一发送入口：UnifiedInputBar 不知道当前选的是哪种模型，全部以
+  // (text) 形式回调过来；这里按当前 modality 路由到对应处理。
+  // 切到不同 modality 的模型不再 fork 新会话，直接「下一条用新模型」。
+  //
+  // 写成 function 声明（不是 useCallback）的原因：useMessageActions 在更
+  // 前面就要拿到 onMessageSend（用于消息「重新生成」），function 声明会
+  // 被提升到 Playground 函数顶部，避免 const TDZ 报错。
+  function onMessageSend(content) {
+    if (typeof content !== 'string' || !content.trim()) return;
+    maybeAutoNameSession(content);
+    if (activeSessionId) touchSession?.(activeSessionId);
+
+    if (currentModality === MODALITY.IMAGE) {
+      handleGenerateImage({ prompt: content, inputs: imageInputsValues });
+      // 一次性的图像输入槽：发完清空，避免下次意外带上。
+      // 注意：imageParamValues（size/quality 等）保留，只在切模型/切 schema
+      // 时才重置——用户调好的参数不该因为发送一次就被吞掉。
+      setImageInputsValues({});
+      return;
+    }
+    if (currentModality === MODALITY.VIDEO) {
+      // 视频附件目前未通过 UnifiedInputBar 透传，发空数组；下一迭代
+      // 把附件管理整合进 UnifiedInputBar 后再补
+      handleGenerateVideo({ prompt: content, attachments: [] });
+      return;
+    }
+    handleChatSend(content);
+    // 文本/多模态对话：发送后清空参考图（与图片模型 setImageInputsValues({})
+    // 对称）。inputs 里的模型/分组/temperature 等不动，跨消息保留。
+    if (
+      inputs.imageEnabled ||
+      (inputs.imageUrls && inputs.imageUrls.some((u) => u && u.trim()))
+    ) {
+      handleInputChange('imageUrls', ['']);
+      handleInputChange('imageEnabled', false);
+    }
   }
 
   // 切换推理展开状态
@@ -744,60 +861,8 @@ const Playground = () => {
     [setMessage],
   );
 
-  // 渲染函数
-  const renderCustomChatContent = useCallback(
-    ({ message, className }) => {
-      const isCurrentlyEditing = editingMessageId === message.id;
-
-      return (
-        <OptimizedMessageContent
-          message={message}
-          className={className}
-          styleState={styleState}
-          onToggleReasoningExpansion={toggleReasoningExpansion}
-          isEditing={isCurrentlyEditing}
-          onEditSave={handleEditSave}
-          onEditCancel={handleEditCancel}
-          editValue={editValue}
-          onEditValueChange={setEditValue}
-        />
-      );
-    },
-    [
-      styleState,
-      editingMessageId,
-      editValue,
-      handleEditSave,
-      handleEditCancel,
-      setEditValue,
-      toggleReasoningExpansion,
-    ],
-  );
-
-  const renderChatBoxAction = useCallback(
-    (props) => {
-      const { message: currentMessage } = props;
-      const isAnyMessageGenerating = message.some(
-        (msg) => msg.status === 'loading' || msg.status === 'incomplete',
-      );
-      const isCurrentlyEditing = editingMessageId === currentMessage.id;
-
-      return (
-        <OptimizedMessageActions
-          message={currentMessage}
-          styleState={styleState}
-          onMessageReset={messageActions.handleMessageReset}
-          onMessageCopy={messageActions.handleMessageCopy}
-          onMessageDelete={messageActions.handleMessageDelete}
-          onRoleToggle={messageActions.handleRoleToggle}
-          onMessageEdit={handleMessageEdit}
-          isAnyMessageGenerating={isAnyMessageGenerating}
-          isEditing={isCurrentlyEditing}
-        />
-      );
-    },
-    [messageActions, styleState, message, editingMessageId, handleMessageEdit],
-  );
+  // 注：消息气泡 / action bar 的渲染逻辑已下沉到 ChatArea 内部，
+  // 这里只透传需要的 handlers 与编辑状态。
 
   // Effects
 
@@ -882,10 +947,257 @@ const Playground = () => {
     imageEnabled: inputs.imageEnabled || false,
   };
 
+  // 参考图相关的几个 derived 标志：
+  //   supportsImageAttach    —— 多模态对话模型（chat-multimodal），用 imageUrls
+  //   supportsImageInputSlot —— image/video 模型且 schema 有 image 输入槽
+  //   acceptsReferenceImage  —— UnifiedInputBar 是否处理 paste/drag/picker
+  //                              事件（true 时会调 handleAddReferenceImage，
+  //                              文本类模型也设 true 以便父层 toast 反馈）
+  //   showUploadButton       —— 输入框右侧是否渲染「+」基座按钮
+  //                              （仅 image/video 且有 image input slot）
+  const supportsImageAttach = currentModality === MODALITY.MULTIMODAL;
+  const supportsImageInputSlot =
+    (currentModality === MODALITY.IMAGE ||
+      currentModality === MODALITY.VIDEO) &&
+    hasImageInputSlot(imageInputsSchema);
+  const showUploadButton = supportsImageInputSlot;
+  // 文本/audio/embedding 等也允许走 ingest，让 toast 在父层统一提示
+  const acceptsReferenceImage = true;
+
+  // 任一异步任务进行中 → 按钮 loading
+  const isAnyGenerating =
+    imageGenerating ||
+    videoGenerating ||
+    (Array.isArray(message) &&
+      message.some(
+        (m) => m.status === 'loading' || m.status === 'incomplete' || m.status === 'polling',
+      ));
+
+  // 用 useRef 缓存「File → object URL」，避免每次渲染都新建 URL；
+  // 组件卸载时统一 revoke 防止内存泄漏。
+  const objectUrlsRef = React.useRef(new Map());
+  React.useEffect(() => {
+    const cache = objectUrlsRef.current;
+    return () => {
+      cache.forEach((url) => URL.revokeObjectURL(url));
+      cache.clear();
+    };
+  }, []);
+  const fileToUrl = React.useCallback((file) => {
+    const cache = objectUrlsRef.current;
+    if (cache.has(file)) return cache.get(file);
+    const url = URL.createObjectURL(file);
+    cache.set(file, url);
+    return url;
+  }, []);
+
+  // 参考图统一展示数据：根据 modality 从 imageUrls / imageInputsValues
+  // 派生，结构 [{ key, dataUrl, name }]。key 用于增删定位。
+  const referenceImages = React.useMemo(() => {
+    if (currentModality === MODALITY.MULTIMODAL) {
+      return (inputs.imageUrls || [])
+        .map((url, i) => ({ key: `mm-${i}`, dataUrl: url, idx: i }))
+        .filter((x) => x.dataUrl && x.dataUrl.trim() !== '');
+    }
+    if (currentModality === MODALITY.IMAGE && imageSlotInfo) {
+      const v = imageInputsValues?.[imageSlotInfo.key];
+      const arr = Array.isArray(v) ? v : v instanceof File ? [v] : [];
+      return arr
+        .filter((f) => f instanceof File)
+        .map((f, i) => ({
+          key: `img-${i}-${f.name}-${f.size}`,
+          dataUrl: fileToUrl(f),
+          name: f.name,
+          idx: i,
+        }));
+    }
+    return [];
+  }, [
+    currentModality,
+    inputs.imageUrls,
+    imageInputsValues,
+    imageSlotInfo,
+    fileToUrl,
+  ]);
+
+  // 添加参考图：根据 modality 路由 + 数量限制 + 文本/不支持模型 toast 拒绝
+  //   - multimodal：走 imageUrls（base64 字符串），统一上限 9 张
+  //   - image / video（带 image input slot）：File 对象写到对应 slot，
+  //     上限按 schema 的 maxItems（数组型）或 1（单值型）
+  //   - 其它（text / audio / embedding / rerank）：toast 提示不支持
+  const MULTIMODAL_MAX = 9;
+  const handleAddReferenceImage = React.useCallback(
+    (file) => {
+      if (!file) return;
+
+      // text / 其它类型：明确告知不支持
+      if (
+        currentModality !== MODALITY.MULTIMODAL &&
+        !(
+          (currentModality === MODALITY.IMAGE ||
+            currentModality === MODALITY.VIDEO) &&
+          imageSlotInfo
+        )
+      ) {
+        Toast.warning({
+          content: t('当前模型不支持图片输入，请切换到多模态、图片或视频模型'),
+          duration: 2.5,
+        });
+        return;
+      }
+
+      // multimodal：cap 9 张，走 chat 多模态 imageUrls 通道
+      if (currentModality === MODALITY.MULTIMODAL) {
+        const cur = (inputs.imageUrls || []).filter(
+          (u) => u && u.trim() !== '',
+        );
+        if (cur.length >= MULTIMODAL_MAX) {
+          Toast.warning({
+            content: t('多模态对话最多上传 {{n}} 张图片', {
+              n: MULTIMODAL_MAX,
+            }),
+            duration: 2,
+          });
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result;
+          if (typeof dataUrl !== 'string') return;
+          handleInputChange('imageUrls', [...cur, dataUrl]);
+          handleInputChange('imageEnabled', true);
+        };
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      // image / video gen：写 schema slot，上限按 schema 决定
+      if (
+        (currentModality === MODALITY.IMAGE ||
+          currentModality === MODALITY.VIDEO) &&
+        imageSlotInfo
+      ) {
+        const def = imageInputsSchema?.properties?.[imageSlotInfo.key];
+        const slotMax = imageSlotInfo.isArray
+          ? def?.maxItems || 4
+          : 1;
+        const cur = imageInputsValues?.[imageSlotInfo.key];
+        const curArr = imageSlotInfo.isArray
+          ? Array.isArray(cur)
+            ? cur.filter((x) => x instanceof File)
+            : []
+          : cur instanceof File
+            ? [cur]
+            : [];
+        if (curArr.length >= slotMax) {
+          Toast.warning({
+            content: t('该模型最多上传 {{n}} 张参考图', { n: slotMax }),
+            duration: 2,
+          });
+          return;
+        }
+        if (imageSlotInfo.isArray) {
+          setImageInputsValues({
+            ...imageInputsValues,
+            [imageSlotInfo.key]: [...curArr, file],
+          });
+        } else {
+          setImageInputsValues({
+            ...imageInputsValues,
+            [imageSlotInfo.key]: file,
+          });
+        }
+      }
+    },
+    [
+      currentModality,
+      inputs.imageUrls,
+      imageInputsValues,
+      imageInputsSchema,
+      imageSlotInfo,
+      handleInputChange,
+      t,
+    ],
+  );
+
+  // 删除参考图：按 key 找到 idx，从对应 state 里 splice 出去
+  const handleRemoveReferenceImage = React.useCallback(
+    (key) => {
+      const target = referenceImages.find((x) => x.key === key);
+      if (!target) return;
+      if (currentModality === MODALITY.MULTIMODAL) {
+        const cur = (inputs.imageUrls || []).filter((u) => u && u.trim() !== '');
+        const next = cur.slice();
+        next.splice(target.idx, 1);
+        handleInputChange('imageUrls', next.length > 0 ? next : ['']);
+        if (next.length === 0) handleInputChange('imageEnabled', false);
+        return;
+      }
+      if (currentModality === MODALITY.IMAGE && imageSlotInfo) {
+        const cur = imageInputsValues?.[imageSlotInfo.key];
+        if (imageSlotInfo.isArray) {
+          const arr = Array.isArray(cur)
+            ? cur.filter((x) => x instanceof File)
+            : [];
+          const next = arr.slice();
+          next.splice(target.idx, 1);
+          setImageInputsValues({
+            ...imageInputsValues,
+            [imageSlotInfo.key]: next,
+          });
+        } else {
+          const { [imageSlotInfo.key]: _, ...rest } = imageInputsValues || {};
+          setImageInputsValues(rest);
+        }
+      }
+    },
+    [
+      currentModality,
+      referenceImages,
+      inputs.imageUrls,
+      imageInputsValues,
+      imageSlotInfo,
+      handleInputChange,
+    ],
+  );
+
+  // 「以此图继续编辑」：把已生成图片作为参考图加入输入框堆叠。
+  // 走和 paste/drag 同一条 handleAddReferenceImage 路径——所以 schema
+  // 数量上限、modality 校验、Toast 反馈全都自然继承。可点多次累计。
+  const handleContinueEdit = React.useCallback(
+    async (img) => {
+      if (!img?.url) return;
+      if (typeof img.url !== 'string' || !img.url.startsWith('data:')) {
+        Toast.warning({
+          content: t('远程图片暂不支持作为参考图'),
+          duration: 2,
+        });
+        return;
+      }
+      try {
+        const blob = await fetch(img.url).then((r) => r.blob());
+        const mime = blob.type || 'image/png';
+        const ext = (mime.split('/')[1] || 'png').split('+')[0];
+        const file = new File([blob], `continue-${Date.now()}.${ext}`, {
+          type: mime,
+        });
+        handleAddReferenceImage(file);
+      } catch (err) {
+        Toast.error({
+          content: err?.message || t('填入参考图失败'),
+          duration: 2,
+        });
+      }
+    },
+    [handleAddReferenceImage, t],
+  );
+
   return (
     <PlaygroundProvider value={playgroundContextValue}>
       <div className='h-full'>
         <Layout className='h-full bg-transparent flex flex-col md:flex-row'>
+          {/* 左侧：只剩会话列表（可在移动端通过 floating 按钮展开覆盖层）。
+              模型选择 / 新会话 / 参数 / 附件全部下沉到 ChatArea 底部的输入栏。 */}
           {(showSettings || !isMobile) && (
             <Layout.Sider
               className={`
@@ -893,93 +1205,75 @@ const Playground = () => {
               ${
                 isMobile
                   ? 'fixed top-0 left-0 right-0 bottom-0 z-[1000] w-full h-auto bg-white shadow-lg'
-                  : 'relative z-[1] w-80 h-[calc(100vh-66px)]'
+                  : 'relative z-[1] w-64 h-[calc(100vh-66px)]'
               }
             `}
-              width={isMobile ? '100%' : 320}
+              width={isMobile ? '100%' : 256}
             >
-              <OptimizedSettingsPanel
-                inputs={inputs}
-                models={models}
-                groups={groups}
-                currentModality={currentModality}
-                currentWorkspaceType={currentWorkspaceType}
-                styleState={styleState}
-                showSettings={showSettings}
-                customRequestMode={customRequestMode}
-                onInputChange={handleInputChange}
-                onCloseSettings={() => setShowSettings(false)}
-                sessions={sessions}
-                activeSessionId={activeSessionId}
-                onSwitchSession={switchSession}
-                onCreateSession={(wsType) => handleNewChat(wsType)}
-                onRenameSession={renameSession}
-                onDeleteSession={deleteSession}
-              />
+              {/* SessionList 自己处理内部滚动；外层只给 padding 和满高 */}
+              <div className='h-full p-3 flex flex-col min-h-0'>
+                <SessionList
+                  sessions={sessions}
+                  activeId={activeSessionId}
+                  onSwitch={(id) => {
+                    switchSession(id);
+                    if (isMobile) setShowSettings(false);
+                  }}
+                  onCreate={() => {
+                    handleNewChat();
+                    if (isMobile) setShowSettings(false);
+                  }}
+                  onRename={renameSession}
+                  onDelete={deleteSession}
+                />
+              </div>
             </Layout.Sider>
           )}
 
           <Layout.Content className='relative flex-1 overflow-hidden'>
             <div className='overflow-hidden flex flex-col lg:flex-row h-[calc(100vh-66px)] mt-[60px]'>
               <div className='flex-1 flex flex-col'>
-                <WorkspaceRouter
-                  workspaceType={currentWorkspaceType}
-                  currentModelName={inputs.model}
-                  chatAreaProps={{
-                    chatRef,
-                    message,
-                    inputs,
-                    styleState,
-                    showDebugPanel,
-                    roleInfo,
-                    onMessageSend,
-                    onMessageCopy: messageActions.handleMessageCopy,
-                    onMessageReset: messageActions.handleMessageReset,
-                    onMessageDelete: messageActions.handleMessageDelete,
-                    onStopGenerator,
-                    onClearMessages: handleClearMessages,
-                    onToggleDebugPanel: () => setShowDebugPanel(!showDebugPanel),
-                    renderCustomChatContent,
-                    renderChatBoxAction,
-                  }}
-                  imageWorkspaceProps={{
-                    message,
-                    inputs,
-                    styleState,
-                    loading: imageGenerating,
-                    onGenerate: handleGenerateImage,
-                    onDeleteGeneration: handleDeleteGeneration,
-                    onClearAll: handleClearMessages,
-                    showDebugPanel,
-                    onToggleDebugPanel: () => setShowDebugPanel(!showDebugPanel),
-                    inputsSchema: imageInputsSchema,
-                    inputsValues: imageInputsValues,
-                    onInputsChange: setImageInputsValues,
-                  }}
-                  videoWorkspaceProps={{
-                    message,
-                    inputs,
-                    styleState,
-                    loading: videoGenerating,
-                    onGenerate: handleGenerateVideo,
-                    onDeleteGeneration: handleDeleteGeneration,
-                    onClearAll: handleClearMessages,
-                    showDebugPanel,
-                    onToggleDebugPanel: () => setShowDebugPanel(!showDebugPanel),
-                  }}
-                  placeholderProps={{
-                    modelName: inputs.model,
-                    styleState,
-                    onSwitchToCustomRequest: () => {
-                      setCustomRequestMode(true);
-                      setRightPanelTab(RIGHT_PANEL_TABS.PARAMS);
-                      if (!showDebugPanel) setShowDebugPanel(true);
-                    },
-                  }}
+                <ChatArea
+                  chatRef={chatRef}
+                  message={message}
+                  inputs={inputs}
+                  styleState={styleState}
+                  showDebugPanel={showDebugPanel}
+                  roleInfo={roleInfo}
+                  onMessageSend={onMessageSend}
+                  onMessageCopy={messageActions.handleMessageCopy}
+                  onMessageReset={messageActions.handleMessageReset}
+                  onMessageDelete={messageActions.handleMessageDelete}
+                  onStopGenerator={onStopGenerator}
+                  onClearMessages={handleClearMessages}
+                  onToggleDebugPanel={() => setShowDebugPanel(!showDebugPanel)}
+                  onMessageEdit={handleMessageEdit}
+                  editingMessageId={editingMessageId}
+                  editValue={editValue}
+                  onEditValueChange={setEditValue}
+                  onEditSave={handleEditSave}
+                  onEditCancel={handleEditCancel}
+                  onToggleReasoningExpansion={toggleReasoningExpansion}
+                  onImageContinueEdit={handleContinueEdit}
+                  imageSupportsContinueEdit={supportsImageInputSlot}
+                  // UnifiedInputBar 透传
+                  modelEntries={modelEntries}
+                  currentModelEntry={currentModelEntry}
+                  currentModality={currentModality}
+                  onModelGroupChange={handleModelGroupChange}
+                  paramSchema={imageParamSchema}
+                  paramValues={imageParamValues}
+                  onParamValuesChange={setImageParamValues}
+                  loading={isAnyGenerating}
+                  acceptsReferenceImage={acceptsReferenceImage}
+                  showUploadButton={showUploadButton}
+                  referenceImages={referenceImages}
+                  onAddReferenceImage={handleAddReferenceImage}
+                  onRemoveReferenceImage={handleRemoveReferenceImage}
                 />
               </div>
 
-              {/* 右侧面板 - 桌面端：参数/调试 Tab 切换，可通过右上角按钮收起 */}
+              {/* 右侧面板 - 桌面端：参数/调试 Tab 切换，可通过输入栏的 ⚙ 收起 */}
               {showDebugPanel && !isMobile && (
                 <div className='w-96 flex-shrink-0 h-full'>
                   <PlaygroundRightPanel
@@ -989,7 +1283,6 @@ const Playground = () => {
                     inputs={inputs}
                     parameterEnabled={parameterEnabled}
                     currentModality={currentModality}
-                    currentWorkspaceType={currentWorkspaceType}
                     customRequestMode={customRequestMode}
                     customRequestBody={customRequestBody}
                     onInputChange={handleInputChange}
@@ -1019,7 +1312,6 @@ const Playground = () => {
                   inputs={inputs}
                   parameterEnabled={parameterEnabled}
                   currentModality={currentModality}
-                  currentWorkspaceType={currentWorkspaceType}
                   customRequestMode={customRequestMode}
                   customRequestBody={customRequestBody}
                   onInputChange={handleInputChange}
@@ -1037,7 +1329,7 @@ const Playground = () => {
               </div>
             )}
 
-            {/* 浮动按钮 */}
+            {/* 浮动按钮：移动端用于切换会话列表 / 调试面板 */}
             <FloatingButtons
               styleState={styleState}
               showSettings={showSettings}

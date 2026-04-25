@@ -24,6 +24,7 @@ import ThinkingContent from './ThinkingContent';
 import { Loader2, Check, X, Settings, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { isAdmin } from '../../helpers/utils';
+import RefImageGrid from './bubbles/RefImageGrid';
 
 const MessageContent = ({
   message,
@@ -35,6 +36,9 @@ const MessageContent = ({
   onEditCancel,
   editValue,
   onEditValueChange,
+  // 用户消息里的参考图组也支持「以此图继续编辑」——和图片气泡走同一个
+  // handler，让任何已上传过的 data:URL 图片都能复用为新参考图。
+  onImageContinueEdit,
 }) => {
   const { t } = useTranslation();
   const previousContentLengthRef = useRef(0);
@@ -306,27 +310,16 @@ const MessageContent = ({
             return (
               <div>
                 {imageContents.length > 0 && (
-                  <div className='mb-3 space-y-2'>
-                    {imageContents.map((imgItem, index) => (
-                      <div key={index} className='max-w-sm'>
-                        <img
-                          src={imgItem.image_url.url}
-                          alt={`用户上传的图片 ${index + 1}`}
-                          className='rounded-lg max-w-full h-auto shadow-sm border'
-                          style={{ maxHeight: '300px' }}
-                          onError={(e) => {
-                            e.target.style.display = 'none';
-                            e.target.nextSibling.style.display = 'block';
-                          }}
-                        />
-                        <div
-                          className='text-red-500 text-sm p-2 bg-red-50 rounded-lg border border-red-200'
-                          style={{ display: 'none' }}
-                        >
-                          图片加载失败: {imgItem.image_url.url}
-                        </div>
-                      </div>
-                    ))}
+                  // 用 RefImageGrid 替代垂直堆叠：1-12 张按数量自适应
+                  // 网格布局，更紧凑 + 点击放大预览，统一图片生成 / 多模态
+                  // 用户附件的视觉。
+                  <div className='mb-2'>
+                    <RefImageGrid
+                      urls={imageContents
+                        .map((c) => c.image_url?.url)
+                        .filter(Boolean)}
+                      onContinueEdit={onImageContinueEdit}
+                    />
                   </div>
                 )}
 

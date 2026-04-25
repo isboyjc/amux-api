@@ -18,46 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState, useRef, useEffect } from 'react';
-import {
-  Button,
-  Collapsible,
-  Dropdown,
-  Input,
-  Popconfirm,
-  Tag,
-  Typography,
-} from '@douyinfe/semi-ui';
-import {
-  ChevronDown,
-  Plus,
-  MessageSquare,
-  Trash2,
-  Edit3,
-  MessageCircle,
-  Image as ImageIcon,
-  Video as VideoIcon,
-  Mic,
-  Binary,
-  ArrowUpDown,
-} from 'lucide-react';
+import { Button, Input, Popconfirm, Typography } from '@douyinfe/semi-ui';
+import { Plus, Trash2, Edit3 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import {
-  WORKSPACE,
-  WORKSPACE_PICK_ORDER,
-  WORKSPACE_COLOR,
-  V1_ENABLED_WORKSPACES,
-  getWorkspaceLabel,
-} from '../../constants/workspaceTypes';
 
-const WORKSPACE_ICON = {
-  [WORKSPACE.CHAT]: MessageCircle,
-  [WORKSPACE.IMAGE]: ImageIcon,
-  [WORKSPACE.VIDEO]: VideoIcon,
-  [WORKSPACE.AUDIO]: Mic,
-  [WORKSPACE.EMBEDDING]: Binary,
-  [WORKSPACE.RERANK]: ArrowUpDown,
-};
-
+// 操练场左侧会话列表，对齐 ChatGPT / Claude 的视觉骨架：
+//   - 顶部：醒目的「新建会话」按钮，整行宽
+//   - 中间：section 小标题「最近会话」
+//   - 下方：会话条目列表，撑满剩余高度、超出滚动
+//
+// 列表外层容器需要 h-full 才能让内层 flex 算高度；调用方在 Layout.Sider
+// 里把 SessionList 直接套在一个 h-full 的 flex 容器里即可。
 const SessionList = ({
   sessions = [],
   activeId,
@@ -65,15 +36,10 @@ const SessionList = ({
   onCreate,
   onRename,
   onDelete,
-  defaultOpen = true,
 }) => {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(defaultOpen);
   const [renamingId, setRenamingId] = useState(null);
   const [renameDraft, setRenameDraft] = useState('');
-  // 新建会话下拉受控：手动控制 visible 状态，点 Item 后主动收起——
-  // Semi 的 Dropdown.Item 默认不会因为 Item 的 onClick 自动关闭 menu。
-  const [createMenuVisible, setCreateMenuVisible] = useState(false);
   const renameInputRef = useRef(null);
 
   useEffect(() => {
@@ -103,125 +69,77 @@ const SessionList = ({
   };
 
   return (
-    <div className='mb-4'>
-      {/* 区块头：只有左侧标题区和右侧 chevron 可以切换折叠状态；
-          "+" 按钮和它的下拉菜单保持独立点击，不会触发收起。 */}
-      <div className='flex items-center gap-2 px-1 py-1'>
-        <div
-          className='flex items-center gap-1.5 flex-1 cursor-pointer select-none'
-          onClick={() => setOpen(!open)}
-        >
-          <MessageSquare size={14} className='text-gray-500' />
-          <Typography.Text strong className='text-sm'>
-            {t('会话')}
-          </Typography.Text>
-          <Typography.Text type='tertiary' className='text-xs'>
-            ({sessions.length})
-          </Typography.Text>
-        </div>
-        <Dropdown
-          trigger='click'
-          position='bottomRight'
-          visible={createMenuVisible}
-          onVisibleChange={setCreateMenuVisible}
-          render={
-            <Dropdown.Menu>
-              {WORKSPACE_PICK_ORDER.map((ws) => {
-                const Icon = WORKSPACE_ICON[ws];
-                const enabled = V1_ENABLED_WORKSPACES.has(ws);
-                return (
-                  <Dropdown.Item
-                    key={ws}
-                    disabled={!enabled}
-                    onClick={() => {
-                      if (!enabled || !onCreate) return;
-                      // 选中后手动关闭下拉，否则菜单会停留在打开状态。
-                      // 注意：这里不再 e.stopPropagation()——之前的阻止冒泡
-                      // 反而干扰了 Semi 内部的关闭逻辑；Dropdown 渲染到 portal
-                      // 里，事件不会冒泡到 SessionList 的折叠 header。
-                      setCreateMenuVisible(false);
-                      onCreate(ws);
-                    }}
-                  >
-                    <span className='flex items-center gap-2'>
-                      {Icon ? <Icon size={14} /> : null}
-                      <span>{getWorkspaceLabel(t, ws)}</span>
-                      {!enabled && (
-                        <Typography.Text
-                          type='tertiary'
-                          className='ml-1 text-xs'
-                        >
-                          ({t('敬请期待')})
-                        </Typography.Text>
-                      )}
-                    </span>
-                  </Dropdown.Item>
-                );
-              })}
-            </Dropdown.Menu>
-          }
-        >
-          <Button
-            size='small'
-            type='primary'
-            theme='borderless'
-            icon={<Plus size={14} />}
-            onClick={(e) => e.stopPropagation()}
-            aria-label={t('新建会话')}
-          />
-        </Dropdown>
-        <ChevronDown
-          size={14}
-          className='cursor-pointer'
-          onClick={() => setOpen(!open)}
+    <div className='flex flex-col h-full min-h-0'>
+      {/* 顶部「新建会话」按钮：整行宽，主色 light-default 背景，靠左带 +
+          图标的现代聊天产品标准做法 */}
+      <Button
+        block
+        theme='light'
+        type='primary'
+        icon={<Plus size={16} />}
+        onClick={() => onCreate?.()}
+        className='!justify-center !rounded-xl !h-9'
+        style={{ flexShrink: 0 }}
+      >
+        {t('新建会话')}
+      </Button>
+
+      {/* 「最近会话」section 标题 */}
+      <div
+        className='flex items-center justify-between mt-4 mb-2 px-1'
+        style={{ flexShrink: 0 }}
+      >
+        <Typography.Text
+          type='tertiary'
           style={{
-            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-            transition: 'transform 200ms',
-            color: 'var(--semi-color-text-2)',
+            fontSize: 11,
+            fontWeight: 600,
+            letterSpacing: 0.4,
+            textTransform: 'uppercase',
           }}
-        />
+        >
+          {t('最近会话')}
+        </Typography.Text>
+        <Typography.Text type='tertiary' style={{ fontSize: 11 }}>
+          {sessions.length}
+        </Typography.Text>
       </div>
 
-      <Collapsible isOpen={open}>
-        <div
-          className='space-y-1 pt-2 overflow-y-auto'
-          style={{ maxHeight: 260 }}
-        >
-          {sessions.length === 0 && (
-            <Typography.Text
-              type='tertiary'
-              className='text-xs px-2 py-3 block text-center'
-            >
-              {t('暂无会话')}
-            </Typography.Text>
-          )}
-          {sessions.map((s) => {
-            const isActive = s.id === activeId;
-            const isRenaming = renamingId === s.id;
-            const workspace = s.workspace_type || WORKSPACE.CHAT;
-            return (
-              <div
-                key={s.id}
-                className={`group rounded-lg px-2 py-2 cursor-pointer transition-colors ${
-                  isActive ? '' : 'hover:bg-gray-100'
-                }`}
-                style={{
-                  backgroundColor: isActive
-                    ? 'var(--semi-color-primary-light-default)'
-                    : undefined,
-                }}
-                onClick={() => {
-                  if (!isRenaming && onSwitch) onSwitch(s.id);
-                }}
-              >
-                <div className='flex items-center gap-2 min-w-0'>
-                  <Tag
-                    size='small'
-                    shape='circle'
-                    color={WORKSPACE_COLOR[workspace] || 'grey'}
-                  >
-                    {getWorkspaceLabel(t, workspace)}
-                  </Tag>
+      {/* 会话列表：撑满剩余高度，溢出滚动；每条统一 36px 高 */}
+      <div
+        className='flex-1 min-h-0 overflow-y-auto pr-0.5'
+        style={{ scrollbarWidth: 'thin' }}
+      >
+        {sessions.length === 0 ? (
+          <Typography.Text
+            type='tertiary'
+            className='text-xs px-2 py-6 block text-center'
+          >
+            {t('暂无会话')}
+          </Typography.Text>
+        ) : (
+          <div className='flex flex-col gap-0.5'>
+            {sessions.map((s) => {
+              const isActive = s.id === activeId;
+              const isRenaming = renamingId === s.id;
+              return (
+                <div
+                  key={s.id}
+                  className={`group rounded-lg cursor-pointer transition-colors flex items-center gap-2 ${
+                    isActive ? '' : 'hover:bg-semi-color-fill-1'
+                  }`}
+                  style={{
+                    height: 36,
+                    paddingLeft: 10,
+                    paddingRight: 6,
+                    backgroundColor: isActive
+                      ? 'var(--semi-color-primary-light-default)'
+                      : undefined,
+                  }}
+                  onClick={() => {
+                    if (!isRenaming && onSwitch) onSwitch(s.id);
+                  }}
+                >
                   <div className='flex-1 min-w-0'>
                     {isRenaming ? (
                       <Input
@@ -248,7 +166,7 @@ const SessionList = ({
                     )}
                   </div>
                   {!isRenaming && (
-                    <div className='flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5'>
+                    <div className='flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0'>
                       <Button
                         size='small'
                         theme='borderless'
@@ -280,11 +198,11 @@ const SessionList = ({
                     </div>
                   )}
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </Collapsible>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

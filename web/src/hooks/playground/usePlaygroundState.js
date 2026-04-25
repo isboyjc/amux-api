@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   DEFAULT_CONFIG,
@@ -32,11 +32,6 @@ import {
 } from '../../components/playground/configStorage';
 import { processIncompleteThinkTags } from '../../helpers';
 import { useSessions } from './useSessions';
-import {
-  WORKSPACE,
-  inferWorkspaceFromModality,
-  isModalityInWorkspace,
-} from '../../constants/workspaceTypes';
 
 export const usePlaygroundState = () => {
   const { t } = useTranslation();
@@ -67,10 +62,15 @@ export const usePlaygroundState = () => {
 
   // UI状态
   const [showSettings, setShowSettings] = useState(false);
-  const [models, setModels] = useState([]);
+  // modelEntries 是「跨分组聚合后的扁平模型列表」，每个元素一条
+  // (model, group) 记录，UI 一个下拉同时让用户选模型 + 分组：
+  //   { model, group, groupLabel, ratio, modality, paramSchema }
+  const [modelEntries, setModelEntries] = useState([]);
   const [groups, setGroups] = useState([]);
   const [status, setStatus] = useState({});
   // modalityMap[modelName] = { modality, param_schema }
+  // 同一模型在不同分组下 modality / schema 是一致的（管理员配置在模型表上、
+  // 与分组无关），所以按名字索引足够。
   const [modalityMap, setModalityMap] = useState({});
 
   // 消息状态：初始空，待 active session 就绪后异步拉取
@@ -99,49 +99,41 @@ export const usePlaygroundState = () => {
     };
   }, [sessionsReady, activeId, t]);
 
-  // 切会话 / 模型列表加载完 / workspace 变化时，把 inputs 的 model+group
-  // 调整到当前 session 合法的值：
-  //   1) 如果会话记住的 model 在当前 workspace 允许的模态列表里，优先还原
-  //   2) 否则挑下拉里第一个兼容的模型
-  //   3) 都没有就置空
-  //   group 直接用会话记住的（没记就保持现状）。
-  // 这一个 effect 同时负责"恢复上次选择"和"workspace 过滤兜底"，避免两个
-  // 同 tick 触发的 effect 互相竞争覆盖。
+  // 切会话 / modelEntries 加载完成时，把 inputs.model/group 还原到这条
+  // session 上次记的值。统一对话窗口里没有 modality 限制，会话只是一个
+  // 包含混合气泡的对话流，只需保证「打开会话能继续上次的模型」即可。
   useEffect(() => {
     if (!sessionsReady || !activeId) return;
     const sess = sessionsApi.sessions.find((s) => s.id === activeId);
     if (!sess) return;
-
-    const ws = sess.workspace_type;
-    const hasModelList = Array.isArray(models) && models.length > 0;
-    const isCompatible = (name) => {
-      if (!name) return false;
-      if (!ws) return true;
-      const mod = modalityMap[name]?.modality || 'text';
-      return isModalityInWorkspace(mod, ws);
-    };
-
-    // 如果 modelList 还没加载完，不做 workspace 过滤判断，先尽量还原 sess.model
-    let targetModel;
-    if (!hasModelList) {
-      targetModel = sess.model || undefined;
-    } else if (isCompatible(sess.model)) {
-      targetModel = sess.model;
-    } else {
-      const first = models.find((m) => isCompatible(m.value));
-      targetModel = first ? first.value : '';
-    }
+    const hasEntries = Array.isArray(modelEntries) && modelEntries.length > 0;
 
     setInputs((prev) => {
       const next = { ...prev };
-      if (targetModel !== undefined && targetModel !== prev.model) {
-        next.model = targetModel;
+      // 优先精确匹配 (model, group)；不存在时退到「同名其他分组」的第一条
+      if (hasEntries && sess.model) {
+        const exact = modelEntries.find(
+          (e) => e.model === sess.model && e.group === sess.group,
+        );
+        if (exact) {
+          if (exact.model !== prev.model) next.model = exact.model;
+          if (exact.group !== prev.group) next.group = exact.group;
+          return next;
+        }
+        const sameName = modelEntries.find((e) => e.model === sess.model);
+        if (sameName) {
+          if (sameName.model !== prev.model) next.model = sameName.model;
+          if (sameName.group !== prev.group) next.group = sameName.group;
+          return next;
+        }
       }
+      // entries 还没就绪：先把会话自身记的回填，等 entries 到了再校准
+      if (sess.model && sess.model !== prev.model) next.model = sess.model;
       if (sess.group && sess.group !== prev.group) next.group = sess.group;
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, sessionsReady, models, modalityMap]);
+  }, [activeId, sessionsReady, modelEntries]);
 
   // 调试状态
   const [debugData, setDebugData] = useState({
@@ -167,6 +159,24 @@ export const usePlaygroundState = () => {
   const handleInputChange = useCallback((name, value) => {
     setInputs((prev) => ({ ...prev, [name]: value }));
   }, []);
+
+  // 选「模型 + 分组」组合：直接更新 inputs，并把会话「上次使用的模型」
+  // 元数据同步过去，方便切回会话时还原。
+  // 统一对话窗口里不再有 fork 概念——切到任意 modality 都允许，下一条消息
+  // 用新模型回复，前面的图片/视频气泡照旧保留在历史里。
+  const handleModelGroupChange = useCallback(
+    (model, group) => {
+      const entry = modelEntries.find(
+        (e) => e.model === model && e.group === group,
+      );
+      const modality = entry?.modality || modalityMap[model]?.modality || 'text';
+      setInputs((prev) => ({ ...prev, model, group }));
+      if (activeId) {
+        sessionsApi.updateSessionMeta(activeId, { model, group, modality });
+      }
+    },
+    [activeId, modelEntries, modalityMap, sessionsApi],
+  );
 
   const handleParameterToggle = useCallback((paramName) => {
     setParameterEnabled((prev) => ({
@@ -260,70 +270,18 @@ export const usePlaygroundState = () => {
     }
   }, []);
 
-  // inputs.model / inputs.group 变化时，把变化同步回 active session 的
-  // 元数据，这样下次切回这个会话还能还原；同时让侧栏徽章跟随当前真实
-  // modality 变化。
-  // 注意：deps 里故意不放 activeId —— 切会话本身不算"用户改了模型"，
-  // 如果把 activeId 放进来，切会话那一 tick inputs.model 还没被恢复 effect
-  // 改过（React 还没重渲），此处就会用旧 session 的 inputs 去反向覆写新
-  // session 的 model，进而"污染"新会话的上次选择。
-  useEffect(() => {
-    if (!sessionsReady || !activeId) return;
-    if (!inputs.model) return;
-    const sess = sessionsApi.sessions.find((s) => s.id === activeId);
-    if (!sess) return;
-    const resolvedModality = modalityMap[inputs.model]?.modality || 'text';
-    // 只同步和该 workspace 兼容的模型。如果模型不属于当前 workspace（理论
-    // 上下拉已过滤不会出现），不要污染 session 记录。
-    if (
-      sess.workspace_type &&
-      !isModalityInWorkspace(resolvedModality, sess.workspace_type)
-    ) {
-      return;
-    }
-    if (
-      sess.model !== inputs.model ||
-      sess.group !== inputs.group ||
-      sess.modality !== resolvedModality
-    ) {
-      sessionsApi.updateSessionMeta(activeId, {
-        model: inputs.model,
-        group: inputs.group,
-        modality: resolvedModality,
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputs.model, inputs.group, modalityMap]);
-
-  // 新建会话。workspaceType 由调用方（SessionList "+" 下拉）指定；
-  // 不传则沿用当前会话的 workspace_type，或根据当前模型的 modality 推断，
-  // 最终兜底 chat。
-  const handleNewChat = useCallback(
-    async (workspaceType) => {
-      let ws = workspaceType;
-      if (!ws) {
-        const current = sessionsApi.sessions.find(
-          (s) => s.id === sessionsApi.activeId,
-        );
-        ws =
-          current?.workspace_type ||
-          inferWorkspaceFromModality(modalityMap[inputs.model]?.modality) ||
-          WORKSPACE.CHAT;
-      }
-      // 如果当前选中的模型不属于目标 workspace，就不把它塞进新会话
-      const currentModelModality = modalityMap[inputs.model]?.modality || 'text';
-      const carryModel =
-        isModalityInWorkspace(currentModelModality, ws) ? inputs.model : '';
-      await sessionsApi.createSession({
-        title: '',
-        workspaceType: ws,
-        modality: carryModel ? currentModelModality : undefined,
-        model: carryModel,
-        group: inputs.group,
-      });
-    },
-    [sessionsApi, modalityMap, inputs.model, inputs.group],
-  );
+  // 新建会话：直接用当前 inputs 的 (model, group) 作为初始值。会话只是
+  // 一个混合气泡的对话流，不再绑定单一 workspace 类型，所以也不需要弹窗
+  // 让用户挑「这是什么类型的会话」——该选什么模型在输入框里现挑就行。
+  const handleNewChat = useCallback(async () => {
+    const modality = modalityMap[inputs.model]?.modality || 'text';
+    await sessionsApi.createSession({
+      title: '',
+      modality,
+      model: inputs.model || '',
+      group: inputs.group || '',
+    });
+  }, [sessionsApi, modalityMap, inputs.model, inputs.group]);
 
   // 清理定时器
   useEffect(() => {
@@ -364,6 +322,17 @@ export const usePlaygroundState = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messagesReadyTick]);
 
+  // 提供一个稳定的「按当前 inputs 找 entry」的派生值，避免在子组件里反复
+  // find。entries 还没到的时候返回 null，子组件可以借此渲染骨架/placeholder。
+  const currentModelEntry = useMemo(() => {
+    if (!Array.isArray(modelEntries) || modelEntries.length === 0) return null;
+    return (
+      modelEntries.find(
+        (e) => e.model === inputs.model && e.group === inputs.group,
+      ) || null
+    );
+  }, [modelEntries, inputs.model, inputs.group]);
+
   return {
     // 配置状态
     inputs,
@@ -374,7 +343,8 @@ export const usePlaygroundState = () => {
 
     // UI状态
     showSettings,
-    models,
+    modelEntries,
+    currentModelEntry,
     groups,
     status,
     modalityMap,
@@ -403,7 +373,7 @@ export const usePlaygroundState = () => {
     setCustomRequestMode,
     setCustomRequestBody,
     setShowSettings,
-    setModels,
+    setModelEntries,
     setGroups,
     setStatus,
     setModalityMap,
@@ -416,6 +386,7 @@ export const usePlaygroundState = () => {
 
     // 处理函数
     handleInputChange,
+    handleModelGroupChange,
     handleParameterToggle,
     debouncedSaveConfig,
     saveMessagesImmediately,
@@ -428,9 +399,6 @@ export const usePlaygroundState = () => {
     activeSessionId: activeId,
     activeSession:
       sessionsApi.sessions.find((s) => s.id === activeId) || null,
-    currentWorkspaceType:
-      sessionsApi.sessions.find((s) => s.id === activeId)?.workspace_type ||
-      WORKSPACE.CHAT,
     sessionsReady,
     switchSession: sessionsApi.switchSession,
     createSession: sessionsApi.createSession,
