@@ -109,7 +109,7 @@ const MessageContent = ({
 
     return (
       <div className={`${className}`}>
-        <Typography.Text className='text-white'>{errorText}</Typography.Text>
+        <Typography.Text type='danger'>{errorText}</Typography.Text>
       </div>
     );
   }
@@ -306,40 +306,61 @@ const MessageContent = ({
             const imageContents = message.content.filter(
               (item) => item.type === 'image_url',
             );
+            const hasText =
+              textContent &&
+              textContent.text &&
+              typeof textContent.text === 'string' &&
+              textContent.text.trim() !== '';
+            const hasImages = imageContents.length > 0;
+            // 用户消息 + 含图：把图"浮"到气泡上方，气泡底色让位给图片本身；
+            // 文字部分用 inline-block 的 pill 复刻原气泡样式。
+            // 只有图没有文字时，整条消息就只剩图片网格，不再有空气泡。
+            // 助手消息（modality 文本）和不带图的用户消息保持原行为。
+            const userImagesAbove = message.role === 'user' && hasImages;
+
+            const imageGrid = hasImages ? (
+              <RefImageGrid
+                urls={imageContents
+                  .map((c) => c.image_url?.url)
+                  .filter(Boolean)}
+                onContinueEdit={onImageContinueEdit}
+              />
+            ) : null;
+
+            const textBlock = hasText ? (
+              <div
+                className={`prose prose-xs sm:prose-sm prose-gray max-w-none overflow-x-auto text-xs sm:text-sm ${
+                  message.role === 'user' ? 'user-message' : ''
+                }${userImagesAbove ? ' playground-user-msg-text-pill' : ''}`}
+              >
+                <MarkdownRenderer
+                  content={textContent.text}
+                  className={
+                    message.role === 'user' ? 'user-message' : ''
+                  }
+                  animated={false}
+                  previousContentLength={0}
+                />
+              </div>
+            ) : null;
+
+            if (userImagesAbove) {
+              // 给外层气泡 surface 加 marker；CSS 用 :has() 把它的背景/
+              // padding/圆角全部清掉，留个透明容器装图 + pill
+              return (
+                <div className='playground-user-msg-images-out'>
+                  <div className='playground-user-msg-images-row'>
+                    {imageGrid}
+                  </div>
+                  {textBlock}
+                </div>
+              );
+            }
 
             return (
               <div>
-                {imageContents.length > 0 && (
-                  // 用 RefImageGrid 替代垂直堆叠：1-12 张按数量自适应
-                  // 网格布局，更紧凑 + 点击放大预览，统一图片生成 / 多模态
-                  // 用户附件的视觉。
-                  <div className='mb-2'>
-                    <RefImageGrid
-                      urls={imageContents
-                        .map((c) => c.image_url?.url)
-                        .filter(Boolean)}
-                      onContinueEdit={onImageContinueEdit}
-                    />
-                  </div>
-                )}
-
-                {textContent &&
-                  textContent.text &&
-                  typeof textContent.text === 'string' &&
-                  textContent.text.trim() !== '' && (
-                    <div
-                      className={`prose prose-xs sm:prose-sm prose-gray max-w-none overflow-x-auto text-xs sm:text-sm ${message.role === 'user' ? 'user-message' : ''}`}
-                    >
-                      <MarkdownRenderer
-                        content={textContent.text}
-                        className={
-                          message.role === 'user' ? 'user-message' : ''
-                        }
-                        animated={false}
-                        previousContentLength={0}
-                      />
-                    </div>
-                  )}
+                {imageGrid && <div className='mb-2'>{imageGrid}</div>}
+                {textBlock}
               </div>
             );
           }

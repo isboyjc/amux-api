@@ -110,6 +110,17 @@ services:
       # 注意：每个节点填写自己的域名
       # 示例: https://sg.api.amux.ai（新加坡节点）
       - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-}
+
+      # ==================== 对象存储（Cloudflare R2）====================
+      # 推荐通过管理后台 → 存储设置 配置（DB 共享，主从节点自动一致）；
+      # 下面环境变量是部署兜底，仅当数据库字段为空时生效，留空即可。
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
+      - R2_ENDPOINT=${R2_ENDPOINT:-}
+      - R2_REGION=${R2_REGION:-auto}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s

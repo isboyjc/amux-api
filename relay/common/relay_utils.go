@@ -149,6 +149,10 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		hasInputReference = true
 	}
 
+	// prompt 强制必填：先前曾尝试放宽为"prompt 与 metadata.content 至少一项"
+	// 来兼容首/末帧场景，但实测上游服务商（Ali / Sora 等）即便有 reference
+	// image 仍会因为缺 prompt 拒掉。放在前面这层挡住，让用户立刻看到清晰
+	// 错误，避免一个无效请求绕到上游再返
 	if taskErr := validatePrompt(prompt); taskErr != nil {
 		return taskErr
 	}
@@ -210,6 +214,10 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
 
+	// prompt 强制必填：曾尝试放宽为"prompt 与 metadata.content 至少一项"以
+	// 兼容首/末帧场景，但实测上游服务商（Ali / Sora / Volcengine 等）即便有
+	// reference image / first_frame / last_frame 仍会因为缺 prompt 拒掉。
+	// 这层挡住，让用户立刻看到清晰错误，避免一个无效请求绕到上游再返。
 	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
 		return taskErr
 	}

@@ -127,6 +127,20 @@ services:
       # 前端访问地址（用于回调、通知等）
       # 示例: https://your-domain.com
       - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-}
+
+      # ==================== 对象存储（Cloudflare R2）====================
+      # 推荐登录管理后台 → 存储设置 配置（入库、热生效）。下面的环境变量
+      # 是部署兜底，仅当数据库相应字段为空时才生效；新部署直接走管理后台，
+      # 这里全部留空即可。
+      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
+      - R2_BUCKET=${R2_BUCKET:-}
+      # 公开访问基地址（末尾不带 /），如 https://pub-xxx.r2.dev 或自定义域
+      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
+      # 一般不需要改；默认按 R2_ACCOUNT_ID 派生
+      - R2_ENDPOINT=${R2_ENDPOINT:-}
+      - R2_REGION=${R2_REGION:-auto}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s

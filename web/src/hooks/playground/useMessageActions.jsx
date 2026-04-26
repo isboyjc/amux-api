@@ -28,6 +28,7 @@ export const useMessageActions = (
   setMessage,
   onMessageSend,
   saveMessages,
+  onMessageResend,
 ) => {
   const { t } = useTranslation();
 
@@ -116,6 +117,14 @@ export const useMessageActions = (
   );
 
   // 重新生成消息
+  //
+  // 默认走 onMessageSend(text)：只把用户消息文本重新发一遍，参考图 / 模型
+  // 参数都用当前 UI state——这对纯文本对话够用，但对图片/视频生成会丢掉
+  // 用户原本的参考图和参数。
+  //
+  // 调用方传 onMessageResend(userMessage, assistantMessage) 时优先走这条
+  // 路径，由 Playground 按 modality 还原 prompt + attachments + params，
+  // 复刻原次请求。
   const handleMessageReset = useCallback(
     (targetMessage) => {
       setMessage((prevMessages) => {
@@ -135,10 +144,19 @@ export const useMessageActions = (
 
         if (targetMessage.role === 'user') {
           const newMessages = prevMessages.slice(0, messageIndex);
-          const contentToSend = getTextContent(targetMessage);
+          // 用户消息后面紧跟的 assistant 通常存了 meta.params；带上让
+          // resend 路径有机会还原原次参数
+          const nextAssistant =
+            prevMessages[messageIndex + 1]?.role === 'assistant'
+              ? prevMessages[messageIndex + 1]
+              : null;
 
           setTimeout(() => {
-            onMessageSend(contentToSend);
+            if (typeof onMessageResend === 'function') {
+              onMessageResend(targetMessage, nextAssistant);
+            } else {
+              onMessageSend(getTextContent(targetMessage));
+            }
           }, 100);
 
           return newMessages;
@@ -157,10 +175,13 @@ export const useMessageActions = (
           if (userMessageIndex >= 0) {
             const userMessage = prevMessages[userMessageIndex];
             const newMessages = prevMessages.slice(0, userMessageIndex);
-            const contentToSend = getTextContent(userMessage);
 
             setTimeout(() => {
-              onMessageSend(contentToSend);
+              if (typeof onMessageResend === 'function') {
+                onMessageResend(userMessage, targetMessage);
+              } else {
+                onMessageSend(getTextContent(userMessage));
+              }
             }, 100);
 
             return newMessages;
@@ -170,7 +191,7 @@ export const useMessageActions = (
         return prevMessages;
       });
     },
-    [setMessage, onMessageSend],
+    [setMessage, onMessageSend, onMessageResend],
   );
 
   // 删除消息

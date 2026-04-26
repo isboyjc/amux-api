@@ -64,6 +64,18 @@ func SetApiRouter(router *gin.Engine) {
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.UniversalVerify)
 
+		// 通用预签名上传：客户端 POST 这里拿一份 PUT 预签名 URL，然后直传
+		// R2，文件流不经过 amux-api。scope/size/content-type 白名单在
+		// controller.PresignUpload 强校验，并签进 URL，客户端骗不了。
+		// 用 UploadRateLimit（默认 10 次/60s，可调）而不是 CriticalRateLimit
+		// （20 次/20 分钟）——后者对一次发送多张参考图（最多 9 张）的场景太紧。
+		apiRouter.POST("/upload/presign", middleware.UserAuth(), middleware.UploadRateLimit(), controller.PresignUpload)
+
+		// admin 在"对象存储设置"页面上点"测试连接"会打这个接口；端到端
+		// 验证 presign + PUT + 公开 GET。AdminAuth 保护，跳过总开关——admin
+		// 可在 Enabled=false 的情况下先验证配置再启用。
+		apiRouter.POST("/upload/test", middleware.AdminAuth(), middleware.CriticalRateLimit(), controller.TestUploadConnection)
+
 		userRoute := apiRouter.Group("/user")
 		{
 			userRoute.POST("/register", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.Register)

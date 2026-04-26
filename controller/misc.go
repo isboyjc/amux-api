@@ -183,7 +183,15 @@ func GetStatus(c *gin.Context) {
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
 		"AffShowInvitees":             common.OptionMap["AffShowInvitees"],
 		"AffRebateRatio":              common.OptionMap["AffRebateRatio"],
-		"_qn":                         "new-api",
+
+		// 对象存储「显示侧优化」给前端用：
+		//   - storage_public_base_url：判断哪些 URL 来自我们桶、可以套 cdn-cgi
+		//   - storage_image_transform_enabled：admin 是否打开 CF Image Resizing 开关
+		// 不暴露任何凭证；纯展示用配置
+		"storage_public_base_url":          system_setting.GetStorageSettings().R2PublicBaseURL,
+		"storage_image_transform_enabled":  system_setting.GetStorageSettings().ImageTransformEnabled,
+
+		"_qn": "new-api",
 	}
 
 	// 根据启用状态注入可选内容

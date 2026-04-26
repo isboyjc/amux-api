@@ -72,6 +72,15 @@ const ChatArea = ({
   referenceImages,
   onAddReferenceImage,
   onRemoveReferenceImage,
+  onRetryUpload,
+  // 视频「全能参考 / 首尾帧」模式控制（仅 modeSwitchAvailable 时启用）
+  videoInputModeAvailable,
+  videoInputMode,
+  onVideoInputModeChange,
+  firstLastFrameImages,
+  onSwapFirstLastFrame,
+  onRemoveFirstFrame,
+  onRemoveLastFrame,
 }) => {
   const { t } = useTranslation();
 
@@ -344,6 +353,14 @@ const ChatArea = ({
         referenceImages={referenceImages}
         onAddReferenceImage={onAddReferenceImage}
         onRemoveReferenceImage={onRemoveReferenceImage}
+        onRetryUpload={onRetryUpload}
+        videoInputModeAvailable={videoInputModeAvailable}
+        videoInputMode={videoInputMode}
+        onVideoInputModeChange={onVideoInputModeChange}
+        firstLastFrameImages={firstLastFrameImages}
+        onSwapFirstLastFrame={onSwapFirstLastFrame}
+        onRemoveFirstFrame={onRemoveFirstFrame}
+        onRemoveLastFrame={onRemoveLastFrame}
         styleState={styleState}
       />
     </Card>

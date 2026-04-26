@@ -45,7 +45,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { MESSAGE_ROLES } from '../../constants/playground.constants';
-import { getLogo, showError, showSuccess } from '../../helpers';
+import { getLogo, showError, showSuccess, uploadToR2 } from '../../helpers';
 import { useActualTheme } from '../../context/Theme';
 import { buildDefaultPlaygroundLogo } from './workspaceLogo';
 
@@ -345,14 +345,6 @@ const MAX_IMAGES = 9;
 const MAX_VIDEOS = 3;
 const MAX_AUDIOS = 3;
 
-const readFileAsDataUrl = (file) =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-
 const AttachmentsPanel = ({
   attachments,
   setAttachments,
@@ -360,6 +352,8 @@ const AttachmentsPanel = ({
   t,
 }) => {
   const fileInputRef = useRef(null);
+  const videoFileInputRef = useRef(null);
+  const audioFileInputRef = useRef(null);
   const counts = useMemo(() => {
     const c = { image: 0, video: 0, audio: 0 };
     attachments.forEach((a) => {
@@ -372,7 +366,16 @@ const AttachmentsPanel = ({
 
   const [videoUrl, setVideoUrl] = useState('');
   const [audioUrl, setAudioUrl] = useState('');
+  // 上传中标记，多类型同时按各自 type 区分；防止用户重复点上传
+  const [uploading, setUploading] = useState({
+    image: false,
+    video: false,
+    audio: false,
+  });
 
+  // 图片：选完文件 → 逐张上传到 R2 → 拿回 https URL 落进 attachments。
+  // 单张失败不阻断后续，仅 toast。R2 失败极端兜底是空 attachments，
+  // 由提交侧的 hasContent 判断决定要不要发送。
   const handleAddImages = async (files) => {
     if (!files || files.length === 0) return;
     const left = MAX_IMAGES - counts.image;
@@ -381,6 +384,7 @@ const AttachmentsPanel = ({
       return;
     }
     const picked = Array.from(files).slice(0, left);
+    setUploading((s) => ({ ...s, image: true }));
     const items = [];
     for (const f of picked) {
       if (f.size > 30 * 1024 * 1024) {
@@ -388,16 +392,17 @@ const AttachmentsPanel = ({
         continue;
       }
       try {
-        const url = await readFileAsDataUrl(f);
+        const r = await uploadToR2(f, 'playground-video-image');
         items.push({
           type: 'image_url',
-          image_url: { url },
+          image_url: { url: r.url },
           role: 'reference_image',
         });
-      } catch {
-        showError(t('读取图片失败'));
+      } catch (err) {
+        showError(t('上传图片失败：') + (err?.message || ''));
       }
     }
+    setUploading((s) => ({ ...s, image: false }));
     if (items.length > 0) setAttachments([...attachments, ...items]);
   };
 
@@ -423,6 +428,34 @@ const AttachmentsPanel = ({
     setVideoUrl('');
   };
 
+  // 视频文件上传：火山引擎对视频字段只接 URL（不接 base64），所以走 R2
+  // 落盘后回写 https URL。视频普遍大，超时给宽一点（uploadToR2 默认已 5min）。
+  const handleAddVideoFile = async (files) => {
+    if (!files || files.length === 0) return;
+    const left = MAX_VIDEOS - counts.video;
+    if (left <= 0) {
+      showError(t('视频数量已达上限'));
+      return;
+    }
+    const picked = Array.from(files).slice(0, left);
+    setUploading((s) => ({ ...s, video: true }));
+    const items = [];
+    for (const f of picked) {
+      try {
+        const r = await uploadToR2(f, 'playground-video-video');
+        items.push({
+          type: 'video_url',
+          video_url: { url: r.url },
+          role: 'reference_video',
+        });
+      } catch (err) {
+        showError(t('上传视频失败：') + (err?.message || ''));
+      }
+    }
+    setUploading((s) => ({ ...s, video: false }));
+    if (items.length > 0) setAttachments([...attachments, ...items]);
+  };
+
   const handleAddAudioUrl = () => {
     const url = audioUrl.trim();
     if (!url) return;
@@ -439,6 +472,32 @@ const AttachmentsPanel = ({
       },
     ]);
     setAudioUrl('');
+  };
+
+  const handleAddAudioFile = async (files) => {
+    if (!files || files.length === 0) return;
+    const left = MAX_AUDIOS - counts.audio;
+    if (left <= 0) {
+      showError(t('音频数量已达上限'));
+      return;
+    }
+    const picked = Array.from(files).slice(0, left);
+    setUploading((s) => ({ ...s, audio: true }));
+    const items = [];
+    for (const f of picked) {
+      try {
+        const r = await uploadToR2(f, 'playground-video-audio');
+        items.push({
+          type: 'audio_url',
+          audio_url: { url: r.url },
+          role: 'reference_audio',
+        });
+      } catch (err) {
+        showError(t('上传音频失败：') + (err?.message || ''));
+      }
+    }
+    setUploading((s) => ({ ...s, audio: false }));
+    if (items.length > 0) setAttachments([...attachments, ...items]);
   };
 
   const removeAt = (idx) => {
@@ -462,10 +521,13 @@ const AttachmentsPanel = ({
         <Button
           icon={<Plus size={14} />}
           size='small'
-          disabled={disabled || counts.image >= MAX_IMAGES}
+          loading={uploading.image}
+          disabled={
+            disabled || uploading.image || counts.image >= MAX_IMAGES
+          }
           onClick={() => fileInputRef.current?.click()}
         >
-          {t('选择图片')}
+          {uploading.image ? t('上传中…') : t('选择图片')}
         </Button>
         <input
           ref={fileInputRef}
@@ -524,10 +586,36 @@ const AttachmentsPanel = ({
       <Typography.Text strong className='text-sm block mb-2'>
         {t('视频')}（{counts.video}/{MAX_VIDEOS}）
       </Typography.Text>
+      {/* 两条入口：本地选择文件（走 R2）+ 已有直链。文件选完触发 onChange，
+          完成后会把对应 https URL 自动追加进 attachments；URL 输入则一直
+          是手填粘贴模式，免得改动用户已习惯的工作流。 */}
+      <div className='flex gap-2 mb-2'>
+        <Button
+          icon={<Plus size={14} />}
+          size='small'
+          loading={uploading.video}
+          disabled={
+            disabled || uploading.video || counts.video >= MAX_VIDEOS
+          }
+          onClick={() => videoFileInputRef.current?.click()}
+        >
+          {uploading.video ? t('上传中…') : t('选择视频')}
+        </Button>
+        <input
+          ref={videoFileInputRef}
+          type='file'
+          accept='video/*'
+          hidden
+          onChange={(e) => {
+            handleAddVideoFile(e.target.files);
+            e.target.value = '';
+          }}
+        />
+      </div>
       <div className='flex gap-1 mb-2'>
         <Input
           size='small'
-          placeholder={t('视频 URL（直链/asset://）')}
+          placeholder={t('或粘贴视频直链 URL')}
           value={videoUrl}
           onChange={setVideoUrl}
           disabled={disabled || counts.video >= MAX_VIDEOS}
@@ -567,10 +655,33 @@ const AttachmentsPanel = ({
       <Typography.Text strong className='text-sm block mb-2 mt-1'>
         {t('音频')}（{counts.audio}/{MAX_AUDIOS}）
       </Typography.Text>
+      <div className='flex gap-2 mb-2'>
+        <Button
+          icon={<Plus size={14} />}
+          size='small'
+          loading={uploading.audio}
+          disabled={
+            disabled || uploading.audio || counts.audio >= MAX_AUDIOS
+          }
+          onClick={() => audioFileInputRef.current?.click()}
+        >
+          {uploading.audio ? t('上传中…') : t('选择音频')}
+        </Button>
+        <input
+          ref={audioFileInputRef}
+          type='file'
+          accept='audio/*'
+          hidden
+          onChange={(e) => {
+            handleAddAudioFile(e.target.files);
+            e.target.value = '';
+          }}
+        />
+      </div>
       <div className='flex gap-1 mb-2'>
         <Input
           size='small'
-          placeholder={t('音频 URL')}
+          placeholder={t('或粘贴音频 URL')}
           value={audioUrl}
           onChange={setAudioUrl}
           disabled={disabled || counts.audio >= MAX_AUDIOS}

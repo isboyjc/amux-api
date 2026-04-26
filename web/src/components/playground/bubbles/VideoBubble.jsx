@@ -40,6 +40,28 @@ const extractVideo = (content) => {
   return { url: v.video_url.url, lastFrameUrl: last?.image_url?.url };
 };
 
+// 气泡显示宽度推断：按 ar 反推 + 保面积一致 + 高/宽双 cap。
+// 把这个宽度钉到气泡根上，video 用 100% 填满，底部 meta 行就在这个宽度
+// 内 wrap，不会再被长 model 名 / 多个参数撑得比视频还宽。
+//
+// 设计点：
+//   - targetArea 定一个"目标视觉面积"，让 1:1 / 16:9 / 9:16 在视觉上面积接近
+//   - 高度 cap 480：瘦长视频（9:16）反推回宽度，避免气泡被拉得很高
+//   - 宽度 cap 480：宽屏视频（21:9）也不会无限扩张
+//   - 最小宽度 240：留够空间放 model 徽标 + 至少一两个参数
+//   - 骨架与正片同一公式：loading → complete 不会跳尺寸
+const VIDEO_TARGET_AREA = 320 * 320;
+const VIDEO_MAX_DIM = 480;
+const VIDEO_MIN_WIDTH = 240;
+const computeBubbleWidth = (ar) => {
+  let width = Math.sqrt(VIDEO_TARGET_AREA * ar);
+  // 瘦长视频按高度 cap 反推回宽度
+  if (width / ar > VIDEO_MAX_DIM) width = VIDEO_MAX_DIM * ar;
+  width = Math.min(VIDEO_MAX_DIM, width);
+  width = Math.max(VIDEO_MIN_WIDTH, width);
+  return width;
+};
+
 const VideoBubble = ({ message }) => {
   const { t } = useTranslation();
   const status = message?.status || 'complete';
@@ -61,17 +83,16 @@ const VideoBubble = ({ message }) => {
     return arr;
   }, [params]);
 
+  const ar = inferAspectRatio(params, MODALITY.VIDEO);
+  const bubbleWidth = computeBubbleWidth(ar);
+
   if (isLoading) {
     // 同 ImageBubble：shimmer 骨架自带「生成中」语义，不叠 spinner / 文字。
     // 进度条留下来——它是真实百分比信号，不是装饰；放到骨架底部贴边。
-    const ar = inferAspectRatio(params, MODALITY.VIDEO);
-    const targetArea = 320 * 320;
-    const rawWidth = Math.sqrt(targetArea * ar);
-    const width = Math.max(280, Math.min(480, rawWidth));
     return (
       <div
         className='playground-image-bubble playground-skeleton'
-        style={{ width, aspectRatio: ar, position: 'relative' }}
+        style={{ width: bubbleWidth, aspectRatio: ar, position: 'relative' }}
       >
         {progress > 0 && (
           <div
@@ -106,13 +127,15 @@ const VideoBubble = ({ message }) => {
   if (!video) return null;
 
   return (
-    <div className='playground-image-bubble'>
-      <div className='playground-image-bubble-media flex justify-start'>
+    // 钉死气泡宽度 = 推算出来的 bubbleWidth：video 用 width:100% 填满，
+    // 下面 meta 行也在这个宽度里 wrap。这样不会再出现"meta 比视频长 →
+    // 气泡被撑大 → 视频左侧 / 下方留空"的情况。
+    <div className='playground-image-bubble' style={{ width: bubbleWidth }}>
+      <div className='playground-image-bubble-media'>
         <div
           style={{
-            maxWidth: '100%',
+            width: '100%',
             backgroundColor: 'var(--semi-color-fill-0)',
-            display: 'inline-block',
           }}
         >
           <video
@@ -121,10 +144,11 @@ const VideoBubble = ({ message }) => {
             preload='metadata'
             style={{
               display: 'block',
-              maxWidth: '100%',
-              maxHeight: 480,
-              width: 'auto',
+              width: '100%',
               height: 'auto',
+              // maxHeight 兜底：万一 ar 推断与实际视频比例不一致（瘦长
+              // 视频 + 推断成 16:9），不至于撑出非常高的气泡
+              maxHeight: VIDEO_MAX_DIM,
             }}
           >
             {t('浏览器不支持播放视频')}
@@ -161,6 +185,10 @@ const VideoBubble = ({ message }) => {
             letterSpacing: 0.4,
             textTransform: 'uppercase',
             color: 'var(--semi-color-text-1)',
+            // 气泡宽度被钉死后，长 model 名 / 多参数会自然 wrap；这一行
+            // 让超长不间断字符（如 doubao-seedance-2-0-260128）也能在
+            // 任意位置断行，避免溢出气泡边缘
+            overflowWrap: 'anywhere',
           }}
         >
           {meta.model && (

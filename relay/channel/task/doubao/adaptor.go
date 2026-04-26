@@ -393,6 +393,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	} else {
 		info.UpstreamModelName = body.Model
 	}
+	// 必须放在 model 映射之后：admin 可能用 channel.model_mapping 把
+	// 自定义别名（如 "seedance-pro"）映射到官方 doubao-seedance-2-0-260128，
+	// 在映射前调 strip 拿到的是原始别名，CanonicalSeedanceName 命不中，
+	// duration 不会被剔除→上游照样 InvalidParameter。
+	stripIncompatibleParams(body)
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -559,13 +564,49 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 		r.Duration = lo.ToPtr(dto.IntValue(sec))
 	}
 
-	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
-	r.Content = append(r.Content, ContentItem{
-		Type: "text",
-		Text: req.Prompt,
-	})
+	// 只有非空 prompt 才覆盖 Content 里的 text 项；空 prompt（如 first_last
+	// 模式只发首/末帧）时保留 metadata.content 自带的 text 项（如果有）；
+	// 都没有的话 Content 里就完全没有 text 条目，让上游用纯帧画面推断过渡，
+	// 避免向 Volcengine 推一个 `{type:"text", text:""}` 触发上游校验失败。
+	if prompt := strings.TrimSpace(req.Prompt); prompt != "" {
+		r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
+		r.Content = append(r.Content, ContentItem{
+			Type: "text",
+			Text: prompt,
+		})
+	}
 
 	return &r, nil
+}
+
+// stripIncompatibleParams 按 model + 模式（t2v / i2v / r2v）剔除上游会拒收的
+// 参数。doubao-seedance-2-0 系列在 r2v 模式（仅 reference_image，无 first_frame/
+// last_frame）下不接受 duration——上游直接报 InvalidParameter；保留给用户
+// 让他们看到 "the parameter duration is not valid for ... in r2v" 没意义。
+//
+// 仅在 OpenAI 格式（playground / 标准 task 提交）路径调用；raw 格式由上层
+// 客户端按官方文档自构请求，不在这里 second-guess。
+func stripIncompatibleParams(r *requestPayload) {
+	canonical, _ := CanonicalSeedanceName(r.Model)
+	if canonical != "doubao-seedance-2-0-260128" && canonical != "doubao-seedance-2-0-fast-260128" {
+		return
+	}
+	hasReference := false
+	hasFrame := false
+	for _, item := range r.Content {
+		if item.Type != "image_url" {
+			continue
+		}
+		switch item.Role {
+		case "reference_image":
+			hasReference = true
+		case "first_frame", "last_frame":
+			hasFrame = true
+		}
+	}
+	if hasReference && !hasFrame {
+		r.Duration = nil
+	}
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {

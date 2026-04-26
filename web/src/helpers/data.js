@@ -39,6 +39,16 @@ export function setStatusData(data) {
     data.default_collapse_sidebar,
   );
   localStorage.setItem('mj_notify_enabled', data.mj_notify_enabled);
+  // 对象存储「显示侧优化」配置：optimizeImageUrl 在 render 阶段同步读这两项，
+  // 没有就当作未启用（fallback 到原图 URL）。空字符串和 false 都 OK。
+  localStorage.setItem(
+    'storage_public_base_url',
+    data.storage_public_base_url || '',
+  );
+  localStorage.setItem(
+    'storage_image_transform_enabled',
+    data.storage_image_transform_enabled ? 'true' : 'false',
+  );
   if (data.chat_link) {
     // localStorage.setItem('chat_link', data.chat_link);
   } else {

@@ -179,7 +179,10 @@ export const useVideoGeneration = ({ onDebug } = {}) => {
         showError(t('请先选择模型'));
         return null;
       }
-      if (!prompt || !prompt.trim()) {
+      const trimmedPrompt = (prompt || '').trim();
+      // prompt 强制必填——上游服务商（Ali / Sora 等）即便首/末帧 / 参考图齐全
+      // 也会拒收空 prompt，前置拦截给用户即时反馈，不绕一圈再失败
+      if (!trimmedPrompt) {
         showError(t('请输入 Prompt'));
         return null;
       }
@@ -194,7 +197,7 @@ export const useVideoGeneration = ({ onDebug } = {}) => {
       const payload = {
         model,
         group,
-        prompt: prompt.trim(),
+        prompt: trimmedPrompt,
         metadata,
       };
 

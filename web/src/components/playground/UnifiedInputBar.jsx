@@ -29,6 +29,7 @@ import {
   Typography,
 } from '@douyinfe/semi-ui';
 import {
+  ArrowLeftRight,
   ArrowUp,
   ArrowUpDown,
   Binary,
@@ -49,6 +50,10 @@ import {
   getModalityShortLabel,
 } from '../../constants/modalityLabels';
 import { getLobeHubIcon } from '../../helpers/render';
+// 缩略图渲染走 cdn-cgi/image：URL entry 的 dataUrl 是远程原图（常 1-4MB），
+// 直接当 56×56 缩略既浪费带宽，swap 时还会触发 re-fetch。optimizeImageUrl
+// 内部对 blob:/data: 是 no-op，所以可以无脑套——只对 http(s) URL 生效
+import { optimizeImageUrl, pixelWidth } from '../../helpers';
 import { inferVendorIconKey, inferVendorMeta } from './vendorIcon';
 
 // (model, group) 组合在 Select 里的编码方式，与之前 SettingsPanel 沿用一致
@@ -529,6 +534,7 @@ const ReferenceImageStack = ({
   onRemove,
   showUploadButton,
   onUpload,
+  onRetryUpload,
   t,
 }) => {
   const [expanded, setExpanded] = useState(false);
@@ -710,7 +716,9 @@ const ReferenceImageStack = ({
             }}
           >
             <img
-              src={img.dataUrl}
+              src={optimizeImageUrl(img.dataUrl, {
+                width: pixelWidth(THUMB_SIZE),
+              })}
               alt=''
               draggable={false}
               style={{
@@ -719,8 +727,45 @@ const ReferenceImageStack = ({
                 height: '100%',
                 objectFit: 'cover',
                 borderRadius: 10,
+                filter: img.uploading
+                  ? 'grayscale(0.6) brightness(0.85)'
+                  : 'none',
+                transition: 'filter 200ms',
+                outline: img.failed
+                  ? '1.5px solid var(--semi-color-danger)'
+                  : 'none',
+                outlineOffset: -1,
               }}
             />
+            <UploadStatusBadge
+              uploading={img.uploading}
+              failed={img.failed}
+              uploadError={img.uploadError}
+              onRetry={() => img.file && onRetryUpload?.(img.file)}
+              t={t}
+            />
+            {/* 悬浮显示「图片 N」角标——和 @imageN 引用语法对齐，
+                让用户知道当前图片在 prompt 里如何称呼。pointer-events:none
+                以免覆盖到 hover 区域，触发抖动。 */}
+            <span
+              className='opacity-0 group-hover:opacity-100 transition-opacity'
+              style={{
+                position: 'absolute',
+                left: 4,
+                top: 4,
+                padding: '1px 5px',
+                borderRadius: 6,
+                background: 'rgba(0,0,0,0.55)',
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: 0.3,
+                pointerEvents: 'none',
+                backdropFilter: 'blur(4px)',
+              }}
+            >
+              {t('图片{{n}}', { n: i + 1 })}
+            </span>
             <button
               type='button'
               className='opacity-0 group-hover:opacity-100 transition-opacity'
@@ -1196,6 +1241,551 @@ const SchemaParamSelector = ({ paramKey, def, value, onChange, disabled, t }) =>
   );
 };
 
+// 视频模型「全能参考 / 首尾帧」模式选择器。仅在 schema 同时声明了 reference
+// 槽和 first_frame/last_frame 槽时由父层启用（videoInputModeAvailable=true）。
+// 视觉上做成模型选择器右侧的小 pill 下拉：触发器只显示当前模式的图标 + 简短
+// 文字，下拉里两条选项各带描述。
+const VIDEO_INPUT_MODES = [
+  { key: 'omni', icon: ImageIcon },
+  { key: 'first_last', icon: ArrowLeftRight },
+];
+const getVideoInputModeLabel = (t, key) => {
+  switch (key) {
+    case 'first_last':
+      return t('首尾帧');
+    case 'omni':
+    default:
+      return t('全能参考');
+  }
+};
+const getVideoInputModeDesc = (t, key) => {
+  switch (key) {
+    case 'first_last':
+      return t('上传首帧 + 末帧锁定起止画面');
+    case 'omni':
+    default:
+      return t('上传 1-9 张参考图，prompt 用 @imageN 引用');
+  }
+};
+
+const VideoInputModeSelector = ({ mode, onModeChange, disabled, t }) => {
+  const [open, setOpen] = useState(false);
+  const current =
+    VIDEO_INPUT_MODES.find((m) => m.key === mode) || VIDEO_INPUT_MODES[0];
+  const Icon = current.icon;
+
+  const menu = (
+    <Dropdown.Menu
+      className='!bg-semi-color-bg-overlay !border-semi-color-border !shadow-lg !rounded-xl dark:!bg-zinc-800 dark:!border-zinc-700'
+      style={{
+        width: 240,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        padding: 6,
+      }}
+    >
+      {VIDEO_INPUT_MODES.map((m) => {
+        const ItemIcon = m.icon;
+        const selected = m.key === mode;
+        return (
+          <button
+            key={m.key}
+            type='button'
+            onClick={() => {
+              setOpen(false);
+              if (m.key !== mode) onModeChange?.(m.key);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              width: '100%',
+              padding: '8px 10px',
+              border: 'none',
+              background: selected
+                ? 'var(--semi-color-primary-light-default)'
+                : 'transparent',
+              cursor: 'pointer',
+              borderRadius: 10,
+              color: 'var(--semi-color-text-0)',
+              fontFamily: 'inherit',
+              textAlign: 'left',
+            }}
+            onMouseEnter={(e) => {
+              if (!selected)
+                e.currentTarget.style.background = 'var(--semi-color-fill-1)';
+            }}
+            onMouseLeave={(e) => {
+              if (!selected) e.currentTarget.style.background = 'transparent';
+            }}
+          >
+            <span
+              className='inline-flex items-center justify-center'
+              style={{
+                width: 18,
+                height: 18,
+                color: 'var(--semi-color-text-1)',
+                marginTop: 1,
+              }}
+            >
+              <ItemIcon size={16} />
+            </span>
+            <div className='flex-1 min-w-0' style={{ lineHeight: 1.3 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: selected ? 500 : 400,
+                  color: 'var(--semi-color-text-0)',
+                }}
+              >
+                {getVideoInputModeLabel(t, m.key)}
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  marginTop: 2,
+                  color: 'var(--semi-color-text-2)',
+                }}
+              >
+                {getVideoInputModeDesc(t, m.key)}
+              </div>
+            </div>
+          </button>
+        );
+      })}
+    </Dropdown.Menu>
+  );
+
+  return (
+    <Dropdown
+      trigger='click'
+      position='topLeft'
+      visible={open}
+      onVisibleChange={setOpen}
+      render={menu}
+    >
+      <button
+        type='button'
+        disabled={disabled}
+        className='playground-toolbar-btn'
+        title={getVideoInputModeLabel(t, current.key)}
+        // 覆盖 .playground-toolbar-btn 默认 gap:6 + padding:0 10px——
+        // 这里图标和文字之间用更紧凑的 4px，左右内边距也收一档
+        style={{ height: 32, padding: '0 8px', gap: 4 }}
+      >
+        <Icon size={14} style={{ display: 'block' }} />
+        <span
+          className='text-xs'
+          style={{ color: 'var(--semi-color-text-0)', fontWeight: 500 }}
+        >
+          {getVideoInputModeLabel(t, current.key)}
+        </span>
+        <ChevronDown
+          size={12}
+          style={{ color: 'var(--semi-color-text-2)' }}
+        />
+      </button>
+    </Dropdown>
+  );
+};
+
+// 视频「首尾帧」模式专用：两个独立 56×56 上传位 + 中间 swap 按钮。
+// 设计要点（与 ReferenceImageStack 区别）：
+//  - 每个 slot 独立、无堆叠扇出；空槽显示 + 上传，已上传显示图 + X 移除
+//  - 中间 swap 按钮始终在场，点一下 first / last 对调，便于纠错
+//  - 上传后整个 slot 区域变成图片（而不是再保留 + 按钮）
+//  - 容器位置和 ReferenceImageStack 对齐（top-right），但宽度更大
+const SLOT_SIZE = 56;
+const SWAP_WIDTH = 24;
+const SLOT_GAP = 6;
+const FIRST_LAST_TOTAL_WIDTH = SLOT_SIZE * 2 + SWAP_WIDTH + SLOT_GAP * 2;
+
+// 上传状态覆盖层：pending 显小 spinner，failed 显红色徽章 + 重试。两种
+// 状态都不阻塞缩略图本体的展示——失败时仍能预览原图，方便用户判断是不是
+// 网络抖动需要重试。
+//
+// 不放在缩略图 overflow:hidden 容器内：spinner / 重试图标位于角落，需要
+// 露出在缩略图外，避免被裁切。
+const UploadStatusBadge = ({
+  uploading,
+  failed,
+  uploadError,
+  onRetry,
+  t,
+}) => {
+  if (!uploading && !failed) return null;
+  if (uploading) {
+    return (
+      <div
+        aria-label={t('上传中…')}
+        title={t('上传中…')}
+        style={{
+          position: 'absolute',
+          left: 4,
+          bottom: 4,
+          width: 16,
+          height: 16,
+          borderRadius: '50%',
+          background: 'rgba(0,0,0,0.55)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2,
+          pointerEvents: 'none',
+        }}
+      >
+        <span
+          style={{
+            width: 9,
+            height: 9,
+            borderRadius: '50%',
+            border: '1.5px solid rgba(255,255,255,0.85)',
+            borderTopColor: 'transparent',
+            animation: 'spin 0.7s linear infinite',
+          }}
+        />
+      </div>
+    );
+  }
+  // failed
+  return (
+    <button
+      type='button'
+      onClick={(e) => {
+        e.stopPropagation();
+        onRetry?.();
+      }}
+      aria-label={t('上传失败，点击重试')}
+      title={uploadError ? t('上传失败：') + uploadError : t('上传失败，点击重试')}
+      style={{
+        position: 'absolute',
+        left: 4,
+        bottom: 4,
+        height: 16,
+        padding: '0 6px',
+        borderRadius: 8,
+        border: 'none',
+        background: 'var(--semi-color-danger)',
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: 0.3,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        alignItems: 'center',
+        zIndex: 2,
+      }}
+    >
+      {t('重试')}
+    </button>
+  );
+};
+
+const FrameSlot = ({ image, onClick, onRemove, onRetryUpload, label, t }) => {
+  const filled = !!image;
+  const [previewOpen, setPreviewOpen] = useState(false);
+  return (
+    // 把 .group hover 触发挂在最外层；overflow:hidden 留给内层"图片容器"
+    // 即可——X 删除按钮放在外层（不被裁切），它通过 group-hover 仍能响应
+    // 鼠标在整个 slot 上的 hover。
+    <div
+      className='group'
+      style={{
+        position: 'relative',
+        width: SLOT_SIZE,
+        height: SLOT_SIZE,
+      }}
+    >
+      {filled ? (
+        <>
+          <div
+            className='cursor-zoom-in'
+            onClick={() => setPreviewOpen(true)}
+            style={{
+              width: '100%',
+              height: '100%',
+              borderRadius: 10,
+              overflow: 'hidden',
+              background: 'var(--semi-color-fill-0)',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+              // 失败时叠红色描边，让"这张没成功传上去"的状态在远处也能看到
+              border: image.failed ? '1.5px solid var(--semi-color-danger)' : 'none',
+              position: 'relative',
+            }}
+            title={label}
+          >
+            <img
+              src={optimizeImageUrl(image.dataUrl, {
+                width: pixelWidth(SLOT_SIZE),
+              })}
+              alt={label}
+              draggable={false}
+              style={{
+                display: 'block',
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                // 上传中给一点灰度，让用户视觉上感知"这张还没准备好"
+                filter: image.uploading ? 'grayscale(0.6) brightness(0.85)' : 'none',
+                transition: 'filter 200ms',
+              }}
+            />
+            {/* 角标：首/末（用户可以一眼区分两个 slot） */}
+            <span
+              style={{
+                position: 'absolute',
+                left: 4,
+                top: 4,
+                padding: '1px 5px',
+                borderRadius: 6,
+                background: 'rgba(0,0,0,0.55)',
+                color: '#fff',
+                fontSize: 10,
+                fontWeight: 600,
+                letterSpacing: 0.3,
+                backdropFilter: 'blur(4px)',
+              }}
+            >
+              {label}
+            </span>
+            <UploadStatusBadge
+              uploading={image.uploading}
+              failed={image.failed}
+              uploadError={image.uploadError}
+              onRetry={() => image.file && onRetryUpload?.(image.file)}
+              t={t}
+            />
+          </div>
+          {/* X 移到 overflow:hidden 容器之外，避免 top:-6 / right:-6 那
+              一截被裁掉。仍贴在 .group 内，靠 group-hover 控制显隐。 */}
+          <button
+            type='button'
+            className='opacity-0 group-hover:opacity-100 transition-opacity'
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove?.();
+            }}
+            aria-label={t('删除')}
+            style={{
+              position: 'absolute',
+              top: -6,
+              right: -6,
+              width: 18,
+              height: 18,
+              borderRadius: '50%',
+              border: 'none',
+              background: 'rgba(0,0,0,0.7)',
+              color: '#fff',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 0,
+              lineHeight: 0,
+              zIndex: 1,
+            }}
+          >
+            <X size={11} />
+          </button>
+          {previewOpen && (
+            <ImagePreview
+              src={[image.dataUrl]}
+              visible={previewOpen}
+              currentIndex={0}
+              onVisibleChange={setPreviewOpen}
+              onClose={() => setPreviewOpen(false)}
+              infinite={false}
+            />
+          )}
+        </>
+      ) : (
+        <button
+          type='button'
+          onClick={onClick}
+          aria-label={t('上传 {{label}}', { label })}
+          style={{
+            width: '100%',
+            height: '100%',
+            borderRadius: 10,
+            border: '1.5px dashed var(--semi-color-border)',
+            background: 'var(--semi-color-fill-0)',
+            color: 'var(--semi-color-text-2)',
+            cursor: 'pointer',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 2,
+            padding: 0,
+            transition: 'background-color 150ms, color 150ms',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = 'var(--semi-color-fill-1)';
+            e.currentTarget.style.color = 'var(--semi-color-text-1)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = 'var(--semi-color-fill-0)';
+            e.currentTarget.style.color = 'var(--semi-color-text-2)';
+          }}
+        >
+          <Plus size={18} />
+          <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: 0.3 }}>
+            {label}
+          </span>
+        </button>
+      )}
+    </div>
+  );
+};
+
+// 首/末帧之间的视觉距离：[slot] gap [button] gap [slot]
+// 也就是 slot1 中心到 slot2 中心的偏移量。给 swap 动画做位移用
+const FRAME_SWAP_DISTANCE = SLOT_SIZE + SLOT_GAP * 2 + SWAP_WIDTH;
+const FRAME_SWAP_DURATION_MS = 320;
+
+const FirstLastFrameUpload = ({
+  images,
+  onClickFirst,
+  onClickLast,
+  onRemoveFirst,
+  onRemoveLast,
+  onSwap,
+  onRetryUpload,
+  t,
+}) => {
+  // swap 过渡状态：true 期间两个 slot 通过 translateX 互相滑过，按钮旋转 180°；
+  // 动画结束后再翻 onSwap 让父级真正交换 state。这样视觉位置 ≡ state 位置，
+  // 不会出现"动画结束→state 跳变"的闪烁
+  const [swapping, setSwapping] = useState(false);
+  // 用 ref 保存 timer 句柄；组件卸载时清掉，避免迟到的 onSwap 落到已 unmount
+  const swapTimerRef = useRef(null);
+  useEffect(() => {
+    return () => {
+      if (swapTimerRef.current) {
+        clearTimeout(swapTimerRef.current);
+        swapTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleSwapClick = () => {
+    if (swapping) return; // 动画中再点一次直接吞掉，避免 timer 叠加
+    // 两边都空：没什么可动的，直接把状态翻一下走人；动画也无意义
+    if (!images?.first && !images?.last) {
+      onSwap?.();
+      return;
+    }
+    setSwapping(true);
+    swapTimerRef.current = window.setTimeout(() => {
+      // React 会把这两次 setState 合并提交：state 翻好的同一帧把 swapping
+      // 设为 false → transition='none' + transform='0' 一起生效。新 state 下
+      // images.first / images.last 已对调，slot1 渲染的是新 first（视觉上
+      // 就是动画末尾刚滑到左边的那张）→ 0 视觉跳变
+      onSwap?.();
+      setSwapping(false);
+      swapTimerRef.current = null;
+    }, FRAME_SWAP_DURATION_MS);
+  };
+
+  // cubic-bezier(0.65, 0, 0.35, 1) ≈ ease-in-out-cubic：开头/结尾稍慢，中段
+  // 加速；比纯 ease-in-out 更跟手，又比 linear 不那么"机械"
+  const slotTransition = swapping
+    ? `transform ${FRAME_SWAP_DURATION_MS}ms cubic-bezier(0.65, 0, 0.35, 1)`
+    : 'none';
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        right: 12,
+        top: 18,
+        height: SLOT_SIZE,
+        display: 'flex',
+        alignItems: 'center',
+        gap: SLOT_GAP,
+        zIndex: 5,
+      }}
+    >
+      <div
+        style={{
+          // 首帧滑去末帧位置：+distance（向右）。zIndex 在动画期间提一档
+          // 让两个 slot 滑过中间 swap 按钮时不会被它压在下面
+          transform: swapping
+            ? `translateX(${FRAME_SWAP_DISTANCE}px)`
+            : 'translateX(0)',
+          transition: slotTransition,
+          zIndex: swapping ? 2 : 'auto',
+        }}
+      >
+        <FrameSlot
+          image={images?.first}
+          onClick={onClickFirst}
+          onRemove={onRemoveFirst}
+          onRetryUpload={onRetryUpload}
+          label={t('首帧')}
+          t={t}
+        />
+      </div>
+      <button
+        type='button'
+        onClick={handleSwapClick}
+        aria-label={t('交换首尾帧')}
+        title={t('交换首尾帧')}
+        disabled={swapping}
+        style={{
+          width: SWAP_WIDTH,
+          height: SWAP_WIDTH,
+          borderRadius: '50%',
+          border: '1px solid var(--semi-color-border)',
+          background: 'var(--semi-color-bg-0)',
+          color: 'var(--semi-color-text-1)',
+          cursor: swapping ? 'default' : 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          // 旋转 180° 暗示"对调"动作；旋转曲线和 slot 滑动用同一组缓动，
+          // 视觉一致
+          transform: swapping ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: `background-color 150ms, color 150ms, transform ${FRAME_SWAP_DURATION_MS}ms cubic-bezier(0.65, 0, 0.35, 1)`,
+        }}
+        onMouseEnter={(e) => {
+          if (swapping) return;
+          e.currentTarget.style.background = 'var(--semi-color-fill-1)';
+          e.currentTarget.style.color = 'var(--semi-color-text-0)';
+        }}
+        onMouseLeave={(e) => {
+          if (swapping) return;
+          e.currentTarget.style.background = 'var(--semi-color-bg-0)';
+          e.currentTarget.style.color = 'var(--semi-color-text-1)';
+        }}
+      >
+        <ArrowLeftRight size={12} />
+      </button>
+      <div
+        style={{
+          // 末帧反向滑：-distance（向左）。和首帧对称
+          transform: swapping
+            ? `translateX(${-FRAME_SWAP_DISTANCE}px)`
+            : 'translateX(0)',
+          transition: slotTransition,
+          zIndex: swapping ? 2 : 'auto',
+        }}
+      >
+        <FrameSlot
+          image={images?.last}
+          onClick={onClickLast}
+          onRemove={onRemoveLast}
+          onRetryUpload={onRetryUpload}
+          label={t('末帧')}
+          t={t}
+        />
+      </div>
+    </div>
+  );
+};
+
 const UnifiedInputBar = ({
   // 模型/分组
   inputs,
@@ -1223,10 +1813,23 @@ const UnifiedInputBar = ({
   // showUploadButton=false（仅 paste/drag）
   showUploadButton = false,
 
-  // 参考图统一表示：[{ key, dataUrl, name? }]，由父层按 modality 派生
+  // 参考图统一表示：[{ key, dataUrl, name?, file?, uploading?, failed?,
+  // uploadError? }]，由父层按 modality 派生。uploading/failed 标记仅在视频
+  // 模型 R2 即时上传场景下有意义；其它场景全是 false。
   referenceImages = [],
-  onAddReferenceImage,    // (file: File) => void
+  onAddReferenceImage,    // (file: File, opts?: { targetRole }) => void
+  onRetryUpload,          // (file: File) => void —— 失败缩略图的重试回调
   onRemoveReferenceImage, // (key: string) => void
+
+  // 视频「全能参考 / 首尾帧」模式（仅 schema 同时含两类槽位时启用）
+  videoInputModeAvailable = false,
+  videoInputMode = 'omni',
+  onVideoInputModeChange,
+  // 仅 first_last 模式生效：替换 ReferenceImageStack 的双上传 UI
+  firstLastFrameImages = null,   // { first: {dataUrl,name}|null, last: {...}|null }
+  onSwapFirstLastFrame,
+  onRemoveFirstFrame,
+  onRemoveLastFrame,
 
   styleState,
 }) => {
@@ -1237,8 +1840,21 @@ const UnifiedInputBar = ({
   // 模型；非 smart 时切换还会顺手把当前选中模型自动换成第一条匹配项，
   // 让「快速选图/选视频」体验更顺。
   const [selectedMode, setSelectedMode] = useState('smart');
+  // 视频「全能参考」模式下的 @-mention 状态：
+  //   null              → 未触发，正常输入
+  //   { atIdx, filter, selectedIdx } → 用户在 atIdx 处键入了 @ 并继续打字
+  // atIdx 指 @ 字符在文本里的偏移；filter 是 @ 之后到光标之间的文字（用于
+  // 后续过滤候选，目前未启用过滤——图片很少，全部展示）；selectedIdx 是
+  // 候选列表里的高亮项，用于键盘 ↑↓ 选择和 Enter 插入。
+  const [mentionState, setMentionState] = useState(null);
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const mentionPopupRef = useRef(null);
+  // @-mention 仅在视频「全能参考」+ 已上传至少一张参考图时启用
+  const mentionEnabled =
+    currentModality === MODALITY.VIDEO &&
+    videoInputMode === 'omni' &&
+    referenceImages.length > 0;
 
   const filteredModelEntries = useMemo(() => {
     if (selectedMode === 'smart') return modelEntries;
@@ -1273,6 +1889,91 @@ const UnifiedInputBar = ({
     el.style.height = Math.min(el.scrollHeight, 192) + 'px';
   }, [text]);
 
+  // 从光标位置往前找最近的 @，若该 @ 位于行首或前一字符是空白，且 @ 到光标
+  // 之间没有空白/换行，则认为正在写 mention，返回 { atIdx, filter }。
+  // 否则返回 null。让 "email@x" 这种中段 @ 不触发弹层。
+  const detectMention = (textVal, caretPos) => {
+    let i = caretPos - 1;
+    while (i >= 0) {
+      const ch = textVal[i];
+      if (ch === '@') {
+        if (i === 0 || /\s/.test(textVal[i - 1])) {
+          const filter = textVal.slice(i + 1, caretPos);
+          if (/[\s\n]/.test(filter)) return null;
+          return { atIdx: i, filter };
+        }
+        return null;
+      }
+      if (/[\s\n]/.test(ch)) return null;
+      i--;
+    }
+    return null;
+  };
+
+  const handleTextareaChange = (e) => {
+    const newText = e.target.value;
+    setText(newText);
+    if (!mentionEnabled) {
+      if (mentionState) setMentionState(null);
+      return;
+    }
+    const caret = e.target.selectionStart ?? newText.length;
+    const m = detectMention(newText, caret);
+    if (m) {
+      setMentionState((prev) => ({
+        atIdx: m.atIdx,
+        filter: m.filter,
+        // 保留原来的 selectedIdx；首次打开时从 0 开始
+        selectedIdx:
+          prev && prev.atIdx === m.atIdx
+            ? Math.min(prev.selectedIdx, referenceImages.length - 1)
+            : 0,
+      }));
+    } else if (mentionState) {
+      setMentionState(null);
+    }
+  };
+
+  // 切模态/切模式/参考图数量变化时关闭弹层，避免引用过期 idx
+  useEffect(() => {
+    setMentionState(null);
+  }, [currentModality, videoInputMode, referenceImages.length]);
+
+  // 点击 textarea / popup 外部 → 关闭
+  useEffect(() => {
+    if (!mentionState) return;
+    const handler = (e) => {
+      if (mentionPopupRef.current?.contains(e.target)) return;
+      if (textareaRef.current?.contains(e.target)) return;
+      setMentionState(null);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [mentionState]);
+
+  // 选中候选 → 把 @<filter> 整段替换成 @image{N}（N 从 1 起）
+  const insertMention = (n) => {
+    if (!mentionState) return;
+    const before = text.slice(0, mentionState.atIdx);
+    const after = text.slice(
+      mentionState.atIdx + 1 + mentionState.filter.length,
+    );
+    const inserted = `@image${n} `;
+    const newText = before + inserted + after;
+    setText(newText);
+    setMentionState(null);
+    const newCaret = before.length + inserted.length;
+    // 等下一帧 textarea 用新值 re-render 后再设置光标
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      try {
+        el.focus();
+        el.setSelectionRange(newCaret, newCaret);
+      } catch {}
+    });
+  };
+
   // loading 结束后回焦到输入框
   useEffect(() => {
     if (!loading && textareaRef.current?.focus) {
@@ -1282,6 +1983,13 @@ const UnifiedInputBar = ({
     }
   }, [loading]);
 
+  // 文件选择器最近一次点击的目标 slot（'first_frame' / 'last_frame'）。
+  // 仅 first_last 模式下两个独立上传位用到——点空首/末帧框时把 ref 置上
+  // 对应 role，handleFilePick 读到后传给父层强制写入指定 slot；其它路径
+  // （paste / drag / 全能参考下的 + 按钮）保持 ref=null，走父层的默认填充
+  // 顺序。
+  const pendingTargetRoleRef = useRef(null);
+
   const ingestFile = (file) => {
     if (!file) return;
     if (!file.type || !file.type.startsWith('image/')) {
@@ -1290,7 +1998,8 @@ const UnifiedInputBar = ({
     }
     // 由父层决定接受还是 toast 拒绝（按当前 modality 决策）。这里不再
     // 早 return，确保「文本模型上传时也能给用户反馈」。
-    onAddReferenceImage?.(file);
+    const targetRole = pendingTargetRoleRef.current;
+    onAddReferenceImage?.(file, targetRole ? { targetRole } : undefined);
   };
 
   // 不在这里 gate「acceptsReferenceImage」——让文本模型的 paste/drag 也
@@ -1327,15 +2036,30 @@ const UnifiedInputBar = ({
   };
 
   const triggerFilePicker = () => {
+    pendingTargetRoleRef.current = null;
+    fileInputRef.current?.click();
+  };
+  // 首尾帧专用：点空 slot → 触发文件选择器，并把 targetRole 暂存到 ref；
+  // ingestFile 读到后会 forward 给 onAddReferenceImage，父层据此把图写
+  // 入指定 slot 而不是按"先 first 后 last"的默认顺序填
+  const triggerFilePickerForFrame = (role) => {
+    pendingTargetRoleRef.current = role;
     fileInputRef.current?.click();
   };
   const handleFilePick = (e) => {
     const files = e.target.files;
     if (files && files.length > 0) Array.from(files).forEach(ingestFile);
     e.target.value = ''; // 允许连续选择同一张
+    pendingTargetRoleRef.current = null;
   };
 
-  const canSend = text.trim().length > 0 && !loading && !!inputs?.model;
+  // 全 modality 一视同仁：必须有非空 prompt 才能发送。先前曾允许"视频
+  // first_last 仅传首/末帧不写文本"，但实测上游服务商（Ali / Sora 等）
+  // 即便参考图齐全也会因缺 prompt 拒收——发送按钮维持可点反而误导用户
+  const canSend =
+    !loading &&
+    !!inputs?.model &&
+    text.trim().length > 0;
   const handleSubmit = async () => {
     if (!canSend) return;
     const value = text;
@@ -1343,19 +2067,26 @@ const UnifiedInputBar = ({
     await onSubmit?.(value);
   };
 
-  // 输入提示文案随 modality 调整
+  // 输入提示文案随 modality + 视频模式调整
   const placeholder = useMemo(() => {
+    if (currentModality === MODALITY.VIDEO) {
+      if (videoInputMode === 'first_last') {
+        return t(
+          '首帧图和尾帧图，尽量保持同样的图片比例，尽量都包含同样的主体，并用文字描述两张图之间如何过渡。',
+        );
+      }
+      // omni（默认）：暗示用户可以用 @ 快捷引用上传过的参考图
+      return t('使用 @ 快速调用参考内容');
+    }
     switch (currentModality) {
       case MODALITY.IMAGE:
         return t('描述你想要的图片…');
-      case MODALITY.VIDEO:
-        return t('描述你想要的视频…');
       case MODALITY.MULTIMODAL:
         return t('输入消息（支持图片附件）…');
       default:
         return t('给模型发条消息…');
     }
-  }, [currentModality, t]);
+  }, [currentModality, videoInputMode, t]);
 
   return (
     <div
@@ -1378,15 +2109,151 @@ const UnifiedInputBar = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* 文本区：默认 4 行；右侧给参考图堆叠预留空间（仅有图时） */}
+        {/* @-mention 弹层：仅视频全能参考 + 至少 1 张参考图时由
+            handleTextareaChange 唤出。绝对定位贴在输入框正上方，候选条目
+            是 referenceImages 里的图缩略图 + 「图片 N」。键盘 ↑↓/Enter/Tab
+            导航；点候选或回车把 @<filter> 整段替换为 @image{N}。 */}
+        {mentionState && referenceImages.length > 0 && (
+          <div
+            ref={mentionPopupRef}
+            style={{
+              position: 'absolute',
+              left: 12,
+              bottom: 'calc(100% + 6px)',
+              minWidth: 200,
+              maxWidth: 280,
+              maxHeight: 240,
+              overflowY: 'auto',
+              zIndex: 20,
+              background: 'var(--semi-color-bg-overlay)',
+              border: '1px solid var(--semi-color-border)',
+              borderRadius: 12,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.16)',
+              padding: 6,
+            }}
+          >
+            <div
+              style={{
+                padding: '4px 8px 6px',
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: 0.3,
+                color: 'var(--semi-color-text-2)',
+              }}
+            >
+              {t('选择参考图')}
+            </div>
+            {referenceImages.map((img, i) => {
+              const selected = i === mentionState.selectedIdx;
+              return (
+                <button
+                  key={img.key}
+                  type='button'
+                  onClick={() => insertMention(i + 1)}
+                  onMouseEnter={() =>
+                    setMentionState((s) =>
+                      s ? { ...s, selectedIdx: i } : s,
+                    )
+                  }
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    width: '100%',
+                    padding: '6px 8px',
+                    border: 'none',
+                    background: selected
+                      ? 'var(--semi-color-primary-light-default)'
+                      : 'transparent',
+                    cursor: 'pointer',
+                    borderRadius: 8,
+                    color: 'var(--semi-color-text-0)',
+                    fontFamily: 'inherit',
+                    fontSize: 13,
+                    fontWeight: selected ? 500 : 400,
+                    textAlign: 'left',
+                  }}
+                >
+                  <img
+                    src={optimizeImageUrl(img.dataUrl, {
+                      width: pixelWidth(28),
+                    })}
+                    alt=''
+                    draggable={false}
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 4,
+                      objectFit: 'cover',
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    {t('图片{{n}}', { n: i + 1 })}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--semi-color-text-2)',
+                      fontFamily:
+                        'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    }}
+                  >
+                    @image{i + 1}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 文本区：默认 4 行；右侧给参考图堆叠 / 首尾帧双上传预留空间 */}
         <textarea
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={handleTextareaChange}
           placeholder={placeholder}
           rows={3}
           disabled={loading}
           onKeyDown={(e) => {
+            // mention 弹层打开时优先拦截方向键 / 选择键，否则 Enter 会
+            // 触发提交、Tab 会跳焦
+            if (mentionState && referenceImages.length > 0) {
+              if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                setMentionState((s) =>
+                  s
+                    ? {
+                        ...s,
+                        selectedIdx: Math.min(
+                          s.selectedIdx + 1,
+                          referenceImages.length - 1,
+                        ),
+                      }
+                    : s,
+                );
+                return;
+              }
+              if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                setMentionState((s) =>
+                  s
+                    ? { ...s, selectedIdx: Math.max(s.selectedIdx - 1, 0) }
+                    : s,
+                );
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                insertMention(mentionState.selectedIdx + 1);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setMentionState(null);
+                return;
+              }
+            }
             // Enter 发送，Shift+Enter 换行；和系统全局习惯保持一致。
             // 避免 IME 编辑中的 Enter 误发：keyCode===229 时跳过。
             if (e.key === 'Enter' && !e.shiftKey && e.keyCode !== 229) {
@@ -1402,19 +2269,21 @@ const UnifiedInputBar = ({
             boxShadow: 'none',
             background: 'transparent',
             padding: `14px ${
-              // 右内边距三档：
-              //  - 0 张 + 不接受参考图 → 16
-              //  - 0 张 + 接受参考图（仅显示上传按钮基座） → 80（THUMB+24）
-              //  - N 张 → 按堆叠宽度 + 24（≤ 4 张才会增长，超过保持上限）
-              acceptsReferenceImage || referenceImages.length > 0
-                ? THUMB_SIZE +
-                  COLLAPSE_STEP *
-                    Math.min(
-                      MAX_COLLAPSED_OFFSETS,
-                      Math.max(referenceImages.length - 1, 0),
-                    ) +
-                  24
-                : 16
+              // 右内边距按"右侧浮元素"的实际宽度变化：
+              //  - 视频 first_last 模式 → 双上传整体（2 框 + 中间 swap） + 24 留白
+              //  - 全能参考 / 图片堆叠 → 堆叠宽度（按张数增长，封顶 4 档） + 24
+              //  - 不支持上传 → 16（最小 padding）
+              videoInputMode === 'first_last' && firstLastFrameImages
+                ? FIRST_LAST_TOTAL_WIDTH + 24
+                : acceptsReferenceImage || referenceImages.length > 0
+                  ? THUMB_SIZE +
+                    COLLAPSE_STEP *
+                      Math.min(
+                        MAX_COLLAPSED_OFFSETS,
+                        Math.max(referenceImages.length - 1, 0),
+                      ) +
+                    24
+                  : 16
             }px 8px 16px`,
             fontSize: 14,
             lineHeight: 1.6,
@@ -1425,15 +2294,30 @@ const UnifiedInputBar = ({
           }}
         />
 
-        {/* 参考图堆叠：贴在输入框右上角；image/video 模型带 image input
-            slot 时还会在堆叠最底层渲染一个固定的「上传按钮基座」。 */}
-        <ReferenceImageStack
-          images={referenceImages}
-          onRemove={onRemoveReferenceImage}
-          showUploadButton={showUploadButton}
-          onUpload={triggerFilePicker}
-          t={t}
-        />
+        {/* 右上角浮元素：根据 videoInputMode 二选一渲染
+            - first_last：FirstLastFrameUpload 双独立 slot
+            - 其它：ReferenceImageStack 堆叠 + 上传基座 */}
+        {videoInputMode === 'first_last' && firstLastFrameImages ? (
+          <FirstLastFrameUpload
+            images={firstLastFrameImages}
+            onClickFirst={() => triggerFilePickerForFrame('first_frame')}
+            onClickLast={() => triggerFilePickerForFrame('last_frame')}
+            onRemoveFirst={onRemoveFirstFrame}
+            onRemoveLast={onRemoveLastFrame}
+            onSwap={onSwapFirstLastFrame}
+            onRetryUpload={onRetryUpload}
+            t={t}
+          />
+        ) : (
+          <ReferenceImageStack
+            images={referenceImages}
+            onRemove={onRemoveReferenceImage}
+            showUploadButton={showUploadButton}
+            onUpload={triggerFilePicker}
+            onRetryUpload={onRetryUpload}
+            t={t}
+          />
+        )}
 
         {/* 隐藏文件选择器：「+ 上传参考图」点击触发 */}
         <input
@@ -1463,6 +2347,18 @@ const UnifiedInputBar = ({
             disabled={loading}
             t={t}
           />
+
+          {/* 视频「全能参考 / 首尾帧」模式选择器：仅当 schema 同时声明
+              reference_image 和 first/last_frame 槽位时父层置 true。
+              紧贴模型选择器右侧，让用户能用同一片视觉区域控制"附件形态"。 */}
+          {videoInputModeAvailable && (
+            <VideoInputModeSelector
+              mode={videoInputMode}
+              onModeChange={onVideoInputModeChange}
+              disabled={loading}
+              t={t}
+            />
+          )}
 
           {/* 仅 image / video 模型展示的快捷参数下拉条。schema 里所有
               enum 字段一字排开；多了横向滚动，滚动条隐藏。flex:1 + min-w:0
@@ -1494,13 +2390,18 @@ const UnifiedInputBar = ({
 
           <div style={{ flex: currentModality === MODALITY.IMAGE || currentModality === MODALITY.VIDEO ? 0 : 1 }} />
 
-          <Typography.Text
-            type='tertiary'
-            className='text-xs select-none hidden sm:inline'
-            style={{ paddingRight: 6 }}
-          >
-            {loading ? t('生成中…') : t('Enter 发送 / Shift+Enter 换行')}
-          </Typography.Text>
+          {/* 视频模型工具栏已经塞满了模式选择器 + 多个参数下拉，再加一行
+              提示文字会把整条工具栏挤到换行；这里直接隐藏，保留 image 和
+              text/multimodal 模型的提示。 */}
+          {currentModality !== MODALITY.VIDEO && (
+            <Typography.Text
+              type='tertiary'
+              className='text-xs select-none hidden sm:inline'
+              style={{ paddingRight: 6 }}
+            >
+              {loading ? t('生成中…') : t('Enter 发送 / Shift+Enter 换行')}
+            </Typography.Text>
+          )}
 
           {/* 发送按钮：loading 时变成停止按钮（实心方块），点击调用 onStop。
               避免 loading 同时还出 Semi 自带的「输入框上方停止条」造成两个

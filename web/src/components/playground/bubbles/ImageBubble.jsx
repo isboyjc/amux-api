@@ -29,6 +29,7 @@ import { useTranslation } from 'react-i18next';
 import { inferAspectRatio } from './aspectRatio';
 import { MODALITY } from '../../../constants/playground.constants';
 import { getLobeHubIcon } from '../../../helpers/render';
+import { optimizeImageUrl, pixelWidth } from '../../../helpers';
 import { inferVendorIconKey } from '../vendorIcon';
 
 // 单条 assistant 消息的图片气泡。统一对话窗口里和文本/视频气泡并列出现。
@@ -136,10 +137,13 @@ const ImageBubble = ({ message, onContinueEdit, supportsContinueEdit }) => {
         }
       >
         {shown.map((img, i) => {
+          // 父级 handleContinueEdit 同时支持 data: URL 和 http(s) 远程链接，
+          // 这里只要 url 是字符串、handler 存在就挂按钮；具体的 download
+          // / seed-as-done / 重新上传由父级按 modality 决策。
           const canContinue =
             supportsContinueEdit &&
             typeof img.url === 'string' &&
-            img.url.startsWith('data:');
+            img.url.length > 0;
           return (
             <div key={i} className='flex justify-center items-start'>
               <div
@@ -156,7 +160,12 @@ const ImageBubble = ({ message, onContinueEdit, supportsContinueEdit }) => {
                 onClick={() => setPreviewIdx(i)}
               >
                 <img
-                  src={img.url}
+                  src={optimizeImageUrl(img.url, {
+                    // 单图按 capH 高来提示尺寸；多图也走相同上限。
+                    // CF 取 width/height 任一最严格的约束，缩略不会拉伸
+                    height: pixelWidth(grid.capH),
+                    width: pixelWidth(grid.capH * 2),
+                  })}
                   alt={`image-${i}`}
                   loading='lazy'
                   className='transition-transform duration-300 group-hover:scale-[1.02]'

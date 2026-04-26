@@ -304,6 +304,38 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "storage.provider":
+		// 当前只接受 r2；后续扩展时把已实现的 provider 加进来即可
+		v := strings.ToLower(strings.TrimSpace(option.Value.(string)))
+		if v != "" && v != "r2" {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "暂不支持的对象存储提供方：" + v,
+			})
+			return
+		}
+	case "storage.r2_public_base_url":
+		// 拼最终访问 URL 用，必须带 scheme；且不应以 "/" 结尾（前端拼接逻辑
+		// 假设 base 不带尾斜杠）。空值视作"先清除"，后续 IsEnabled 会兜底。
+		v := strings.TrimSpace(option.Value.(string))
+		if v != "" {
+			if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "公网访问基地址必须以 http:// 或 https:// 开头",
+				})
+				return
+			}
+		}
+	case "storage.r2_endpoint":
+		v := strings.TrimSpace(option.Value.(string))
+		if v != "" && !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "S3 endpoint 必须以 http:// 或 https:// 开头",
+			})
+			return
+		}
 	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {

@@ -21,6 +21,7 @@ import React, { useState } from 'react';
 import { Button, ImagePreview, Tooltip } from '@douyinfe/semi-ui';
 import { Pencil } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { optimizeImageUrl, pixelWidth } from '../../../helpers';
 
 // 用户气泡里展示「参考图组」的网格。1-12 张自适应：
 //   - 1 张：单图最大 240px，原比例
@@ -60,11 +61,13 @@ const RefImageGrid = ({ urls, onContinueEdit }) => {
         }}
       >
         {shown.map((url, i) => {
-          // 父级 handleAddReferenceImage 只接受 data: URL，远程链接会被
-          // toast 拒掉——这里直接按 url 形态决定是否挂按钮，避免误导。
+          // 父级 handleContinueEdit 现在同时支持 data: URL 和 http(s) 远程
+          // 链接（视频模型走 R2 直传后历史里全是远程 URL），只要 url 是
+          // 字符串、handler 存在就挂按钮——具体的 download / seed-as-done /
+          // 重新上传选择由父级按当前 modality 决策。
           const canContinue =
             typeof url === 'string' &&
-            url.startsWith('data:') &&
+            url.length > 0 &&
             typeof onContinueEdit === 'function';
           return (
             <div
@@ -81,7 +84,7 @@ const RefImageGrid = ({ urls, onContinueEdit }) => {
               onClick={() => setPreviewIdx(i)}
             >
               <img
-                src={url}
+                src={optimizeImageUrl(url, { width: pixelWidth(cell) })}
                 alt=''
                 loading='lazy'
                 style={{

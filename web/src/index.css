@@ -506,6 +506,19 @@ code {
   border-top-left-radius: 2px !important;
 }
 
+/* Semi 默认错误气泡是 danger-hover（深红）底色，里面我们的 VideoBubble /
+   MessageContent 又用 type='danger' 渲染红色错误文案，叠在一起红字落在
+   红底上几乎读不出来。把错误气泡背景改为浅红（danger-light-default），
+   保留 danger 文字色，深红字 + 浅红底就有可读对比度。
+   image/video 气泡内部的错误展示（X 图标 + danger 文案）维持原样。 */
+.semi-chat-chatBox-content.semi-chat-chatBox-content-error {
+  background: var(--semi-color-danger-light-default) !important;
+  border: 1px solid var(--semi-color-danger-light-active) !important;
+}
+.semi-chat-chatBox-content.semi-chat-chatBox-content-error .semi-typography {
+  color: var(--semi-color-danger) !important;
+}
+
 /* 工具栏「快捷参数滚动条」：image/video 模型可能有多个 enum 参数挤在
    一行，超出时允许横向滚动但隐藏滚动条；不影响 send 按钮固定在右侧。 */
 .playground-toolbar-params {
@@ -887,6 +900,52 @@ code {
 .playground-image-bubble-meta {
   /* 元信息行：自补 padding，对齐原来的气泡内边距感 */
   padding: 10px 14px 12px;
+}
+
+/* 用户消息「图浮在气泡之上」：MessageContent 在 user 消息含图时挂
+   .playground-user-msg-images-out。这里：
+   - 用 :has() 把外层 Semi 气泡 surface（背景/内边距/圆角/阴影）全清掉，
+     腾出空间让图片直接展示，不再被一层灰底框住；
+   - 内层文字用 .playground-user-msg-text-pill 复刻原气泡的 fill-0 底色 +
+     8px/12px padding + 16px 圆角（右上 2px 不对称）；
+   - 只有图没有文字时，pill 不渲染 → 整条消息就是右对齐的图片网格，没有
+     任何气泡 surface。 */
+.semi-chat-chatBox-right
+  .semi-chat-chatBox-content:has(.playground-user-msg-images-out) {
+  background: transparent !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+.playground-user-msg-images-out {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.playground-user-msg-images-row {
+  display: flex;
+  justify-content: flex-end;
+}
+/* 有文字时给图和 pill 之间留出 8px 间距；无文字时（pill 不存在）这条
+   sibling 选择器不生效，图片紧贴消息底部边缘。 */
+.playground-user-msg-images-row:has(+ .playground-user-msg-text-pill) {
+  margin-bottom: 8px;
+}
+.playground-user-msg-text-pill {
+  display: inline-block;
+  /* 复刻 Semi `.semi-chat-chatBox-content-user` 的 primary 品牌色底 + 白字
+     —— 之前抄成 fill-0（灰）是错的，看 Semi 自家 CSS：
+       .semi-chat-chatBox-content-bubble, .userBubble { background: fill-0 }
+       .semi-chat-chatBox-content-user           { background: primary }
+     第二条优先级更高、是用户气泡实际颜色 */
+  background: var(--semi-color-primary);
+  color: var(--semi-color-white);
+  padding: 8px 12px;
+  border-radius: 16px;
+  /* 与默认右气泡"右上角尖角朝向自己"的不对称呼应 */
+  border-top-right-radius: 2px;
+  max-width: 100%;
+  word-break: break-word;
 }
 
 /* ==================== 同步倍率 - 渠道选择器 ==================== */
@@ -1339,6 +1398,13 @@ html.dark .semi-dropdown-wrapper {
   to {
     transform: translateX(0);
     opacity: 1;
+  }
+}
+
+/* 通用 spinner 动画：参考图缩略图上的 R2 上传中徽章使用 */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

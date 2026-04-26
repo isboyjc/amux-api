@@ -23,11 +23,19 @@ import MessageActions from './MessageActions';
 import SettingsPanel from './SettingsPanel';
 import DebugPanel from './DebugPanel';
 
-// 优化的消息内容组件
+// 优化的消息内容组件。
+//
+// ⚠️ 这是"白名单"式 React.memo——只比下面列出的 prop，没列出的 prop 即便
+// 变了也不会触发 re-render。所以**任何"运行时身份会变"的 callback prop**
+// 都必须显式纳入比较，否则 inner DOM 上挂的会是陈旧闭包，行为偏离当前状态。
+//
+// 历史教训：onImageContinueEdit 一开始没列在这里 → 用户在视频 first_last
+// 模式下点已发送气泡的 pencil 按钮，跑的是"切模式前的"handleContinueEdit
+// 闭包，图片被路由到 reference 槽而不是首/末帧槽。把所有用户能交互到的
+// callback 都纳进来才安全。
 export const OptimizedMessageContent = React.memo(
   MessageContent,
   (prevProps, nextProps) => {
-    // 只有这些属性变化时才重新渲染
     return (
       prevProps.message.id === nextProps.message.id &&
       prevProps.message.content === nextProps.message.content &&
@@ -39,7 +47,13 @@ export const OptimizedMessageContent = React.memo(
         nextProps.message.isReasoningExpanded &&
       prevProps.isEditing === nextProps.isEditing &&
       prevProps.editValue === nextProps.editValue &&
-      prevProps.styleState.isMobile === nextProps.styleState.isMobile
+      prevProps.styleState.isMobile === nextProps.styleState.isMobile &&
+      prevProps.onImageContinueEdit === nextProps.onImageContinueEdit &&
+      prevProps.onToggleReasoningExpansion ===
+        nextProps.onToggleReasoningExpansion &&
+      prevProps.onEditSave === nextProps.onEditSave &&
+      prevProps.onEditCancel === nextProps.onEditCancel &&
+      prevProps.onEditValueChange === nextProps.onEditValueChange
     );
   },
 );
