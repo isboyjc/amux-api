@@ -33,3 +33,4 @@ export * from './statusCodeRules';
 export * from './pricingReference';
 export * from './upload';
 export * from './imageOptimize';
+export * from './playgroundDeepLink';

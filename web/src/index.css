@@ -15,7 +15,7 @@
 
 /* ==================== 全局基础样式 ==================== */
 :root {
-  --sidebar-width: 180px;
+  --sidebar-width: 220px;
   --sidebar-width-collapsed: 60px;
   --sidebar-current-width: var(--sidebar-width);
 }
@@ -194,13 +194,270 @@ html.dark .semi-navigation-item-selected .semi-navigation-item-icon {
 }
 
 .app-layout {
-  height: 100vh;
-  height: 100dvh;
+  /* 横幅可见时整个布局往下挪 banner 高度、可视高度对应缩小：
+     - margin-top 把 .app-layout 的起始位置从 viewport y=0 推到 y=banner-height，
+       让出顶部空间给 fixed 的横幅；
+     - height 用 dvh 让总占位 = viewport - 横幅 - 0（恰好填满视口剩余）。
+     这样所有 normal-flow 的页面内元素自动让位，不需要每个页面单独适配；
+     fixed 元素（Header / Sider / 横幅自身）依然按 var(--announcement-bar-height)
+     直接定位到正确的 viewport y，互不影响。 */
+  margin-top: var(--announcement-bar-height, 0px);
+  height: calc(100vh - var(--announcement-bar-height, 0px));
+  height: calc(100dvh - var(--announcement-bar-height, 0px));
 }
 
 .app-sider {
-  height: calc(100vh - 64px);
-  height: calc(100dvh - 64px);
+  /* Sider 是 fixed top=calc(64+var)，到 viewport 底部的距离恰好是
+     100dvh - 64 - var；横幅显隐都 OK */
+  height: calc(100vh - 64px - var(--announcement-bar-height, 0px));
+  height: calc(100dvh - 64px - var(--announcement-bar-height, 0px));
+}
+
+/* ==================== 公告横幅 ==================== */
+/* 设计目标：醒目但不刺眼。
+   - 渐变品牌色背景：与 Semi 默认的 primary 色调一致，深浅对比让"普通文案
+     气泡"和"通知栏"立刻有视觉区分
+   - 高度 40px，与变量 BAR_HEIGHT_PX 对齐
+   - 文字单行 ellipsis，超长在 hover 时通过 title 看完整
+   - 关闭按钮 24x24，hit area 够大但不抢主体注意力
+   - 横幅整条点击：cursor 在文案区域用 pointer；非可点状态保持 default
+*/
+.announcement-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  z-index: 101; /* 比 Header 100 高一档，确保覆盖 Header 阴影 */
+  overflow: hidden; /* ::before 伪元素的丝绒高光 / 噪点不能溢出 */
+  /* 整条 bar 用 grid：左留白 / 居中内容 / 右关闭。这样无论文案多短，
+     文案都恒定居中；关闭按钮始终右贴边、不影响居中布局 */
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: center;
+
+  /* 三个 CSS 变量来自后端配置，前端 inline style 写到根元素上；
+     未配置时回到默认暗金套装 */
+  --ab-bg: #5a3f1f;
+  --ab-accent: #d4a13e;
+  --ab-text: #f4e4c1;
+
+  /* 多层背景叠加营造"老精装书 / 博物馆铭牌"的厚重质感。
+     stops 全部从 --ab-bg 派生：用 color-mix(in srgb, var(--ab-bg) X%, black)
+     得到不同深浅的同色相梯度。这样改一个变量整套色调跟着走，
+     不需要管理员调一堆 stop。光泽 / 光池用 --ab-accent 半透明叠加。
+     上到下分四层（CSS 多背景，第一条在最上）：
+       1. 横向移动的"光泽带"——3 倍宽渐变，模拟丝绒上反光带从一侧滑到另一侧
+       2-3. 两团光池——左暖金、右深色，给中段加亮带，打破纯渐变单调
+       4. 底色——多停顿同色相渐变，两端深 / 中段亮，形成"丝面凹凸"节奏 */
+  background:
+    /* 1. 流动光泽：用 accent 60% 透明度 */
+    linear-gradient(
+      100deg,
+      transparent 0%,
+      transparent 35%,
+      color-mix(in srgb, var(--ab-accent) 60%, transparent) 50%,
+      transparent 65%,
+      transparent 100%
+    ),
+    /* 2. 左侧 accent 光池 */
+      radial-gradient(
+        ellipse 60% 220% at 22% 50%,
+        color-mix(in srgb, var(--ab-accent) 35%, transparent) 0%,
+        transparent 60%
+      ),
+    /* 3. 右侧深色光池：用 bg + 黑混出深 */
+      radial-gradient(
+        ellipse 60% 220% at 78% 50%,
+        color-mix(in srgb, var(--ab-bg) 60%, black) 0%,
+        transparent 60%
+      ),
+    /* 4. 底色：bg 派生的多停顿暗渐变 */
+      linear-gradient(
+        100deg,
+        color-mix(in srgb, var(--ab-bg) 40%, black) 0%,
+        color-mix(in srgb, var(--ab-bg) 65%, black) 18%,
+        var(--ab-bg) 38%,
+        color-mix(in srgb, var(--ab-bg) 88%, white) 50%,
+        var(--ab-bg) 62%,
+        color-mix(in srgb, var(--ab-bg) 65%, black) 82%,
+        color-mix(in srgb, var(--ab-bg) 45%, black) 100%
+      );
+  background-size:
+    300% 100%,
+    /* 光泽带要走得开 */ 100% 100%,
+    100% 100%,
+    100% 100%;
+  animation: announcement-bar-shimmer 14s linear infinite;
+  /* 文字色直接来自变量；text-shadow 提高可读性 */
+  color: var(--ab-text);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.45);
+  /* 仅留底部细分割线 + 一道很轻的外阴影；去掉顶部金边（视觉上像边框） */
+  box-shadow:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.18),
+    0 1px 3px rgba(0, 0, 0, 0.12);
+  font-size: 13px;
+  letter-spacing: 0.3px;
+  /* iOS 安全区适配（刘海屏顶部留白） */
+  padding-top: env(safe-area-inset-top, 0);
+}
+
+/* 织物纹理：SVG turbulence 大颗粒磨砂质感。
+   - baseFrequency=0.32：之前 0.9 是细粉砂，0.32 出来是 2-3px 粒径的
+     可见磨砂颗粒，像"未抛光的金属漆面 / 厚棉绒"
+   - numOctaves=1：单层噪点，颗粒边缘清晰；多层会变模糊雾感
+   - background-size: 220px：让一个噪点 tile 在屏幕上看起来不太规则
+   - opacity 0.28 + overlay：颗粒比之前更可见，亮处更亮、暗处更暗
+   - 用 ::before 而非 background 多一层：可以独立 mix-blend-mode
+   - pointer-events: none：不挡用户点关闭 / 跳转
+   - 静态不动：动态颗粒看着像电视雪花，磨砂感反而散了 */
+.announcement-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.32' numOctaves='1' stitchTiles='stitch' seed='5'/><feColorMatrix values='0 0 0 0 0   0 0 0 0 0   0 0 0 0 0   0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 220px 220px;
+  opacity: 0.28;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+@keyframes announcement-bar-shimmer {
+  /* 光泽带从左到右滑过，14s 一周；底色三层不动，只让第一层（光泽）走 */
+  0% {
+    background-position: -50% 0, 0 0, 0 0, 0 0;
+  }
+  100% {
+    background-position: 150% 0, 0 0, 0 0, 0 0;
+  }
+}
+
+/* 用户偏好减少动画时禁用光泽漂移，避免引发眩晕 */
+@media (prefers-reduced-motion: reduce) {
+  .announcement-bar {
+    animation: none;
+  }
+}
+
+/* 暗色模式：色相由用户配置驱动，但整体压一档；这里只改 box-shadow
+   和 ::before 噪点透明度，让横幅与暗 chrome 协调。背景 stops 仍按主
+   色派生公式（color-mix）走，不需要每色单独写一套暗模式色板。 */
+html.dark .announcement-bar,
+body[theme-mode='dark'] .announcement-bar {
+  box-shadow:
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+    0 1px 3px rgba(0, 0, 0, 0.25);
+}
+
+html.dark .announcement-bar::before,
+body[theme-mode='dark'] .announcement-bar::before {
+  /* 暗色 chrome 旁噪点用 soft-light 混合：避免 overlay 在暗色上把高光
+     拍得过亮、变 "磨砂太硬" */
+  mix-blend-mode: soft-light;
+  opacity: 0.32;
+}
+
+.announcement-bar__inner {
+  /* 中央列：居中对齐 + 控制最大宽度，避免在超宽屏上文案延伸到屏幕边缘 */
+  grid-column: 2;
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  /* 图标到文字之间的呼吸感；之前 8px 太紧贴 */
+  gap: 12px;
+  min-width: 0;
+  max-width: min(960px, 100%);
+  padding: 0 12px;
+  user-select: none;
+  /* 浮在丝绒噪点 ::before 之上——否则 overlay 混合的噪点会糊在文字 */
+  position: relative;
+  z-index: 1;
+}
+
+.announcement-bar__inner--clickable {
+  cursor: pointer;
+}
+
+.announcement-bar__inner--clickable:hover .announcement-bar__text {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  /* 用 from-font 让粗细自适应当前字体；Safari 上不支持时会被忽略，无副作用 */
+  text-decoration-thickness: from-font;
+}
+
+.announcement-bar__icon {
+  flex-shrink: 0;
+  opacity: 0.95;
+}
+
+.announcement-bar__text {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.announcement-bar__close {
+  /* 网格第三列：靠右；放在右列内部再用 margin-right 留点边距 */
+  grid-column: 3;
+  justify-self: end;
+  margin-right: 8px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  /* 关闭按钮跟随 var(--ab-text)（继承自横幅 color） */
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition:
+    opacity 0.15s ease,
+    background-color 0.15s ease;
+  /* 浮在噪点之上 */
+  position: relative;
+  z-index: 1;
+}
+
+.announcement-bar__close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.announcement-bar__close:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.6);
+  outline-offset: 1px;
+}
+
+/* 移动端：左右留白列收窄、字号略小，避免窄屏文字被挤没 */
+@media (max-width: 480px) {
+  .announcement-bar {
+    grid-template-columns: 8px 1fr 32px;
+    font-size: 12px;
+  }
+  .announcement-bar__inner {
+    gap: 10px;
+    padding: 0 8px;
+  }
+  .announcement-bar__close {
+    margin-right: 4px;
+    width: 22px;
+    height: 22px;
+  }
+}
+
+/* 设置页预览态：去掉 fixed，直接 inline 渲染 */
+.announcement-bar--preview {
+  position: relative !important;
+  top: auto !important;
+  border-radius: 8px;
+  height: 40px;
 }
 
 code {
@@ -394,6 +651,250 @@ code {
 /* 侧边栏区域容器 */
 .sidebar-section {
   padding-top: 12px;
+}
+
+/* ==================== 侧边栏底部宣传轮播 ==================== */
+/* 包裹层：在 Nav 之外贴住侧边栏底部，flex-shrink 0 防止被压缩 */
+.sidebar-carousel-wrapper {
+  flex: 0 0 auto;
+  margin: 8px 10px 14px;
+}
+
+.sidebar-carousel {
+  width: 100%;
+}
+
+/* 卡片：横向长方形（≈2:1），图片/视频/渐变作为背景填满 */
+.sidebar-carousel__card {
+  position: relative;
+  width: 100%;
+  height: 108px;
+  border-radius: 10px;
+  overflow: hidden;
+  isolation: isolate;
+  cursor: default;
+  user-select: none;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+.sidebar-carousel__card--clickable {
+  cursor: pointer;
+}
+
+.sidebar-carousel__card--clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.sidebar-carousel__card--clickable:focus-visible {
+  outline: 2px solid var(--semi-color-primary);
+  outline-offset: 2px;
+}
+
+/* 背景层 */
+.sidebar-carousel__bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.sidebar-carousel__media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 蒙层：在图片/视频上叠一层渐变，使文字可读
+   dark 模式（深色蒙层）适合大多数明亮素材；light 模式留给深色素材切换 */
+.sidebar-carousel__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.sidebar-carousel__card--dark .sidebar-carousel__scrim {
+  background: linear-gradient(
+    180deg,
+    rgba(0, 0, 0, 0.15) 0%,
+    rgba(0, 0, 0, 0.45) 60%,
+    rgba(0, 0, 0, 0.6) 100%
+  );
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__scrim {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.1) 0%,
+    rgba(255, 255, 255, 0.4) 60%,
+    rgba(255, 255, 255, 0.7) 100%
+  );
+}
+
+/* 右上角关闭按钮：z-index 高于内容层，独立处理点击 */
+.sidebar-carousel__close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: rgba(0, 0, 0, 0.35);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.sidebar-carousel__close:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.55);
+  transform: scale(1.06);
+}
+
+.sidebar-carousel__close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 1px;
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__close {
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--semi-color-text-0);
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__close:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+/* 内容层：上下分布，标题在上 / CTA + 指示器在下 */
+.sidebar-carousel__content {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  color: #fff;
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__content {
+  color: var(--semi-color-text-0);
+}
+
+/* 标题区右侧让出 24px 给关闭按钮，避免长标题与之重叠 */
+.sidebar-carousel__top {
+  padding-right: 22px;
+}
+
+.sidebar-carousel__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: 0.2px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__title {
+  text-shadow: none;
+}
+
+.sidebar-carousel__desc {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.35;
+  opacity: 0.9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__desc {
+  text-shadow: none;
+  opacity: 0.75;
+}
+
+.sidebar-carousel__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* CTA 文字：无背景，靠 text-shadow 在任意背景上保证可读 */
+.sidebar-carousel__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.sidebar-carousel__card--clickable:hover .sidebar-carousel__cta-icon {
+  transform: translateX(2px);
+}
+
+.sidebar-carousel__cta-icon {
+  transition: transform 0.2s ease;
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__cta {
+  text-shadow: none;
+}
+
+/* 指示器：右下角 dot 点 */
+.sidebar-carousel__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-carousel__dot {
+  width: 5px;
+  height: 5px;
+  padding: 0;
+  border: none;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  transition: width 0.25s ease, background 0.2s ease;
+}
+
+.sidebar-carousel__dot:hover {
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.sidebar-carousel__dot--active {
+  width: 14px;
+  background: #fff;
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__dot {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.sidebar-carousel__card--light .sidebar-carousel__dot--active {
+  background: var(--semi-color-text-0);
 }
 
 @media (max-width: 767px) {

@@ -274,15 +274,31 @@ export const usePlaygroundState = () => {
   // 新建会话：直接用当前 inputs 的 (model, group) 作为初始值。会话只是
   // 一个混合气泡的对话流，不再绑定单一 workspace 类型，所以也不需要弹窗
   // 让用户挑「这是什么类型的会话」——该选什么模型在输入框里现挑就行。
-  const handleNewChat = useCallback(async () => {
-    const modality = modalityMap[inputs.model]?.modality || 'text';
-    await sessionsApi.createSession({
-      title: '',
-      modality,
-      model: inputs.model || '',
-      group: inputs.group || '',
-    });
-  }, [sessionsApi, modalityMap, inputs.model, inputs.group]);
+  //
+  // 可选 overrides：{ model, group } 显式指定时跳过当前 inputs，用于深链
+  // 快速试用（/console/playground?model=...&group=...）这类场景。给了
+  // overrides 还会把 inputs 也同步更新，让 UnifiedInputBar 显示正确选中。
+  const handleNewChat = useCallback(
+    async (overrides) => {
+      const targetModel = overrides?.model ?? inputs.model;
+      const targetGroup = overrides?.group ?? inputs.group;
+      const modality = modalityMap[targetModel]?.modality || 'text';
+      await sessionsApi.createSession({
+        title: '',
+        modality,
+        model: targetModel || '',
+        group: targetGroup || '',
+      });
+      if (overrides && (overrides.model || overrides.group)) {
+        setInputs((prev) => ({
+          ...prev,
+          ...(overrides.model ? { model: overrides.model } : null),
+          ...(overrides.group ? { group: overrides.group } : null),
+        }));
+      }
+    },
+    [sessionsApi, modalityMap, inputs.model, inputs.group],
+  );
 
   // 清理定时器
   useEffect(() => {

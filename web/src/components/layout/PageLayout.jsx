@@ -22,6 +22,7 @@ import { Layout } from '@douyinfe/semi-ui';
 import SiderBar from './SiderBar';
 import App from '../../App';
 import FooterBar from './Footer';
+import AnnouncementBar from '../AnnouncementBar';
 import { ToastContainer } from 'react-toastify';
 import ErrorBoundary from '../common/ErrorBoundary';
 import React, { useContext, useEffect, useState } from 'react';
@@ -141,6 +142,10 @@ const PageLayout = () => {
         overflow: isMobile ? 'visible' : 'hidden',
       }}
     >
+      {/* 公告横幅：fixed 在最顶层，自身管理显隐。可见时通过 CSS 变量
+          --announcement-bar-height 把 Header / Sider 整体下推；不可见时
+          变量为 0px，下面的 top: var(...) 计算结果即为原值 */}
+      <AnnouncementBar />
       <Header
         style={{
           padding: 0,
@@ -148,7 +153,7 @@ const PageLayout = () => {
           lineHeight: 'normal',
           position: 'fixed',
           width: '100%',
-          top: 0,
+          top: 'var(--announcement-bar-height, 0px)',
           zIndex: 100,
         }}
       >
@@ -170,7 +175,8 @@ const PageLayout = () => {
             style={{
               position: 'fixed',
               left: 0,
-              top: '64px',
+              // 64px = HeaderBar 高度；横幅可见时再额外下推自身高度
+              top: 'calc(64px + var(--announcement-bar-height, 0px))',
               zIndex: 99,
               border: 'none',
               paddingRight: '0',
@@ -201,7 +207,13 @@ const PageLayout = () => {
               flex: '1 0 auto',
               overflowY: isMobile ? 'visible' : 'hidden',
               WebkitOverflowScrolling: 'touch',
-              padding: shouldInnerPadding ? (isMobile ? '5px' : '24px') : '0',
+              // 上 / 右 / 下保留原有 24px（移动端 5px）；只去掉左侧 padding，
+              // 让正文紧贴 Sider 右缘。Sider 自身已有右侧分隔线 / 阴影
+              // 区分边界，再叠 24px 留白显得太空
+              paddingTop: shouldInnerPadding ? (isMobile ? 5 : 24) : 0,
+              paddingRight: shouldInnerPadding ? (isMobile ? 5 : 24) : 0,
+              paddingBottom: shouldInnerPadding ? (isMobile ? 5 : 24) : 0,
+              paddingLeft: 0,
               position: 'relative',
             }}
           >

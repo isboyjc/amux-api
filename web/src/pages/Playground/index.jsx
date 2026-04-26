@@ -60,6 +60,9 @@ import {
   encodeToBase64,
   showError,
   uploadToR2,
+  parsePlaygroundDeepLink,
+  coerceParam,
+  TEXT_PARAM_SCHEMA,
 } from '../../helpers';
 
 // Components
@@ -134,7 +137,14 @@ const Playground = () => {
   const actualTheme = useActualTheme();
   const isMobile = useIsMobile();
   const styleState = { isMobile };
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 深链一次性 prompt 注入：useEffect 解析完写到这里，传给 ChatArea →
+  // UnifiedInputBar；UnifiedInputBar 一旦把它同步到本地 text，就回调清回 null
+  const [pendingDeepLinkText, setPendingDeepLinkText] = React.useState(null);
+  // 深链 model 参数：第一个 useEffect 解析后存这里，第二个 useEffect 等
+  // inputs.model 切到目标 + schema 就绪再 coerce + 写入对应 state
+  // 形如 { targetModel: 'gpt-5', raw: { temperature: '0.7', max_tokens: '2000' } }
+  const [pendingDeepLinkParams, setPendingDeepLinkParams] = React.useState(null);
 
   const state = usePlaygroundState();
   const {
@@ -174,11 +184,53 @@ const Playground = () => {
     sessions,
     activeSessionId,
     activeSession,
+    sessionsReady,
     switchSession,
     renameSession,
     deleteSession,
     touchSession,
   } = state;
+
+  // 深链快速试用：/console/playground?model=...&group=...&prompt=...
+  // 命中后：新建一个会话 + 切到指定 model/group + 预填 prompt（可选），
+  // 立刻把 query 抹掉（replace 不留历史，浏览器后退也不会再次触发）。
+  // 静默执行，无 Toast；用户期望"点链接进来即可用"，不打断。
+  // useRef 守门避免 React Strict Mode 双重渲染时跑两遍
+  const deepLinkConsumedRef = useRef(false);
+  useEffect(() => {
+    if (deepLinkConsumedRef.current) return;
+    if (!sessionsReady) return; // 等会话子系统就绪，避免与"自动建空会话"竞态
+    const link = parsePlaygroundDeepLink(searchParams);
+    if (!link) return;
+    deepLinkConsumedRef.current = true;
+    (async () => {
+      try {
+        // handleNewChat 内部 setInputs 同步 model/group，并落到新会话的元数据
+        await handleNewChat({ model: link.model, group: link.group });
+        if (link.prompt) {
+          setPendingDeepLinkText(link.prompt);
+        }
+        // model 参数延后到下一个 useEffect 处理：那里会等 inputs.model
+        // 切到目标模型 + schema 就绪再 coerce 写入，避免在旧 modality
+        // 的 state 上写错地方
+        if (link.params && Object.keys(link.params).length > 0) {
+          setPendingDeepLinkParams({
+            targetModel: link.model,
+            raw: link.params,
+          });
+        }
+      } catch (err) {
+        console.error('[playground] deep link failed:', err);
+      } finally {
+        // 清理 query。不在乎是否成功——失败也别让 ?model= 残留导致刷新
+        // 反复触发；用户可以从干净 URL 手动操作
+        setSearchParams({}, { replace: true });
+      }
+    })();
+  }, [sessionsReady, searchParams, handleNewChat, setSearchParams]);
+
+  // 深链 model 参数应用 effect：定义在 imageParamSchema / setImageParamValues
+  // 声明之后，搜 "deep-link-params-apply" 锚点
 
   // 当前选中模型的 modality，驱动 ChatArea / UnifiedInputBar / 右栏的形态
   const currentModality =
@@ -416,6 +468,119 @@ const Playground = () => {
     setVideoInputMode('omni');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageSchemaSig]);
+
+  // ===== deep-link-params-apply =====
+  // 深链 model 参数应用 effect。设计要点：
+  //   1. 等 inputs.model 切到 targetModel 才写——避免在旧模型上下文里把
+  //      temperature 误写到 inputs，然后用户切模型时被默认值重置
+  //   2. text 模型走 inputs（handleInputChange + 自动启用对应开关）；
+  //      image/video 走 imageParamValues（按 paramsSchema coerce）
+  //   3. 必须放在上面"切 schema 重置 imageParamValues"effect 之后——
+  //      React 按声明顺序执行 effect，先让默认值落定再叠加深链覆盖，
+  //      最终 state 是 { ...defaults, ...deepLinkParams }
+  //   4. 用 functional updater 防 setImageParamValues 与上面那个 effect
+  //      争抢；image/video schema 异步加载时 properties 为空，return 等下次
+  //   5. 诊断日志：URL 写错 key / 类型不匹配时 console.warn，方便用户在
+  //      DevTools 自查。"applied"汇总用 console.info，可在调试期 grep
+  useEffect(() => {
+    if (!pendingDeepLinkParams) return;
+    if (inputs.model !== pendingDeepLinkParams.targetModel) return;
+    const raw = pendingDeepLinkParams.raw;
+    const tag = '[playground deep-link]';
+
+    if (currentModality === 'text') {
+      // 用户的目标模型如果根本不在 modalityMap 里（拼错名 / 没权限），
+      // 这里会 fallback 到 text 分支——给个警告让用户能 DevTools 自查
+      if (
+        modelEntries.length > 0 &&
+        !modalityMap[pendingDeepLinkParams.targetModel]
+      ) {
+        console.warn(
+          `${tag} model "${pendingDeepLinkParams.targetModel}" not in modelEntries; ` +
+            `falling back to text-mode param coerce. Check the model name and permission.`,
+        );
+      }
+      const applied = [];
+      Object.entries(raw).forEach(([key, value]) => {
+        const type = TEXT_PARAM_SCHEMA[key];
+        if (!type) {
+          console.warn(
+            `${tag} dropped "${key}=${value}" — not a known text-mode param. ` +
+              `Valid text params: ${Object.keys(TEXT_PARAM_SCHEMA).join(', ')}`,
+          );
+          return;
+        }
+        const coerced = coerceParam(value, type);
+        if (coerced === undefined) {
+          console.warn(
+            `${tag} dropped "${key}=${value}" — coerce to ${type} failed.`,
+          );
+          return;
+        }
+        handleInputChange(key, coerced);
+        if (
+          Object.prototype.hasOwnProperty.call(parameterEnabled, key) &&
+          !parameterEnabled[key]
+        ) {
+          handleParameterToggle(key);
+        }
+        applied.push(`${key}=${coerced}`);
+      });
+      if (applied.length > 0) {
+        console.info(`${tag} applied ${applied.length} text params: ${applied.join(', ')}`);
+      }
+      setPendingDeepLinkParams(null);
+      return;
+    }
+
+    // image / video：等 paramsSchema 加载就绪
+    const schema = imageParamSchema;
+    if (!schema?.properties || Object.keys(schema.properties).length === 0) {
+      return; // schema 还在加载，下次 deps 变化再试
+    }
+    const next = {};
+    const applied = [];
+    Object.entries(raw).forEach(([key, value]) => {
+      const def = schema.properties[key];
+      if (!def) {
+        console.warn(
+          `${tag} dropped "${key}=${value}" — not in schema for "${pendingDeepLinkParams.targetModel}". ` +
+            `Valid params: ${Object.keys(schema.properties).join(', ')}`,
+        );
+        return;
+      }
+      const coerced = coerceParam(value, def);
+      if (coerced === undefined) {
+        // enum 不命中 / 类型转失败都走这里——把 schema 期望也打出来好排查
+        const expected = Array.isArray(def.enum)
+          ? `enum: [${def.enum.join(', ')}]`
+          : `type: ${def.type}`;
+        console.warn(
+          `${tag} dropped "${key}=${value}" — value didn't match ${expected}.`,
+        );
+        return;
+      }
+      next[key] = coerced;
+      applied.push(`${key}=${JSON.stringify(coerced)}`);
+    });
+    if (Object.keys(next).length > 0) {
+      setImageParamValues((prev) => ({ ...prev, ...next }));
+    }
+    if (applied.length > 0) {
+      console.info(`${tag} applied ${applied.length} schema params: ${applied.join(', ')}`);
+    }
+    setPendingDeepLinkParams(null);
+  }, [
+    pendingDeepLinkParams,
+    inputs.model,
+    currentModality,
+    imageParamSchema,
+    modelEntries,
+    modalityMap,
+    handleInputChange,
+    handleParameterToggle,
+    parameterEnabled,
+  ]);
 
   // 视频模式切换：清空对侧 slot 值，避免触发 mutex
   const handleVideoInputModeChange = useCallback(
@@ -2086,6 +2251,8 @@ const Playground = () => {
                   onSwapFirstLastFrame={handleSwapFirstLastFrame}
                   onRemoveFirstFrame={handleRemoveFirstFrame}
                   onRemoveLastFrame={handleRemoveLastFrame}
+                  pendingText={pendingDeepLinkText}
+                  onPendingTextConsumed={() => setPendingDeepLinkText(null)}
                 />
               </div>
 

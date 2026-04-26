@@ -81,6 +81,9 @@ const ChatArea = ({
   onSwapFirstLastFrame,
   onRemoveFirstFrame,
   onRemoveLastFrame,
+  // 深链预填文案
+  pendingText,
+  onPendingTextConsumed,
 }) => {
   const { t } = useTranslation();
 
@@ -361,6 +364,8 @@ const ChatArea = ({
         onSwapFirstLastFrame={onSwapFirstLastFrame}
         onRemoveFirstFrame={onRemoveFirstFrame}
         onRemoveLastFrame={onRemoveLastFrame}
+        pendingText={pendingText}
+        onPendingTextConsumed={onPendingTextConsumed}
         styleState={styleState}
       />
     </Card>

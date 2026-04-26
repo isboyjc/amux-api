@@ -29,6 +29,8 @@ import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLim
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
 import SettingsUserAutoUpgrade from '../../pages/Setting/Operation/SettingsUserAutoUpgrade';
 import SettingsTaskURLRewrite from '../../pages/Setting/Operation/SettingsTaskURLRewrite';
+import SettingsAnnouncementBar from '../../pages/Setting/Operation/SettingsAnnouncementBar';
+import SettingsSidebarCarousel from '../../pages/Setting/Operation/SettingsSidebarCarousel';
 import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
@@ -93,6 +95,19 @@ const OperationSetting = () => {
     /* 任务结果 URL 脱敏设置 */
     'task_url_rewrite_setting.enabled': false,
     'task_url_rewrite_setting.rules': '[]',
+
+    /* 公告横幅设置 */
+    'announcement_bar.enabled': false,
+    'announcement_bar.content': '',
+    'announcement_bar.link': '',
+    'announcement_bar.open_in_new_tab': false,
+    'announcement_bar.bg_color': '',
+    'announcement_bar.accent_color': '',
+    'announcement_bar.text_color': '',
+
+    /* 侧边栏底部宣传位轮播 */
+    'sidebar_carousel.enabled': false,
+    'sidebar_carousel.items': '[]',
   });
 
   let [loading, setLoading] = useState(false);
@@ -137,6 +152,14 @@ const OperationSetting = () => {
         {/* 通用设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsGeneral options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 公告横幅 —— 全站可见，放靠前的位置便于运营快速找到 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsAnnouncementBar options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 侧边栏底部宣传位轮播 —— 仅 console 路由下展示 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsSidebarCarousel options={inputs} refresh={onRefresh} />
         </Card>
         {/* 顶栏模块管理 */}
         <div style={{ marginTop: '10px' }}>

@@ -49,9 +49,23 @@ export const AuthRedirect = ({ children }) => {
   return children;
 };
 
+// loginRedirectPath 把当前路径 + query 拼成 /login?callback=...
+// LoginForm / AuthRedirect 都按 ?callback= 解析，state.from 在它们里没人读
+// 是死代码——之前用户从 /console/playground?model=xxx 这种深链进来未登录
+// 时会丢 query，登完直接掉到 /console。改用 ?callback 后能正确回到深链
+function loginRedirectPath() {
+  if (typeof window === 'undefined') return '/login';
+  const cb = window.location.pathname + window.location.search;
+  // 仅本站相对路径才透传，防止恶意 callback 注入外部 URL
+  if (!cb || !cb.startsWith('/') || cb.startsWith('//') || cb.includes('://')) {
+    return '/login';
+  }
+  return `/login?callback=${encodeURIComponent(cb)}`;
+}
+
 function PrivateRoute({ children }) {
   if (!localStorage.getItem('user')) {
-    return <Navigate to='/login' state={{ from: history.location }} />;
+    return <Navigate to={loginRedirectPath()} replace />;
   }
   return children;
 }
@@ -59,7 +73,7 @@ function PrivateRoute({ children }) {
 export function AdminRoute({ children }) {
   const raw = localStorage.getItem('user');
   if (!raw) {
-    return <Navigate to='/login' state={{ from: history.location }} />;
+    return <Navigate to={loginRedirectPath()} replace />;
   }
   try {
     const user = JSON.parse(raw);

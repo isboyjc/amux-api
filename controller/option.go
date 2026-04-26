@@ -336,15 +336,122 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "announcement_bar.content":
+		// 横幅文案：500 字封顶，足以塞下醒目的一句话；超过则截断会让 admin
+		// 困惑，直接拒收并报错
+		v := option.Value.(string)
+		if len([]rune(v)) > 500 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "公告横幅文案最多 500 字",
+			})
+			return
+		}
+	case "announcement_bar.link":
+		// 跳转链接：空字符串表示"纯文案、不可点"；非空必须带 scheme，避免
+		// 前端 window.open 拿到相对路径或 javascript: 之类的奇怪输入
+		v := strings.TrimSpace(option.Value.(string))
+		if v != "" && !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "公告横幅跳转链接必须以 http:// 或 https:// 开头",
+			})
+			return
+		}
+	case "announcement_bar.bg_color",
+		"announcement_bar.accent_color",
+		"announcement_bar.text_color":
+		// 颜色：接受 #RGB / #RRGGBB / #RRGGBBAA 三种 hex 格式；空值表示
+		// 回到 CSS 默认。不接 rgb()/hsl() 等函数式表达，避免插入 CSS
+		// 语法被滥用（虽然颜色字段最终走 inline style 不至于 XSS，
+		// 但也没必要给一个"自由 CSS"入口）
+		v := strings.TrimSpace(option.Value.(string))
+		if v != "" && !isValidHexColor(v) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "颜色格式非法，请使用 #RRGGBB 或 #RRGGBBAA",
+			})
+			return
+		}
+	case "announcement_bar.version":
+		// version 由后端按内容 hash 自动派生，前端只读。**禁止外部直接改**——
+		// 否则可绕过 dismiss 逻辑给所有用户重复推送。
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "公告横幅版本号由系统自动维护，不可直接修改",
+		})
+		return
+	case "sidebar_carousel.items":
+		// 侧边栏轮播：JSON 数组字符串。校验长度 ≤ 5、字段格式合法
+		if err := operation_setting.ValidateSidebarCarouselItems(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	case "sidebar_carousel.version":
+		// 同 announcement_bar.version：版本号由后端 hash 派生，前端只读
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "侧边栏轮播版本号由系统自动维护，不可直接修改",
+		})
+		return
 	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+
+	// announcement_bar.* 任一可见字段保存成功后自动重算 version 并落库；
+	// 前端依据 version 判断是否需要再次给已 dismiss 的用户推送横幅。
+	// 不放在前面 case 里，因为重算依赖 model.UpdateOption 已把新值写入
+	// in-memory 配置（handleConfigUpdate）。
+	if strings.HasPrefix(option.Key, "announcement_bar.") && option.Key != "announcement_bar.version" {
+		newVer := operation_setting.ComputeAnnouncementBarVersion()
+		// 写 announcement_bar.version：会再走一次 handleConfigUpdate 把
+		// in-memory 字段同步刷新。该 key 上面 case 拒绝外部直改，但 model
+		// 层不区分调用方，仍可写——这里就是唯一合法写入点
+		_ = model.UpdateOption("announcement_bar.version", newVer)
+	}
+
+	// sidebar_carousel.* 同款 version 维护：admin 任一可见字段变更后自动 bump，
+	// 让已 dismiss 的用户重新看到新内容
+	if strings.HasPrefix(option.Key, "sidebar_carousel.") && option.Key != "sidebar_carousel.version" {
+		newVer := operation_setting.ComputeSidebarCarouselVersion()
+		_ = model.UpdateOption("sidebar_carousel.version", newVer)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 	})
 	return
+}
+
+// isValidHexColor 检查是否为合法 CSS hex color：#RGB / #RGBA / #RRGGBB /
+// #RRGGBBAA。简单正则即可，无须解析 rgb()/hsl()——后者本期不支持。
+func isValidHexColor(s string) bool {
+	if !strings.HasPrefix(s, "#") {
+		return false
+	}
+	rest := s[1:]
+	switch len(rest) {
+	case 3, 4, 6, 8:
+		// 有效长度
+	default:
+		return false
+	}
+	for _, r := range rest {
+		switch {
+		case r >= '0' && r <= '9',
+			r >= 'a' && r <= 'f',
+			r >= 'A' && r <= 'F':
+			// ok
+		default:
+			return false
+		}
+	}
+	return true
 }

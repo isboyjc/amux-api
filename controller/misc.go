@@ -194,6 +194,43 @@ func GetStatus(c *gin.Context) {
 		"_qn": "new-api",
 	}
 
+	// 公告横幅：登录前后都要看得到，所以放 status 走匿名可访问通道。
+	// version 用于前端 dismiss 比对——内容改变时 version 跟着变，已点过
+	// X 的用户也会重新看到。仅在 enabled 时下发完整字段，关闭时只给一个
+	// enabled=false 让前端早退，不带任何文案/链接，减少前端干扰
+	if ab := operation_setting.GetAnnouncementBarSetting(); ab.Enabled {
+		data["announcement_bar"] = gin.H{
+			"enabled":         true,
+			"content":         ab.Content,
+			"link":            ab.Link,
+			"open_in_new_tab": ab.OpenInNewTab,
+			"bg_color":        ab.BgColor,
+			"accent_color":    ab.AccentColor,
+			"text_color":      ab.TextColor,
+			"version":         ab.Version,
+		}
+	} else {
+		data["announcement_bar"] = gin.H{"enabled": false}
+	}
+
+	// 侧边栏底部宣传位轮播：仅 console 路由下渲染。enabled 且 items 至少 1 条
+	// 才下发完整字段；否则下发 enabled=false 让前端早退。items 在这里以
+	// 已解析数组的形式发出（前端拿来即用），不暴露原始字符串
+	if sc := operation_setting.GetSidebarCarouselSetting(); sc.Enabled {
+		items := operation_setting.GetSidebarCarouselItems()
+		if len(items) > 0 {
+			data["sidebar_carousel"] = gin.H{
+				"enabled": true,
+				"items":   items,
+				"version": sc.Version,
+			}
+		} else {
+			data["sidebar_carousel"] = gin.H{"enabled": false}
+		}
+	} else {
+		data["sidebar_carousel"] = gin.H{"enabled": false}
+	}
+
 	// 根据启用状态注入可选内容
 	if cs.ApiInfoEnabled {
 		data["api_info"] = console_setting.GetApiInfo()

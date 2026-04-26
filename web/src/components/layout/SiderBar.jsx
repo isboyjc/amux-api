@@ -27,6 +27,7 @@ import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
 import { isAdmin, isRoot, showError } from '../../helpers';
 import SkeletonWrapper from './components/SkeletonWrapper';
+import SidebarCarousel from './SidebarCarousel';
 
 import { Nav, Divider } from '@douyinfe/semi-ui';
 
@@ -495,6 +496,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             </>
           )}
         </Nav>
+        {/* 侧边栏底部宣传轮播：放在 Nav 之外，始终贴底；折叠时隐藏 */}
+        {!collapsed && (
+          <div className='sidebar-carousel-wrapper'>
+            <SidebarCarousel />
+          </div>
+        )}
       </SkeletonWrapper>
 
     </div>

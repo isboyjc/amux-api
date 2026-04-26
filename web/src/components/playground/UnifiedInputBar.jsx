@@ -1831,10 +1831,23 @@ const UnifiedInputBar = ({
   onRemoveFirstFrame,
   onRemoveLastFrame,
 
+  // 外部注入的预填文案：深链 ?prompt= 用。父层 set 一次后立即 reset 到 null,
+  // 子内部 useEffect 监听非 null 时把本地 text 同步过去；之后父层不再干涉
+  pendingText = null,
+  onPendingTextConsumed,
+
   styleState,
 }) => {
   const { t } = useTranslation();
   const [text, setText] = useState('');
+
+  // pendingText 接力：外部一次性注入文案到本地 text，并立刻通知父层 reset
+  // 这个 prop（避免把 pendingText 当成 controlled value 反复同步）
+  useEffect(() => {
+    if (pendingText == null) return;
+    setText(pendingText);
+    onPendingTextConsumed?.();
+  }, [pendingText, onPendingTextConsumed]);
   const [isDragOver, setIsDragOver] = useState(false);
   // 模型选择「模式」过滤：smart / image / video。仅影响下拉里展示哪些
   // 模型；非 smart 时切换还会顺手把当前选中模型自动换成第一条匹配项，
