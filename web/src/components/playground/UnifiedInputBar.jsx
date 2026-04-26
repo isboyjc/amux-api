@@ -23,6 +23,7 @@ import {
   Dropdown,
   ImagePreview,
   Input,
+  InputNumber,
   Tag,
   Toast,
   Typography,
@@ -953,9 +954,40 @@ const TOOLBAR_PARAM_KEYS = new Set([
   'ratio',
   'imageratio',
   'videoratio',
+  // 视频模型：时长是高频参数，直接放工具栏，跟图片模型的 size/quality
+  // 同等地位，省去用户进右栏改值
+  'duration',
+  'videoduration',
+  'length',
 ]);
-const isToolbarParam = (key, def) =>
-  Array.isArray(def?.enum) && TOOLBAR_PARAM_KEYS.has(normKey(key));
+// 工具栏支持两类参数：
+//   1) enum 字段（size / quality / aspect_ratio …）→ 选择型下拉
+//   2) 有界数字字段（duration: int 0-16 …）→ 同样下拉，但内容是
+//      「特殊值快捷按钮（来自 enumLabels）+ 数字输入」
+// 第二类是为视频时长这种「整段范围合法 + 0 表示自动」场景设计的。
+const isBoundedNumberParam = (def) =>
+  (def?.type === 'integer' || def?.type === 'number') &&
+  typeof def?.minimum === 'number' &&
+  typeof def?.maximum === 'number';
+const isToolbarParam = (key, def) => {
+  if (!TOOLBAR_PARAM_KEYS.has(normKey(key))) return false;
+  return Array.isArray(def?.enum) || isBoundedNumberParam(def);
+};
+
+// 把 schema 的 enumLabels 扩展字段标准化成「raw 值 → 显示文案」的查表函数。
+// 约定：enumLabels 的 key 是字符串（JSON 限制），但 raw 值可能是数字/布尔，
+// 比对时统一 String() 化。未声明 label 时回退原值的字符串形式。
+const makeLabelFor = (def) => {
+  const map =
+    def?.enumLabels && typeof def.enumLabels === 'object' ? def.enumLabels : null;
+  return (raw) => {
+    if (raw === undefined || raw === null) return null;
+    if (map && Object.prototype.hasOwnProperty.call(map, String(raw))) {
+      return String(map[String(raw)]);
+    }
+    return String(raw);
+  };
+};
 
 // 单个 schema 参数的快捷下拉。schema.title 形如「分辨率 (size)」或
 // 「宽高比（aspectRatio）」（gemini 用全角括号），统一去掉末尾括号部分，
@@ -969,23 +1001,86 @@ const getSchemaShortTitle = (def, key) => {
 const SchemaParamSelector = ({ paramKey, def, value, onChange, disabled, t }) => {
   const [open, setOpen] = useState(false);
   const enumValues = Array.isArray(def?.enum) ? def.enum : null;
-  if (!enumValues || enumValues.length === 0) return null;
+  const isRange = !enumValues && isBoundedNumberParam(def);
+  if (!enumValues && !isRange) return null;
 
   // trigger 与下拉头部都用清洗过的短标题——把 schema title 末尾的
   // 「(字段名)」/「（字段名）」整段裁掉，只展示中文/英文文字标题，
   // 与 gpt-image 这类 title 本身就没带字段名的 schema 视觉对齐。
   const title = getSchemaShortTitle(def, paramKey);
+  const labelFor = makeLabelFor(def);
   const currentRaw = value !== undefined ? value : def?.default;
   const currentLabel =
     currentRaw === undefined || currentRaw === null
       ? t('未设置')
-      : String(currentRaw);
+      : labelFor(currentRaw);
+
+  // range 模式下，enumLabels 的 entries 渲染成「特殊值快捷按钮」（如
+  // 「自动」对应 0）；下面再放一个 InputNumber 让用户输入区间内任意数。
+  // 选中态比对统一走 String()，规避 0 ≠ "0" / true ≠ "true" 的坑。
+  const specialEntries =
+    isRange && def?.enumLabels && typeof def.enumLabels === 'object'
+      ? Object.entries(def.enumLabels)
+      : [];
+
+  const optionButton = (rawVal, label) => {
+    const valStr = String(rawVal);
+    const selected = String(currentRaw) === valStr;
+    return (
+      <button
+        key={valStr}
+        type='button'
+        onClick={() => {
+          // enum 字段的值类型五花八门（int / float / string / bool），
+          // 必须按 schema 原始类型回写——直接传 rawVal 即可。
+          onChange?.(rawVal);
+          setOpen(false);
+        }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          width: '100%',
+          padding: '6px 10px',
+          border: 'none',
+          background: selected
+            ? 'var(--semi-color-primary-light-default)'
+            : 'transparent',
+          cursor: 'pointer',
+          borderRadius: 8,
+          color: 'var(--semi-color-text-0)',
+          fontFamily: 'inherit',
+          fontSize: 13,
+          fontWeight: selected ? 500 : 400,
+          textAlign: 'left',
+        }}
+        onMouseEnter={(e) => {
+          if (!selected)
+            e.currentTarget.style.background = 'var(--semi-color-fill-1)';
+        }}
+        onMouseLeave={(e) => {
+          if (!selected) e.currentTarget.style.background = 'transparent';
+        }}
+      >
+        <span style={{ flex: 1 }}>{label}</span>
+        {selected && (
+          <Check
+            size={14}
+            style={{
+              color: 'var(--semi-color-primary)',
+              flexShrink: 0,
+            }}
+          />
+        )}
+      </button>
+    );
+  };
 
   const menu = (
     <Dropdown.Menu
       className='!bg-semi-color-bg-overlay !border-semi-color-border !shadow-lg !rounded-xl dark:!bg-zinc-800 dark:!border-zinc-700'
       style={{
-        minWidth: 160,
+        minWidth: 180,
         maxHeight: 320,
         overflowY: 'auto',
         display: 'flex',
@@ -1004,56 +1099,59 @@ const SchemaParamSelector = ({ paramKey, def, value, onChange, disabled, t }) =>
       >
         {title}
       </div>
-      {enumValues.map((opt) => {
-        const optStr = String(opt);
-        const selected = String(currentRaw) === optStr;
-        return (
-          <button
-            key={optStr}
-            type='button'
-            onClick={() => {
-              onChange?.(opt);
-              setOpen(false);
-            }}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              width: '100%',
-              padding: '6px 10px',
-              border: 'none',
-              background: selected
-                ? 'var(--semi-color-primary-light-default)'
-                : 'transparent',
-              cursor: 'pointer',
-              borderRadius: 8,
-              color: 'var(--semi-color-text-0)',
-              fontFamily: 'inherit',
-              fontSize: 13,
-              fontWeight: selected ? 500 : 400,
-              textAlign: 'left',
-            }}
-            onMouseEnter={(e) => {
-              if (!selected)
-                e.currentTarget.style.background = 'var(--semi-color-fill-1)';
-            }}
-            onMouseLeave={(e) => {
-              if (!selected) e.currentTarget.style.background = 'transparent';
-            }}
-          >
-            <span style={{ flex: 1 }}>{optStr}</span>
-            {selected && (
-              <Check
-                size={14}
+      {enumValues
+        ? enumValues.map((opt) => optionButton(opt, labelFor(opt)))
+        : (
+          <>
+            {specialEntries.map(([raw, label]) => {
+              // enumLabels 的 key 是字符串，按 schema type 还原成数字
+              const numeric = Number(raw);
+              const rawVal = Number.isFinite(numeric) ? numeric : raw;
+              return optionButton(rawVal, label);
+            })}
+            {specialEntries.length > 0 && (
+              <div
                 style={{
-                  color: 'var(--semi-color-primary)',
-                  flexShrink: 0,
+                  height: 1,
+                  background: 'var(--semi-color-border)',
+                  margin: '4px 6px',
                 }}
               />
             )}
-          </button>
-        );
-      })}
+            <div
+              style={{
+                padding: '6px 10px 4px',
+                fontSize: 11,
+                color: 'var(--semi-color-text-2)',
+              }}
+            >
+              {t('自定义（{{min}}-{{max}}）', {
+                min: def.minimum,
+                max: def.maximum,
+              })}
+            </div>
+            <div style={{ padding: '0 10px 8px' }}>
+              <InputNumber
+                value={
+                  typeof currentRaw === 'number' ? currentRaw : def?.default
+                }
+                min={def.minimum}
+                max={def.maximum}
+                step={def.type === 'integer' ? 1 : def.step || 0.1}
+                precision={def.type === 'integer' ? 0 : undefined}
+                size='small'
+                style={{ width: '100%' }}
+                onChange={(v) => {
+                  // InputNumber 在空字符串时回 ''；空值不写回，保留默认
+                  if (v === '' || v === null || v === undefined) return;
+                  const num = Number(v);
+                  if (!Number.isFinite(num)) return;
+                  onChange?.(def.type === 'integer' ? Math.round(num) : num);
+                }}
+              />
+            </div>
+          </>
+        )}
     </Dropdown.Menu>
   );
 

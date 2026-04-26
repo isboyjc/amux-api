@@ -23,6 +23,7 @@ import {
   DEFAULT_CONFIG,
   DEBUG_TABS,
   MESSAGE_STATUS,
+  MODALITY,
 } from '../../constants/playground.constants';
 import {
   loadConfig,
@@ -302,6 +303,17 @@ export const usePlaygroundState = () => {
     if (
       lastMsg.status !== MESSAGE_STATUS.LOADING &&
       lastMsg.status !== MESSAGE_STATUS.INCOMPLETE
+    ) {
+      return;
+    }
+    // image / video 走各自的恢复路径：
+    //   - image: Playground 的 in-flight Map + 恢复 effect 接管
+    //   - video: useVideoGeneration 的 task 轮询接管
+    // 这里如果按 chat 流式中断的方式收尾，会把 content 强行写成空字符串，
+    // 把图/视频气泡打成"已完成的空消息"。
+    if (
+      lastMsg.modality === MODALITY.IMAGE ||
+      lastMsg.modality === MODALITY.VIDEO
     ) {
       return;
     }

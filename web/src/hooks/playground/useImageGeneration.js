@@ -24,6 +24,23 @@ import { API, showError } from '../../helpers';
 const IMAGE_ENDPOINT = '/pg/images/generations';
 const IMAGE_EDITS_ENDPOINT = '/pg/images/edits';
 
+// 模块作用域的「进行中请求」注册表：messageId -> Promise<result>。
+// 用途：图片生成是同步请求，promise 句柄只活在调用它的组件里；用户切到
+// 别的路由时 Playground 会 unmount，promise 仍在跑但没人接收结果，loading
+// 气泡就永远卡住。把 promise 提到模块作用域后，重新进入 Playground 的实例
+// 可以按 messageId 回查并续上 .then(...)，从而恢复出"完成 / 失败"状态。
+//
+// 局限：promise 活在 JS 堆里，硬刷新 / 关 tab 仍然会丢——这种情况由
+// Playground 的恢复 effect 把孤儿 loading 消息标成 error。
+const inFlightImageRequests = new Map();
+
+export const getInFlightImageRequest = (messageId) =>
+  messageId ? inFlightImageRequests.get(messageId) || null : null;
+
+export const clearInFlightImageRequest = (messageId) => {
+  if (messageId) inFlightImageRequests.delete(messageId);
+};
+
 // hasAnyFile 判断 inputs 里是否有真正的 File。用于决定走 JSON generations
 // 还是 multipart edits 两条路径。空对象、空数组、null 都视为无图。
 const hasAnyFile = (inputs) => {
@@ -82,14 +99,23 @@ export const useImageGeneration = ({ onDebug } = {}) => {
   const [loading, setLoading] = useState(false);
 
   const generate = useCallback(
-    async ({ model, group, prompt, params = {}, inputs = {}, extra }) => {
+    (args = {}) => {
+      const {
+        messageId,
+        model,
+        group,
+        prompt,
+        params = {},
+        inputs = {},
+        extra,
+      } = args;
       if (!prompt || !prompt.trim()) {
         showError(t('请输入 Prompt'));
-        return null;
+        return Promise.resolve(null);
       }
       if (!model) {
         showError(t('请先选择模型'));
-        return null;
+        return Promise.resolve(null);
       }
       // 把 schema 产出的 params 分流：
       //   - OpenAI 标准字段（size/quality/n/...）放顶层，保留和对公 API
@@ -123,116 +149,128 @@ export const useImageGeneration = ({ onDebug } = {}) => {
       const hasImages = hasAnyFile(inputs);
       const requestTs = new Date().toISOString();
       setLoading(true);
-      try {
-        let res;
-        let previewForDebug;
+      // 真正的请求逻辑放进 IIFE，先拿到 promise 句柄再 set 进注册表，
+      // 这样调用方在第一个 await 之前就能用 messageId 查到这条请求。
+      const requestPromise = (async () => {
+        try {
+          let res;
+          let previewForDebug;
 
-        if (!hasImages) {
-          // 路径 A：纯文生图。和改造前一字不差，JSON 打到 /pg/images/generations。
-          const payload = {
-            model,
-            group,
-            prompt: prompt.trim(),
-            response_format: 'b64_json',
-            ...topParams,
-          };
-          if (Object.keys(extraBody).length > 0) payload.extra_body = extraBody;
-          if (extra && typeof extra === 'object') Object.assign(payload, extra);
-          previewForDebug = JSON.stringify(payload, null, 2);
-          onDebug?.({
-            previewRequest: previewForDebug,
-            previewTimestamp: requestTs,
-            request: previewForDebug,
-            timestamp: requestTs,
-          });
-          res = await API.post(IMAGE_ENDPOINT, payload);
-        } else {
-          // 路径 B：带参考图，走 /pg/images/edits multipart。
-          // 约定：schema 声明了图像输入槽 → 这里的 inputs[key] 就是 File / File[]。
-          //   - 单槽：直接以 key 为表单字段名追加
-          //   - 多槽：单文件仍用 key，多文件用 key[]（贴合 OpenAI image[] 惯例）
-          // 非图像标量参数和 generations 一条同样走 topParams + extra_body。
-          const fd = new FormData();
-          fd.append('model', model);
-          if (group) fd.append('group', group);
-          fd.append('prompt', prompt.trim());
-          fd.append('response_format', 'b64_json');
-          Object.entries(topParams).forEach(([k, v]) => {
-            fd.append(k, typeof v === 'string' ? v : String(v));
-          });
-          if (Object.keys(extraBody).length > 0) {
-            fd.append('extra_body', JSON.stringify(extraBody));
-          }
-          // 调试预览：把文件部分用占位符代替，避免把 base64 塞进面板
-          const filesPreview = {};
-          Object.entries(inputs).forEach(([key, val]) => {
-            if (val instanceof File) {
-              fd.append(key, val, val.name);
-              filesPreview[key] = `<File: ${val.name} (${val.size} bytes)>`;
-            } else if (Array.isArray(val)) {
-              const usable = val.filter((x) => x instanceof File);
-              if (usable.length === 0) return;
-              const field = usable.length > 1 ? `${key}[]` : key;
-              usable.forEach((f) => fd.append(field, f, f.name));
-              filesPreview[key] = usable.map(
-                (f) => `<File: ${f.name} (${f.size} bytes)>`,
-              );
-            }
-          });
-          if (extra && typeof extra === 'object') {
-            Object.entries(extra).forEach(([k, v]) => {
-              if (v === undefined || v === null) return;
-              fd.append(k, typeof v === 'string' ? v : String(v));
-            });
-          }
-          previewForDebug = JSON.stringify(
-            {
-              _endpoint: IMAGE_EDITS_ENDPOINT,
-              _format: 'multipart/form-data',
+          if (!hasImages) {
+            // 路径 A：纯文生图。和改造前一字不差，JSON 打到 /pg/images/generations。
+            const payload = {
               model,
               group,
               prompt: prompt.trim(),
+              response_format: 'b64_json',
               ...topParams,
-              ...(Object.keys(extraBody).length > 0
-                ? { extra_body: extraBody }
-                : {}),
-              ...filesPreview,
-            },
-            null,
-            2,
-          );
-          onDebug?.({
-            previewRequest: previewForDebug,
-            previewTimestamp: requestTs,
-            request: previewForDebug,
-            timestamp: requestTs,
-          });
-          // 不要设置 Content-Type：浏览器会自动带 boundary
-          res = await API.post(IMAGE_EDITS_ENDPOINT, fd);
-        }
+            };
+            if (Object.keys(extraBody).length > 0) payload.extra_body = extraBody;
+            if (extra && typeof extra === 'object') Object.assign(payload, extra);
+            previewForDebug = JSON.stringify(payload, null, 2);
+            onDebug?.({
+              previewRequest: previewForDebug,
+              previewTimestamp: requestTs,
+              request: previewForDebug,
+              timestamp: requestTs,
+            });
+            res = await API.post(IMAGE_ENDPOINT, payload);
+          } else {
+            // 路径 B：带参考图，走 /pg/images/edits multipart。
+            // 约定：schema 声明了图像输入槽 → 这里的 inputs[key] 就是 File / File[]。
+            //   - 单槽：直接以 key 为表单字段名追加
+            //   - 多槽：单文件仍用 key，多文件用 key[]（贴合 OpenAI image[] 惯例）
+            // 非图像标量参数和 generations 一条同样走 topParams + extra_body。
+            const fd = new FormData();
+            fd.append('model', model);
+            if (group) fd.append('group', group);
+            fd.append('prompt', prompt.trim());
+            fd.append('response_format', 'b64_json');
+            Object.entries(topParams).forEach(([k, v]) => {
+              fd.append(k, typeof v === 'string' ? v : String(v));
+            });
+            if (Object.keys(extraBody).length > 0) {
+              fd.append('extra_body', JSON.stringify(extraBody));
+            }
+            // 调试预览：把文件部分用占位符代替，避免把 base64 塞进面板
+            const filesPreview = {};
+            Object.entries(inputs).forEach(([key, val]) => {
+              if (val instanceof File) {
+                fd.append(key, val, val.name);
+                filesPreview[key] = `<File: ${val.name} (${val.size} bytes)>`;
+              } else if (Array.isArray(val)) {
+                const usable = val.filter((x) => x instanceof File);
+                if (usable.length === 0) return;
+                const field = usable.length > 1 ? `${key}[]` : key;
+                usable.forEach((f) => fd.append(field, f, f.name));
+                filesPreview[key] = usable.map(
+                  (f) => `<File: ${f.name} (${f.size} bytes)>`,
+                );
+              }
+            });
+            if (extra && typeof extra === 'object') {
+              Object.entries(extra).forEach(([k, v]) => {
+                if (v === undefined || v === null) return;
+                fd.append(k, typeof v === 'string' ? v : String(v));
+              });
+            }
+            previewForDebug = JSON.stringify(
+              {
+                _endpoint: IMAGE_EDITS_ENDPOINT,
+                _format: 'multipart/form-data',
+                model,
+                group,
+                prompt: prompt.trim(),
+                ...topParams,
+                ...(Object.keys(extraBody).length > 0
+                  ? { extra_body: extraBody }
+                  : {}),
+                ...filesPreview,
+              },
+              null,
+              2,
+            );
+            onDebug?.({
+              previewRequest: previewForDebug,
+              previewTimestamp: requestTs,
+              request: previewForDebug,
+              timestamp: requestTs,
+            });
+            // 不要设置 Content-Type：浏览器会自动带 boundary
+            res = await API.post(IMAGE_EDITS_ENDPOINT, fd);
+          }
 
-        const body = res?.data;
-        const responseTs = new Date().toISOString();
-        onDebug?.({
-          response: JSON.stringify(body, null, 2),
-          timestamp: responseTs,
-        });
-        if (body?.error || res?.status >= 400) {
-          const msg =
-            body?.error?.message ||
-            body?.message ||
-            t('图片生成失败');
+          const body = res?.data;
+          const responseTs = new Date().toISOString();
+          onDebug?.({
+            response: JSON.stringify(body, null, 2),
+            timestamp: responseTs,
+          });
+          if (body?.error || res?.status >= 400) {
+            const msg =
+              body?.error?.message ||
+              body?.message ||
+              t('图片生成失败');
+            showError(msg);
+            return { error: msg, raw: body };
+          }
+          return normalizeImageResponse(body);
+        } catch (err) {
+          const msg = err?.response?.data?.error?.message || err?.message || t('网络错误');
           showError(msg);
-          return { error: msg, raw: body };
+          return { error: msg };
+        } finally {
+          setLoading(false);
         }
-        return normalizeImageResponse(body);
-      } catch (err) {
-        const msg = err?.response?.data?.error?.message || err?.message || t('网络错误');
-        showError(msg);
-        return { error: msg };
-      } finally {
-        setLoading(false);
+      })();
+
+      // 注册到模块作用域 Map，方便组件 unmount/remount 后按 messageId 续上。
+      // 不在这里清理：交给消费方（Playground 的恢复 effect）调用
+      // clearInFlightImageRequest，避免清得太早导致后来的 attach 拿不到结果。
+      if (messageId) {
+        inFlightImageRequests.set(messageId, requestPromise);
       }
+      return requestPromise;
     },
     [onDebug, t],
   );

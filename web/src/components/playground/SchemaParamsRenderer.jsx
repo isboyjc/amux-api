@@ -147,6 +147,15 @@ const SchemaField = ({
     typeof def?.minimum === 'number' &&
     typeof def?.maximum === 'number';
 
+  // schema 扩展：enumLabels 把原始值映射成更友好的展示文案（如 0 → 「自动」），
+  // 跨工具栏 / 右栏统一一份查表函数
+  const enumLabelMap =
+    def?.enumLabels && typeof def.enumLabels === 'object' ? def.enumLabels : null;
+  const labelOf = (raw) =>
+    enumLabelMap && Object.prototype.hasOwnProperty.call(enumLabelMap, String(raw))
+      ? String(enumLabelMap[String(raw)])
+      : String(raw);
+
   const renderControl = () => {
     if (hasEnum) {
       return (
@@ -155,7 +164,7 @@ const SchemaField = ({
           onChange={onChange}
           size='small'
           style={{ width: '100%' }}
-          optionList={def.enum.map((e) => ({ label: String(e), value: e }))}
+          optionList={def.enum.map((e) => ({ label: labelOf(e), value: e }))}
           disabled={disabled}
           position={compact ? 'topLeft' : 'bottomLeft'}
         />

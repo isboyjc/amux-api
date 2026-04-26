@@ -31,7 +31,15 @@ import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { usePlaygroundState } from '../../hooks/playground/usePlaygroundState';
 import { useMessageActions } from '../../hooks/playground/useMessageActions';
 import { useApiRequest } from '../../hooks/playground/useApiRequest';
-import { useImageGeneration } from '../../hooks/playground/useImageGeneration';
+import {
+  useImageGeneration,
+  getInFlightImageRequest,
+  clearInFlightImageRequest,
+} from '../../hooks/playground/useImageGeneration';
+import {
+  getMessages as dbGetMessages,
+  putMessages as dbPutMessages,
+} from '../../utils/playgroundDb';
 import { useVideoGeneration } from '../../hooks/playground/useVideoGeneration';
 import { useSyncMessageAndCustomBody } from '../../hooks/playground/useSyncMessageAndCustomBody';
 import { useMessageEdit } from '../../hooks/playground/useMessageEdit';
@@ -436,43 +444,18 @@ const Playground = () => {
       });
       setTimeout(() => saveMessagesImmediately(newMessages), 0);
 
-      const result = await generateImage({
+      // 改 fire-and-forget：generateImage 内部把 promise 注册到模块作用域
+      // 的 inFlightImageRequests Map（key=messageId）。结果由下面的"恢复
+      // effect"统一接收并落到这条 loading 消息上——这样用户就算切到别的
+      // 路由再回来，新的 Playground 实例仍能按 messageId 找到同一条请求并
+      // 续上结果，不会再卡在 loading 占位上。
+      generateImage({
+        messageId: loadingMsg.id,
         model: inputs.model,
         group: inputs.group,
         prompt,
         params,
         inputs: imageInputs,
-      });
-
-      setMessage((prev) => {
-        const next = prev.map((m) => {
-          if (m.id !== loadingMsg.id) return m;
-          if (!result || result.error || !result.images?.length) {
-            return {
-              ...m,
-              status: 'error',
-              errorMessage: result?.error || t('图片生成失败'),
-            };
-          }
-          return {
-            ...m,
-            status: 'complete',
-            modality: MODALITY.IMAGE,
-            content: result.images.map((img) => ({
-              type: 'image_url',
-              image_url: { url: img.url },
-              revised_prompt: img.revisedPrompt,
-            })),
-            meta: {
-              model: inputs.model,
-              group: inputs.group,
-              params: params || {},
-              usage: result.usage,
-            },
-          };
-        });
-        setTimeout(() => saveMessagesImmediately(next), 0);
-        return next;
       });
     },
     [
@@ -486,7 +469,6 @@ const Playground = () => {
       saveMessagesImmediately,
       activeSessionId,
       touchSession,
-      t,
     ],
   );
 
@@ -665,6 +647,131 @@ const Playground = () => {
       startVideoPolling(m.taskId, (patch) => applyVideoUpdate(m.id, patch));
     });
   }, [message, startVideoPolling, applyVideoUpdate]);
+
+  // ========== 图片生成结果恢复 ==========
+  //
+  // 图片生成是同步请求，promise 句柄通过 useImageGeneration 的模块作用域
+  // Map 暴露出来。这里扫所有 modality=image && status=loading 的 assistant
+  // 消息：
+  //   - Map 里有：attach .then() 收尾，并直接写 IDB（不依赖 setMessage 在
+  //     unmount 后的更新——React 18 在 unmounted 状态下会跳过 updater，所以
+  //     这里同时用 dbPutMessages 兜底，保证回到页面时 IDB 已经是终态）
+  //   - Map 里没有（硬刷新 / 关 tab 后重开）：把消息标 error，避免一直转
+  //
+  // attachedImageMsgIdsRef 记录"本次 mount 已 attach 过的 messageId"，
+  // 防止 message 数组变更引起 effect 重跑时重复挂监听（Promise 本身允许多
+  // 次 .then，但没必要）。组件 unmount 时 ref gc，下次 mount 重新 attach；
+  // 此时 promise 通常已经 resolve，.then 会立即用缓存的值跑。
+  const attachedImageMsgIdsRef = useRef(new Set());
+  React.useEffect(() => {
+    if (!Array.isArray(message) || message.length === 0) return;
+    if (!activeSessionId) return;
+
+    message.forEach((msg) => {
+      if (!msg || msg.role !== MESSAGE_ROLES.ASSISTANT) return;
+      if (msg.modality !== MODALITY.IMAGE) return;
+      if (msg.status !== 'loading') return;
+      if (attachedImageMsgIdsRef.current.has(msg.id)) return;
+
+      const promise = getInFlightImageRequest(msg.id);
+      const sessionAtAttach = activeSessionId;
+
+      // 没找到 in-flight：当作"请求已断开"处理。常见于刷新或关 tab。
+      if (!promise) {
+        const errorMsg = {
+          ...msg,
+          status: 'error',
+          errorMessage: t('请求已中断，请重新发送'),
+        };
+        setMessage((prev) => {
+          const next = prev.map((m) => (m.id === msg.id ? errorMsg : m));
+          setTimeout(() => saveMessagesImmediately(next), 0);
+          return next;
+        });
+        // 当前会话可能已经切走，setMessage 不会触达；直接落 IDB 兜底
+        if (sessionAtAttach) {
+          dbGetMessages(sessionAtAttach)
+            .then((stored) => {
+              if (!Array.isArray(stored)) return;
+              const next = stored.map((m) => (m.id === msg.id ? errorMsg : m));
+              return dbPutMessages(sessionAtAttach, next);
+            })
+            .catch((e) =>
+              console.error('[playground] mark image error in IDB failed', e),
+            );
+        }
+        return;
+      }
+
+      attachedImageMsgIdsRef.current.add(msg.id);
+
+      // 把"参数 / 模型 / 分组"从 loading 消息的 meta 里取，避免依赖外层
+      // inputs（用户切到别的会话或别的模型时 inputs 已变）
+      const metaModel = msg.meta?.model;
+      const metaGroup = msg.meta?.group;
+      const metaParams = msg.meta?.params || {};
+
+      const buildResolvedMsg = (result) => {
+        if (!result || result.error || !result.images?.length) {
+          return {
+            ...msg,
+            status: 'error',
+            errorMessage: result?.error || t('图片生成失败'),
+          };
+        }
+        return {
+          ...msg,
+          status: 'complete',
+          modality: MODALITY.IMAGE,
+          content: result.images.map((img) => ({
+            type: 'image_url',
+            image_url: { url: img.url },
+            revised_prompt: img.revisedPrompt,
+          })),
+          meta: {
+            model: metaModel,
+            group: metaGroup,
+            params: metaParams,
+            usage: result.usage,
+          },
+        };
+      };
+
+      promise
+        .then(async (result) => {
+          const resolvedMsg = buildResolvedMsg(result);
+
+          // 1) 更新 React state（如果当前正显示这条会话的消息）
+          setMessage((prev) => {
+            // 仅当 prev 里有这条消息时才更新，否则说明用户已切到别的会话
+            if (!prev.some((m) => m.id === msg.id)) return prev;
+            const next = prev.map((m) => (m.id === msg.id ? resolvedMsg : m));
+            setTimeout(() => saveMessagesImmediately(next), 0);
+            return next;
+          });
+
+          // 2) 直接落 IDB 兜底——React 18 在组件 unmount 时会跳过 setState
+          // 的 updater，所以即使 setMessage 没生效，这里也保证持久化。
+          if (sessionAtAttach) {
+            try {
+              const stored = await dbGetMessages(sessionAtAttach);
+              if (Array.isArray(stored)) {
+                const next = stored.map((m) =>
+                  m.id === msg.id ? resolvedMsg : m,
+                );
+                await dbPutMessages(sessionAtAttach, next);
+              }
+            } catch (e) {
+              console.error('[playground] persist image result failed', e);
+            }
+          }
+        })
+        .finally(() => {
+          clearInFlightImageRequest(msg.id);
+          attachedImageMsgIdsRef.current.delete(msg.id);
+        });
+    });
+  }, [message, activeSessionId, setMessage, saveMessagesImmediately, t]);
 
   // 消息操作
   const messageActions = useMessageActions(
