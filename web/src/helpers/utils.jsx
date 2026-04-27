@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { Toast, Pagination } from '@douyinfe/semi-ui';
+import i18next from 'i18next';
 import { toastConstants } from '../constants';
 import React from 'react';
 import { toast } from 'react-toastify';
@@ -121,32 +122,59 @@ if (isMobileScreen) {
 
 export function showError(error) {
   console.error(error);
-  if (error.message) {
-    if (error.name === 'AxiosError') {
-      switch (error.response.status) {
-        case 401:
-          // 清除用户状态
-          localStorage.removeItem('user');
-          // toast.error('错误：未登录或登录已过期，请重新登录！', showErrorOptions);
-          window.location.href = '/login?expired=true';
-          break;
-        case 429:
-          Toast.error('错误：请求次数过多，请稍后再试！');
-          break;
-        case 500:
-          Toast.error('错误：服务器内部错误，请联系管理员！');
-          break;
-        case 405:
-          Toast.info('本站仅作演示之用，无服务端！');
-          break;
-        default:
-          Toast.error('错误：' + error.message);
+  if (error?.name === 'AxiosError') {
+    const response = error.response;
+
+    // 没有 response：超时 / 网络断开 / 主动取消 / CORS 等。
+    // 此前直接读 error.response.status 会抛 TypeError，把真实错误掩盖成
+    // "Cannot read properties of undefined (reading 'status')"。
+    if (!response) {
+      if (error.code === 'ERR_CANCELED' || error.code === 'CanceledError') return;
+      if (error.code === 'ECONNABORTED') {
+        Toast.error(i18next.t('请求超时，请稍后重试'));
+        return;
       }
+      Toast.error(
+        i18next.t('错误：{{detail}}', {
+          detail: error.message || i18next.t('网络异常'),
+        }),
+      );
       return;
     }
-    Toast.error('错误：' + error.message);
+
+    // 有 response：优先展示后端返回的详细错误，避免被通用文案吞掉
+    // （上游透传的 OpenAI 错误、计费失败原因、参数校验提示等）。
+    const data = response.data;
+    const detail =
+      data?.error?.message ||
+      data?.message ||
+      (typeof data?.error === 'string' ? data.error : '') ||
+      response.statusText ||
+      error.message;
+
+    switch (response.status) {
+      case 401:
+        localStorage.removeItem('user');
+        window.location.href = '/login?expired=true';
+        return;
+      case 405:
+        Toast.info(i18next.t('本站仅作演示之用，无服务端！'));
+        return;
+      default:
+        Toast.error(
+          i18next.t('错误（{{status}}）：{{detail}}', {
+            status: response.status,
+            detail,
+          }),
+        );
+    }
+    return;
+  }
+
+  if (error?.message) {
+    Toast.error(i18next.t('错误：{{detail}}', { detail: error.message }));
   } else {
-    Toast.error('错误：' + error);
+    Toast.error(i18next.t('错误：{{detail}}', { detail: String(error) }));
   }
 }
 
