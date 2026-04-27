@@ -228,7 +228,7 @@ const SidebarCarousel = () => {
         Modal.confirm({
           title: t('该内容需要升级分组'),
           content: t(
-            '当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容，完成充值后将自动升级到对应分组。',
+            '当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容。累计充值满 $20 即可自动升级，解锁所有高级分组。',
             { userGroup, targetGroup },
           ),
           okText: t('前往充值'),

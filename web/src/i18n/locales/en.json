@@ -1726,7 +1726,7 @@
     "当前余额": "Current balance",
     "当前值": "Current value",
     "当前值不是合法 JSON，无法格式化": "Current value is not valid JSON, cannot format",
-    "当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容，完成充值后将自动升级到对应分组。": "Your current group \"{{userGroup}}\" cannot access content for group \"{{targetGroup}}\" yet. You will be upgraded automatically after topping up.",
+    "当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容。累计充值满 $20 即可自动升级，解锁所有高级分组。": "Your current group \"{{userGroup}}\" cannot access content for group \"{{targetGroup}}\" yet. Top up a cumulative $20 to auto-upgrade and unlock all premium groups.",
     "当前分组为 auto，会自动选择最优分组，当一个组不可用时自动降级到下一个组（熔断机制）": "The current group is auto, it will automatically select the optimal group, and automatically downgrade to the next group when a group is unavailable (breakage mechanism)",
     "当前剩余": "Currently Remaining",
     "当前参数覆盖不是合法的 JSON": "Current parameter override is not valid JSON",

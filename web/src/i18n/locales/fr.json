@@ -1732,7 +1732,7 @@
     "当前余额": "Solde actuel",
     "当前值": "Valeur actuelle",
     "当前值不是合法 JSON，无法格式化": "La valeur actuelle n'est pas un JSON valide, impossible de formater",
-    "当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容，完成充值后将自动升级到对应分组。": "Votre groupe actuel « {{userGroup}} » ne peut pas accéder au contenu du groupe « {{targetGroup}} » pour le moment. Vous serez promu automatiquement après une recharge.",
+    "当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容。累计充值满 $20 即可自动升级，解锁所有高级分组。": "Votre groupe actuel « {{userGroup}} » ne peut pas accéder au contenu du groupe « {{targetGroup}} » pour le moment. Rechargez 20 $ au total pour être promu automatiquement et débloquer tous les groupes premium.",
     "当前分组为 auto，会自动选择最优分组，当一个组不可用时自动降级到下一个组（熔断机制）": "Le groupe actuel est auto, il sélectionnera automatiquement le groupe optimal et passera automatiquement au groupe suivant lorsqu'un groupe n'est pas disponible (mécanisme de disjoncteur)",
     "当前剩余": "Currently Remaining",
     "当前参数覆盖不是合法的 JSON": "Le remplacement de paramètres actuel n'est pas un JSON valide",

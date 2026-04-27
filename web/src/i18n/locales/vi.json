@@ -1704,7 +1704,7 @@
     "当前余额": "Số dư hiện tại",
     "当前值": "Giá trị hiện tại",
     "当前值不是合法 JSON，无法格式化": "Giá trị hiện tại không phải JSON hợp lệ, không thể định dạng",
-    "当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容，完成充值后将自动升级到对应分组。": "Nhóm hiện tại \"{{userGroup}}\" tạm thời không thể truy cập nội dung của nhóm \"{{targetGroup}}\". Sau khi nạp tiền, bạn sẽ được tự động nâng cấp lên nhóm tương ứng.",
+    "当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容。累计充值满 $20 即可自动升级，解锁所有高级分组。": "Nhóm hiện tại \"{{userGroup}}\" tạm thời không thể truy cập nội dung của nhóm \"{{targetGroup}}\". Nạp tổng cộng $20 để được tự động nâng cấp và mở khoá tất cả các nhóm cao cấp.",
     "当前分组为 auto，会自动选择最优分组，当一个组不可用时自动降级到下一个组（熔断机制）": "Nhóm hiện tại là auto, nó sẽ tự động chọn nhóm tối ưu và tự động hạ cấp xuống nhóm tiếp theo khi một nhóm không khả dụng (cơ chế ngắt mạch)",
     "当前剩余": "Currently Remaining",
     "当前参数覆盖不是合法的 JSON": "Ghi đè tham số hiện tại không phải JSON hợp lệ",
