@@ -300,6 +300,8 @@ func migrateDB() error {
 	EnsureCommonVendors()
 	// 一次性迁移：修复历史模型的 vendor_id
 	MigrateModelVendorIDs()
+	// 一次性迁移：按真值重算 aff_count（修复 QuotaForInviter==0 时未递增的历史数据）
+	BackfillAffCount()
 
 	return nil
 }

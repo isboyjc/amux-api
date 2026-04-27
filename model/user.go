@@ -379,17 +379,91 @@ func inviteUser(inviterId int, fromUserId int) (err error) {
 		return err
 	}
 
-	// 写入注册返现流水
-	if err = CreateAffRebateLog(tx, &AffRebateLog{
-		UserId:     inviterId,
-		FromUserId: fromUserId,
-		Type:       AffRebateTypeRegister,
-		Quota:      common.QuotaForInviter,
-	}); err != nil {
-		return err
+	// 仅在确实有奖励额度时写入注册返现流水，避免产生 quota=0 的脏记录
+	if common.QuotaForInviter > 0 {
+		if err = CreateAffRebateLog(tx, &AffRebateLog{
+			UserId:     inviterId,
+			FromUserId: fromUserId,
+			Type:       AffRebateTypeRegister,
+			Quota:      common.QuotaForInviter,
+		}); err != nil {
+			return err
+		}
 	}
 
 	return tx.Commit().Error
+}
+
+// BackfillAffCount 一次性迁移：按真值（users.inviter_id 关联的活跃用户数）重算 aff_count
+// 通过 Option 表记录是否已执行，避免重复执行
+//
+// 修复历史 bug：QuotaForInviter==0 时 inviteUser 不被调用，aff_count 没递增
+// 真值口径与前端 GetInvitees 一致（GORM 默认过滤软删除）
+func BackfillAffCount() {
+	migrationKey := "aff_count_backfill_v1"
+	var opt Option
+	if err := DB.Where(commonKeyCol+" = ?", migrationKey).First(&opt).Error; err == nil {
+		if opt.Value == "done" {
+			return
+		}
+	}
+
+	common.SysLog("BackfillAffCount: starting recompute...")
+
+	// 取所有需要核对的 inviter id：当前 aff_count>0 的用户 ∪ 被任何活跃用户 inviter_id 引用的用户
+	// 前者覆盖"现值过高需要扣减"，后者覆盖"现值过低需要补齐"
+	seen := make(map[int]struct{})
+	var inviterIds []int
+
+	var idsByCount []int
+	if err := DB.Model(&User{}).Where("aff_count > 0").Pluck("id", &idsByCount).Error; err != nil {
+		common.SysLog(fmt.Sprintf("BackfillAffCount: query by aff_count error: %s", err))
+		return
+	}
+	for _, id := range idsByCount {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			inviterIds = append(inviterIds, id)
+		}
+	}
+
+	var idsByRef []int
+	if err := DB.Model(&User{}).Where("inviter_id != 0").Distinct("inviter_id").Pluck("inviter_id", &idsByRef).Error; err != nil {
+		common.SysLog(fmt.Sprintf("BackfillAffCount: query by inviter_id error: %s", err))
+		return
+	}
+	for _, id := range idsByRef {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			inviterIds = append(inviterIds, id)
+		}
+	}
+
+	fixed := 0
+	for _, inviterId := range inviterIds {
+		var trueCount int64
+		if err := DB.Model(&User{}).Where("inviter_id = ?", inviterId).Count(&trueCount).Error; err != nil {
+			common.SysLog(fmt.Sprintf("BackfillAffCount: count for inviter %d error: %s", inviterId, err))
+			continue
+		}
+		// 只在不一致时才发 UPDATE，避免无谓的写入
+		result := DB.Model(&User{}).
+			Where("id = ? AND aff_count != ?", inviterId, trueCount).
+			Update("aff_count", trueCount)
+		if result.Error != nil {
+			common.SysLog(fmt.Sprintf("BackfillAffCount: update inviter %d error: %s", inviterId, result.Error))
+			continue
+		}
+		if result.RowsAffected > 0 {
+			fixed++
+		}
+	}
+
+	if err := UpdateOption(migrationKey, "done"); err != nil {
+		common.SysLog(fmt.Sprintf("BackfillAffCount: failed to save completion marker: %s", err))
+		return
+	}
+	common.SysLog(fmt.Sprintf("BackfillAffCount: completed, fixed %d inviters out of %d candidates", fixed, len(inviterIds)))
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
@@ -480,8 +554,9 @@ func (user *User) Insert(inviterId int) error {
 		if common.QuotaForInviter > 0 {
 			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId, user.Id)
 		}
+		// AffCount 计数与是否发放奖励无关，邀请关系一旦建立就要递增
+		_ = inviteUser(inviterId, user.Id)
 	}
 	return nil
 }
@@ -541,8 +616,9 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 		}
 		if common.QuotaForInviter > 0 {
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
-			_ = inviteUser(inviterId, user.Id)
 		}
+		// AffCount 计数与是否发放奖励无关，邀请关系一旦建立就要递增
+		_ = inviteUser(inviterId, user.Id)
 	}
 }
 

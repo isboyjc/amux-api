@@ -195,13 +195,24 @@ const Playground = () => {
   // 命中后：新建一个会话 + 切到指定 model/group + 预填 prompt（可选），
   // 立刻把 query 抹掉（replace 不留历史，浏览器后退也不会再次触发）。
   // 静默执行，无 Toast；用户期望"点链接进来即可用"，不打断。
-  // useRef 守门避免 React Strict Mode 双重渲染时跑两遍
+  //
+  // ref 守门两件事：
+  //   1) React Strict Mode 双重渲染时同一份 query 只跑一次
+  //   2) 消费完同步触发的 setSearchParams({}) 不会被当作新一次深链
+  // 关键点：当 URL 没有深链参数时把 ref 复位 —— 否则用户已经在 playground
+  // 页面、再次点击侧边栏/公告里的深链时（同标签 navigate，不走重挂载），
+  // ref 永远是 true，effect 直接 return 掉，新链接形同失效
   const deepLinkConsumedRef = useRef(false);
   useEffect(() => {
-    if (deepLinkConsumedRef.current) return;
     if (!sessionsReady) return; // 等会话子系统就绪，避免与"自动建空会话"竞态
     const link = parsePlaygroundDeepLink(searchParams);
-    if (!link) return;
+    if (!link) {
+      // query 已被清空（包括我们自己 replace 抹掉的）→ 复位标记，
+      // 让下一次再点深链能重新进入消费分支
+      deepLinkConsumedRef.current = false;
+      return;
+    }
+    if (deepLinkConsumedRef.current) return;
     deepLinkConsumedRef.current = true;
     (async () => {
       try {
