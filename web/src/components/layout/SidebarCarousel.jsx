@@ -27,7 +27,10 @@ import React, {
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowRight, X } from 'lucide-react';
+import { Modal } from '@douyinfe/semi-ui';
 import { StatusContext } from '../../context/Status';
+import { UserContext } from '../../context/User';
+import { API } from '../../helpers';
 
 // 自动轮播间隔（毫秒）。鼠标悬浮时暂停。
 const AUTO_PLAY_INTERVAL = 5000;
@@ -54,6 +57,19 @@ const VIDEO_EXT_RE = /\.(mp4|webm|mov|ogv|m4v)(\?|#|$)/i;
 const safeUrl = (raw) => (typeof raw === 'string' ? raw.trim() : '');
 const isExternal = (url) => /^https?:\/\//i.test(url);
 
+// 从内部链接里抓 ?group=... 用于命中分组权限校验。
+// 外链 / 没 query / 没 group 一律返回空串——调用方据此跳过校验
+const parseGroupFromInternalLink = (url) => {
+  if (!url || !url.startsWith('/')) return '';
+  const qIdx = url.indexOf('?');
+  if (qIdx < 0) return '';
+  try {
+    return (new URLSearchParams(url.slice(qIdx + 1)).get('group') || '').trim();
+  } catch {
+    return '';
+  }
+};
+
 // 把后端 item 规范化成前端用的形状，缺字段时给默认值，避免每个渲染分支
 // 都做 nullish 判断。**不要**在这里把 link / bg_url 当成"必填"过滤——
 // 留空有合法语义（卡片不可点、用渐变背景）
@@ -78,11 +94,19 @@ const SidebarCarousel = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [statusState] = useContext(StatusContext);
+  const [userState] = useContext(UserContext);
+  const userGroup = userState?.user?.group || '';
 
   const sc = statusState?.status?.sidebar_carousel;
   const enabled = !!sc?.enabled;
   const version = sc?.version || '';
   const rawItems = Array.isArray(sc?.items) ? sc.items : [];
+
+  // 用户可用分组缓存：null = 还没拉到 / 不需要拉，Set = 已加载。
+  // 拉一次就够：靠 user.group 变化作为重拉触发（登录/续登/分组变更都会触发）。
+  // /api/user/self/groups 返回的 map **不含**用户自身分组（后端为令牌创建场景
+  // 故意剔除），所以下面命中判断要 OR 上 userGroup
+  const [usableGroups, setUsableGroups] = useState(null);
 
   // version 变了视作新内容——清掉本地 dismissed 标记，前端立刻重新展示。
   // 不依赖 React.state 直接读 localStorage 比对，避免 mount 之前先闪一下
@@ -129,6 +153,34 @@ const SidebarCarousel = () => {
     return () => clearInterval(timerRef.current);
   }, [paused, total]);
 
+  // 拉用户可用分组：仅在已登录、轮播实际会显示时执行，避免对游客 401。
+  // user.group 变了重拉一次（切账号 / 升级分组场景）。失败也写一个空 Set
+  // 而非保持 null——避免点击时一直走"未加载"的乐观放行
+  useEffect(() => {
+    if (!enabled || total === 0) return undefined;
+    if (!userGroup) {
+      setUsableGroups(null);
+      return undefined;
+    }
+    let cancelled = false;
+    API.get('/api/user/self/groups')
+      .then((res) => {
+        if (cancelled) return;
+        const data = res?.data?.success ? res.data.data : null;
+        setUsableGroups(
+          data && typeof data === 'object'
+            ? new Set(Object.keys(data))
+            : new Set(),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setUsableGroups(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, total, userGroup]);
+
   // 显隐判断集中在一处，方便阅读：必须 enabled、有 item、未被当前 version
   // dismiss、且组件级未 hidden
   const visible =
@@ -159,9 +211,34 @@ const SidebarCarousel = () => {
     if (isExternal(link)) {
       const target = current.openInNewTab ? '_blank' : '_self';
       window.open(link, target, 'noopener,noreferrer');
-    } else {
-      navigate(link);
+      return;
     }
+    // 内链：检查目标 group 是否对当前用户开放。命中规则：
+    //   1) 未登录 / 链接没带 group：跳过校验，直接 navigate（让登录拦截、
+    //      或目标页自身的"无可用分组"逻辑接管）；
+    //   2) usableGroups 还没加载完：乐观放行，避免拉接口期间点击没反应；
+    //   3) 目标 group == 用户自身分组 或 在可用列表内：放行；
+    //   4) 否则弹升级提示，引导到充值页 —— 不静默失败，把"看得见、用不了"
+    //      转化成升级漏斗
+    const targetGroup = parseGroupFromInternalLink(link);
+    if (targetGroup && userGroup && usableGroups) {
+      const allowed =
+        targetGroup === userGroup || usableGroups.has(targetGroup);
+      if (!allowed) {
+        Modal.confirm({
+          title: t('该内容需要升级分组'),
+          content: t(
+            '当前分组「{{userGroup}}」暂时无法访问分组「{{targetGroup}}」对应的内容，完成充值后将自动升级到对应分组。',
+            { userGroup, targetGroup },
+          ),
+          okText: t('前往充值'),
+          cancelText: t('稍后再说'),
+          onOk: () => navigate('/console/topup'),
+        });
+        return;
+      }
+    }
+    navigate(link);
   };
 
   const handleKeyDown = (e) => {
