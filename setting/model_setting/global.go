@@ -126,6 +126,9 @@ var DefaultCustomModalityPatterns = map[string][]string{
 		"prefix:wanx-",    // wanx-v1（万相 v1 系）
 		"prefix:hunyuan-image",
 		"prefix:qwen-image",
+		// MiniMax：contains 匹配（case-insensitive）同时覆盖上游名 image-01 / image-01-live
+		// 与对外名 MiniMax-Image-01 / MiniMax-Image-01-Live
+		"image-01",
 	},
 
 	// 音频（优先于 multimodal，防止 gpt-4o-audio 被 prefix:gpt-4o 吃掉）

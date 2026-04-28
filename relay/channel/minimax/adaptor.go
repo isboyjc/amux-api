@@ -78,10 +78,18 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
-	if info.RelayMode != constant.RelayModeImagesGenerations {
+	switch info.RelayMode {
+	case constant.RelayModeImagesGenerations:
+		return oaiImage2MiniMaxImageRequest(request), nil
+	case constant.RelayModeImagesEdits:
+		// MiniMax 的 i2i 是"角色一致性"语义，仅 image-01 / image-01-live 支持
+		if !IsImage01Family(request.Model) {
+			return nil, fmt.Errorf("model %q does not support image edit (i2i); only image-01 / image-01-live", request.Model)
+		}
+		return oaiEdit2MiniMaxImageRequest(c, request)
+	default:
 		return nil, fmt.Errorf("unsupported image relay mode: %d", info.RelayMode)
 	}
-	return oaiImage2MiniMaxImageRequest(request), nil
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
@@ -94,6 +102,14 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
 	req.Set("Authorization", "Bearer "+info.ApiKey)
+	// MiniMax /v1/image_generation 上游只接收 JSON。i2i 路径下客户端发来的是
+	// multipart/form-data，channel.SetupApiRequestHeader 默认会把客户端的
+	// Content-Type 抄到上游头，但 ConvertImageRequest 已经把请求体重打包成
+	// JSON 了——若不强制重设，MiniMax 会按 multipart 解析失败并返回认证类报错。
+	if info.RelayMode == constant.RelayModeImagesGenerations ||
+		info.RelayMode == constant.RelayModeImagesEdits {
+		req.Set("Content-Type", "application/json")
+	}
 	return nil
 }
 
@@ -124,7 +140,8 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	if info.RelayMode == constant.RelayModeAudioSpeech {
 		return handleTTSResponse(c, resp, info)
 	}
-	if info.RelayMode == constant.RelayModeImagesGenerations {
+	if info.RelayMode == constant.RelayModeImagesGenerations ||
+		info.RelayMode == constant.RelayModeImagesEdits {
 		return miniMaxImageHandler(c, resp, info)
 	}
 

@@ -21,7 +21,8 @@ func GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		switch info.RelayMode {
 		case constant.RelayModeChatCompletions:
 			return fmt.Sprintf("%s/v1/text/chatcompletion_v2", baseUrl), nil
-		case constant.RelayModeImagesGenerations:
+		case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
+			// MiniMax t2i 与 i2i 共用 /v1/image_generation，区别仅在请求体是否带 subject_reference
 			return fmt.Sprintf("%s/v1/image_generation", baseUrl), nil
 		case constant.RelayModeAudioSpeech:
 			return fmt.Sprintf("%s/v1/t2a_v2", baseUrl), nil
