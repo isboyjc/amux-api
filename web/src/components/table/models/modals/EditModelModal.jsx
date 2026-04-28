@@ -39,7 +39,12 @@ import { IconAlertTriangle, IconLink } from '@douyinfe/semi-icons';
 import { API, showError, showSuccess } from '../../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
-import { getModalityLongLabel } from '../../../../constants/modalityLabels';
+import {
+  getModalityLongLabel,
+  getCapabilityLabel,
+  INPUT_CAPABILITY_FALLBACK,
+  OUTPUT_CAPABILITY_FALLBACK,
+} from '../../../../constants/modalityLabels';
 import { MODALITY } from '../../../../constants/playground.constants';
 
 const { Text, Title } = Typography;
@@ -104,6 +109,9 @@ const EditModelModal = (props) => {
   // Modality 枚举与各 modality 的默认 Schema 模板（后端 /api/models/modality-meta）
   const [modalityList, setModalityList] = useState([]);
   const [paramSchemaTemplates, setParamSchemaTemplates] = useState({});
+  // 输入/输出能力枚举（同样从 modality-meta 拿）
+  const [inputCapabilities, setInputCapabilities] = useState([]);
+  const [outputCapabilities, setOutputCapabilities] = useState([]);
 
   // 获取供应商列表
   const fetchVendors = async () => {
@@ -126,6 +134,8 @@ const EditModelModal = (props) => {
         const data = res.data.data || {};
         setModalityList(data.modalities || []);
         setParamSchemaTemplates(data.templates || {});
+        setInputCapabilities(data.input_capabilities || []);
+        setOutputCapabilities(data.output_capabilities || []);
       }
     } catch (error) {
       // ignore
@@ -168,6 +178,8 @@ const EditModelModal = (props) => {
     vendor_icon: '',
     endpoints: '',
     modality: 'text',
+    input_modalities: [],
+    output_modalities: [],
     param_schema: '',
     pricing_reference: '',
     name_rule: props.editingModel?.model_name ? 0 : undefined, // 通过未配置模型过来的固定为精确匹配
@@ -201,6 +213,13 @@ const EditModelModal = (props) => {
         if (!data.modality) {
           data.modality = 'text';
         }
+        // input_modalities / output_modalities 是逗号分隔字符串，转数组给多选
+        data.input_modalities = data.input_modalities
+          ? data.input_modalities.split(',').filter(Boolean)
+          : [];
+        data.output_modalities = data.output_modalities
+          ? data.output_modalities.split(',').filter(Boolean)
+          : [];
         // param_schema 缺省为空串
         if (!data.param_schema) {
           data.param_schema = '';
@@ -257,6 +276,12 @@ const EditModelModal = (props) => {
         ...values,
         tags: Array.isArray(values.tags) ? values.tags.join(',') : values.tags,
         endpoints: values.endpoints || '',
+        input_modalities: Array.isArray(values.input_modalities)
+          ? values.input_modalities.join(',')
+          : values.input_modalities || '',
+        output_modalities: Array.isArray(values.output_modalities)
+          ? values.output_modalities.join(',')
+          : values.output_modalities || '',
         status: values.status ? 1 : 0,
         sync_official: values.sync_official ? 1 : 0,
       };
@@ -602,6 +627,46 @@ const EditModelModal = (props) => {
                       )}
                       style={{ width: '100%' }}
                       rules={[{ required: true, message: t('请选择模型类别') }]}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Form.Select
+                      field='input_modalities'
+                      label={t('输入模态')}
+                      placeholder={t('留空则由系统按模型类别自动推断')}
+                      multiple
+                      filter
+                      optionList={(inputCapabilities.length
+                        ? inputCapabilities
+                        : INPUT_CAPABILITY_FALLBACK
+                      ).map((c) => ({
+                        label: getCapabilityLabel(t, c),
+                        value: c,
+                      }))}
+                      extraText={t(
+                        '声明该模型支持的输入模态。留空时按 Modality + 倍率字段自动推断。',
+                      )}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Form.Select
+                      field='output_modalities'
+                      label={t('输出模态')}
+                      placeholder={t('留空则由系统按模型类别自动推断')}
+                      multiple
+                      filter
+                      optionList={(outputCapabilities.length
+                        ? outputCapabilities
+                        : OUTPUT_CAPABILITY_FALLBACK
+                      ).map((c) => ({
+                        label: getCapabilityLabel(t, c),
+                        value: c,
+                      }))}
+                      extraText={t(
+                        '声明该模型支持的输出模态。留空时按 Modality + 端点信号自动推断。',
+                      )}
+                      style={{ width: '100%' }}
                     />
                   </Col>
                   <Col span={24}>

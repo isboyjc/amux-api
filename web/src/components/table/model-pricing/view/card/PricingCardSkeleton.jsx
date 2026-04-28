@@ -20,114 +20,68 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Card, Skeleton } from '@douyinfe/semi-ui';
 
-const PricingCardSkeleton = ({
-  skeletonCount = 100,
-  rowSelection = false,
-  showRatio = false,
-}) => {
+const PricingCardSkeleton = ({ skeletonCount = 12 }) => {
   const placeholder = (
     <div className='px-2 pt-2'>
-      <div className='grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-5'>
+      <div className='grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3'>
         {Array.from({ length: skeletonCount }).map((_, index) => (
           <Card
             key={index}
             className='!rounded-2xl !border-0'
-            style={{ boxShadow: '0 1px 4px rgba(0,0,0,0.08), 0 0 0 1px var(--semi-color-border)' }}
-            bodyStyle={{ padding: '24px' }}
+            style={{
+              boxShadow:
+                '0 1px 4px rgba(0,0,0,0.08), 0 0 0 1px var(--semi-color-border)',
+            }}
+            bodyStyle={{ padding: '14px 16px' }}
           >
-            {/* 头部：图标 + 模型名称 + 操作按钮 */}
-            <div className='flex items-start justify-between mb-3'>
-              <div className='flex items-start space-x-3 flex-1 min-w-0'>
-                {/* 模型图标骨架 */}
-                <div className='w-12 h-12 rounded-xl flex items-center justify-center relative'>
-                  <Skeleton.Avatar
-                    size='large'
-                    style={{ width: 48, height: 48, borderRadius: 16 }}
-                  />
-                </div>
-                {/* 模型名称和价格区域 */}
-                <div className='flex-1 min-w-0'>
-                  {/* 模型名称骨架 */}
-                  <Skeleton.Title
-                    style={{
-                      width: `${120 + (index % 3) * 30}px`,
-                      height: 20,
-                      marginBottom: 8,
-                    }}
-                  />
-                  {/* 价格信息骨架 */}
-                  <Skeleton.Title
-                    style={{
-                      width: `${160 + (index % 4) * 20}px`,
-                      height: 20,
-                      marginBottom: 0,
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className='flex items-center space-x-2 ml-3'>
-                {/* 复制按钮骨架 */}
-                <Skeleton.Button
-                  size='small'
-                  style={{ width: 16, height: 16, borderRadius: 4 }}
-                />
-                {/* 勾选框骨架 */}
-                {rowSelection && (
-                  <Skeleton.Button
-                    size='small'
-                    style={{ width: 16, height: 16, borderRadius: 2 }}
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* 模型描述骨架 */}
-            <div className='mb-4'>
-              <Skeleton.Paragraph
-                rows={2}
-                style={{ marginBottom: 0 }}
-                title={false}
+            {/* 头部：图标 + 名称 + 副标题 */}
+            <div className='flex items-start gap-3 mb-3'>
+              <Skeleton.Avatar
+                style={{ width: 44, height: 44, borderRadius: 12 }}
               />
+              <div className='flex-1 min-w-0'>
+                <Skeleton.Title
+                  style={{
+                    width: `${110 + (index % 3) * 30}px`,
+                    height: 16,
+                    marginBottom: 6,
+                  }}
+                />
+                <Skeleton.Title
+                  style={{ width: 120, height: 12, marginBottom: 0 }}
+                />
+              </div>
             </div>
 
-            {/* 标签区域骨架 */}
-            <div className='flex flex-wrap gap-2'>
-              {Array.from({ length: 2 + (index % 3) }).map((_, tagIndex) => (
+            {/* 描述 */}
+            <Skeleton.Paragraph rows={2} style={{ marginBottom: 12 }} title={false} />
+
+            {/* 双列：能力 + 价格 */}
+            <div className='grid grid-cols-2 gap-x-3 gap-y-2 mb-3'>
+              <Skeleton.Title style={{ width: '90%', height: 12, marginBottom: 0 }} />
+              <Skeleton.Title style={{ width: '90%', height: 12, marginBottom: 0 }} />
+              <Skeleton.Title style={{ width: '70%', height: 12, marginBottom: 0 }} />
+              <Skeleton.Title style={{ width: '70%', height: 12, marginBottom: 0 }} />
+              <Skeleton.Title style={{ width: '60%', height: 12, marginBottom: 0 }} />
+              <Skeleton.Title style={{ width: '60%', height: 12, marginBottom: 0 }} />
+            </div>
+
+            {/* 自定义标签 */}
+            <div className='flex flex-wrap gap-1 mb-3'>
+              {Array.from({ length: 2 + (index % 2) }).map((_, tagIndex) => (
                 <Skeleton.Button
                   key={tagIndex}
                   size='small'
-                  style={{
-                    width: 64,
-                    height: 18,
-                    borderRadius: 10,
-                  }}
+                  style={{ width: 48, height: 16, borderRadius: 10 }}
                 />
               ))}
             </div>
 
-            {/* 倍率信息骨架（可选） */}
-            {showRatio && (
-              <div className='mt-4 pt-3 border-t border-gray-100'>
-                <div className='flex items-center space-x-1 mb-2'>
-                  <Skeleton.Title
-                    style={{ width: 60, height: 12, marginBottom: 0 }}
-                  />
-                  <Skeleton.Button
-                    size='small'
-                    style={{ width: 14, height: 14, borderRadius: 7 }}
-                  />
-                </div>
-                <div className='grid grid-cols-3 gap-2'>
-                  {Array.from({ length: 3 }).map((_, ratioIndex) => (
-                    <Skeleton.Title
-                      key={ratioIndex}
-                      style={{ width: '100%', height: 12, marginBottom: 0 }}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* 底部双列 */}
+            <div className='grid grid-cols-2 gap-3 pt-2'>
+              <Skeleton.Title style={{ width: '70%', height: 16, marginBottom: 0 }} />
+              <Skeleton.Title style={{ width: '95%', height: 16, marginBottom: 0 }} />
+            </div>
           </Card>
         ))}
       </div>

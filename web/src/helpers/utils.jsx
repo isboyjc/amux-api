@@ -940,6 +940,50 @@ export const formatPriceInfo = (priceData, t, quotaDisplayType = 'USD') => {
   );
 };
 
+// 模型能力（输入/输出类型）展示用的官方顺序常量。
+// 卡片视图按此顺序渲染图标，亮/灰由后端 ResolveCapabilities 返回的
+// model.input_modalities / output_modalities 字段决定。
+export const MODEL_INPUT_CAPABILITIES = [
+  'text',
+  'image',
+  'audio',
+  'video',
+  'file',
+];
+export const MODEL_OUTPUT_CAPABILITIES = [
+  'text',
+  'image',
+  'audio',
+  'video',
+  'embedding',
+  'rerank',
+];
+
+// 把分组倍率格式化为折扣文本。
+// 折扣（ratio < 1）：中文/日文用"几折/几割"，其它语言用"-X%"，
+// 通过同时传入 tenths 与 percent 两个变量，让各语言的翻译值各取所需。
+// 加价（ratio > 1）：所有语言统一 "+X%"。
+export const formatGroupDiscount = (ratio, t) => {
+  if (ratio === undefined || ratio === null || !Number.isFinite(Number(ratio))) {
+    return null;
+  }
+  const r = Number(ratio);
+  if (r === 1) return null;
+  if (r > 1) {
+    return { type: 'surcharge', text: `+${Math.round((r - 1) * 100)}%` };
+  }
+  // r < 1：折扣
+  const tenths = r * 10;
+  const tenthsText = Number.isInteger(tenths)
+    ? `${tenths}`
+    : tenths.toFixed(1);
+  const percent = Math.round((1 - r) * 100);
+  const text = t
+    ? t('{{tenths}}折', { tenths: tenthsText, percent })
+    : `${tenthsText}折`;
+  return { type: 'discount', text };
+};
+
 // -------------------------------
 // CardPro 分页配置函数
 // 用于创建 CardPro 的 paginationArea 配置

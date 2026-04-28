@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -9,51 +8,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string]string) []model.Pricing {
-	if len(pricing) == 0 {
-		return pricing
-	}
-	if len(usableGroup) == 0 {
-		return []model.Pricing{}
-	}
-
-	filtered := make([]model.Pricing, 0, len(pricing))
-	for _, item := range pricing {
-		if common.StringsContains(item.EnableGroup, "all") {
-			filtered = append(filtered, item)
-			continue
-		}
-		for _, group := range item.EnableGroup {
-			if _, ok := usableGroup[group]; ok {
-				filtered = append(filtered, item)
-				break
-			}
-		}
-	}
-	return filtered
-}
-
 func GetPricing(c *gin.Context) {
 	pricing := model.GetPricing()
 	userId, exists := c.Get("id")
-	usableGroup := map[string]string{}
 	defaultGroupRatio := map[string]float64{}
 	vipGroupRatio := map[string]float64{}
-	
+
 	// 获取所有分组的基础倍率（展示用）
 	allGroupRatio := ratio_setting.GetGroupRatioCopy()
 	for s, f := range allGroupRatio {
 		defaultGroupRatio[s] = f
 		vipGroupRatio[s] = f
 	}
-	
+
+	// 模型广场对所有用户透明：usableGroup 始终包含全部分组，
+	// 让前端 ModelHealthTimeline 等 UI 能按完整分组渲染。
+	// 单个分组对当前用户是否真正可访问由 API 调用时的 auth 中间件决定。
+	usableGroup := map[string]string{}
+	for g := range allGroupRatio {
+		usableGroup[g] = g
+	}
+
 	var group string
 	currentUserGroupRatio := map[string]float64{}
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
 		if err == nil {
 			group = user.Group
-			usableGroup = service.GetUserUsableGroups(group)
 			// 获取当前用户分组的实际倍率
 			for g := range allGroupRatio {
 				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
@@ -63,13 +44,6 @@ func GetPricing(c *gin.Context) {
 					currentUserGroupRatio[g] = allGroupRatio[g]
 				}
 			}
-		}
-	}
-	// 未登录 / 已登录但用户缓存失败 的 fallback：展示所有分组，
-	// 避免下方 filterPricingByUsableGroups 因 usableGroup 为空返回空列表
-	if len(usableGroup) == 0 {
-		for g := range allGroupRatio {
-			usableGroup[g] = g
 		}
 	}
 
@@ -95,8 +69,8 @@ func GetPricing(c *gin.Context) {
 		groupRatio = defaultGroupRatio
 	}
 
-	// 按上游行为过滤 pricing：仅保留用户可用分组启用的模型
-	pricing = filterPricingByUsableGroups(pricing, usableGroup)
+	// 注意：模型广场不再按"用户可用分组"过滤 pricing 列表，
+	// 所有模型对所有用户/未登录访客可见，避免不同登录态下展示不一致。
 
 	c.JSON(200, gin.H{
 		"success":             true,

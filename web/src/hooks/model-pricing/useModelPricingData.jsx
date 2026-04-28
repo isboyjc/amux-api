@@ -52,6 +52,9 @@ export const useModelPricingData = () => {
   const [vipGroupRatio, setVipGroupRatio] = useState({});
   const [userGroup, setUserGroup] = useState('');
   const [usableGroup, setUsableGroup] = useState({});
+  // 当前用户**实际**可用的分组集合（与 usableGroup 不同：后者是模型广场展示用的全部分组，
+  // 这里是真正能调用 API 的那些）。null 表示未登录或尚未加载完成；Set 表示已加载。
+  const [actuallyUsableGroups, setActuallyUsableGroups] = useState(null);
   const [endpointMap, setEndpointMap] = useState({});
   const [autoGroups, setAutoGroups] = useState([]);
 
@@ -328,6 +331,33 @@ export const useModelPricingData = () => {
     refresh().then();
   }, []);
 
+  // 拉当前用户实际可用的分组：仅在已登录时执行，否则保持 null（未登录由
+  // playground / chat 跳转的登录拦截兜底）。userGroup 变化时重拉一次（切账号
+  // 或升级分组场景）。失败也写空 Set，避免点击时一直走"未加载"乐观路径。
+  useEffect(() => {
+    if (!userGroup) {
+      setActuallyUsableGroups(null);
+      return undefined;
+    }
+    let cancelled = false;
+    API.get('/api/user/self/groups')
+      .then((res) => {
+        if (cancelled) return;
+        const data = res?.data?.success ? res.data.data : null;
+        setActuallyUsableGroups(
+          data && typeof data === 'object'
+            ? new Set(Object.keys(data))
+            : new Set(),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setActuallyUsableGroups(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userGroup]);
+
   // 当筛选条件变化时重置到第一页
   useEffect(() => {
     setCurrentPage(1);
@@ -384,6 +414,7 @@ export const useModelPricingData = () => {
     vipGroupRatio,
     userGroup,
     usableGroup,
+    actuallyUsableGroups,
     endpointMap,
     autoGroups,
 

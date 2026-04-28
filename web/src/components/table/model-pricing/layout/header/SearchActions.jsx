@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { memo, useCallback } from 'react';
-import { Input, Button, Switch, Divider, Pagination, Dropdown } from '@douyinfe/semi-ui';
+import { Input, Button, Divider, Pagination, Dropdown } from '@douyinfe/semi-ui';
 import { IconSearch, IconFilter } from '@douyinfe/semi-icons';
 
 const SearchActions = memo(
@@ -29,12 +29,8 @@ const SearchActions = memo(
     isMobile = false,
     searchValue = '',
     setShowFilterModal,
-    showRatio,
-    setShowRatio,
     viewMode,
     setViewMode,
-    tokenUnit,
-    setTokenUnit,
     timeRange,
     setTimeRange,
     total = 0,
@@ -51,10 +47,6 @@ const SearchActions = memo(
     const handleViewModeToggle = useCallback(() => {
       setViewMode?.(viewMode === 'table' ? 'card' : 'table');
     }, [viewMode, setViewMode]);
-
-    const handleTokenUnitToggle = useCallback(() => {
-      setTokenUnit?.(tokenUnit === 'K' ? 'M' : 'K');
-    }, [tokenUnit, setTokenUnit]);
 
     const handleTimeRangeToggle = useCallback(() => {
       setTimeRange?.(timeRange === '24h' ? '7d' : '24h');
@@ -83,22 +75,6 @@ const SearchActions = memo(
               className='flex items-center gap-1 px-2 py-1 rounded-xl flex-shrink-0'
               style={{ background: 'var(--semi-color-fill-0)' }}
             >
-              {/* 显示倍率开关 */}
-              <div className='flex items-center gap-1.5 px-1'>
-                <span
-                  className='text-xs font-medium'
-                  style={{ color: 'var(--semi-color-text-2)' }}
-                >
-                  {t('倍率')}
-                </span>
-                <Switch size='small' checked={showRatio} onChange={setShowRatio} />
-              </div>
-
-              <div
-                className='self-stretch w-px mx-1'
-                style={{ background: 'var(--semi-color-border)' }}
-              />
-
               {/* 视图模式切换按钮 */}
               <Button
                 theme={viewMode === 'table' ? 'solid' : 'borderless'}
@@ -107,21 +83,6 @@ const SearchActions = memo(
                 onClick={handleViewModeToggle}
               >
                 {t('表格视图')}
-              </Button>
-
-              <div
-                className='self-stretch w-px mx-1'
-                style={{ background: 'var(--semi-color-border)' }}
-              />
-
-              {/* Token单位切换按钮 */}
-              <Button
-                theme={tokenUnit === 'K' ? 'solid' : 'borderless'}
-                type={tokenUnit === 'K' ? 'primary' : 'tertiary'}
-                size='small'
-                onClick={handleTokenUnitToggle}
-              >
-                {tokenUnit}
               </Button>
 
               <div

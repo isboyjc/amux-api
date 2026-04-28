@@ -30,6 +30,11 @@ type Model struct {
 	VendorID     int            `json:"vendor_id,omitempty" gorm:"index"`
 	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`
 	Modality     string         `json:"modality" gorm:"type:varchar(32);default:'text';index"`
+	// InputModalities / OutputModalities 是更细粒度的能力声明，逗号分隔。
+	// 留空表示由系统按 Modality + 倍率字段自动推断（见 ResolveCapabilities）。
+	// 取值见 constant.ValidInputCapabilities / ValidOutputCapabilities。
+	InputModalities  string         `json:"input_modalities" gorm:"type:varchar(128);default:''"`
+	OutputModalities string         `json:"output_modalities" gorm:"type:varchar(128);default:''"`
 	ParamSchema  string         `json:"param_schema,omitempty" gorm:"type:text"`
 	// PricingReference 存储"价格参考"卡片的 JSON，例如：
 	// {"note":"按 token 计费","items":[{"scenario":"720P 1s","official":"1 CNY","ours":"0.7 CNY","discount":"7折"}]}
@@ -84,7 +89,7 @@ func (mi *Model) Update() error {
 	mi.UpdatedTime = common.GetTimestamp()
 	// 使用 Select 强制更新所有字段，包括零值
 	return DB.Model(&Model{}).Where("id = ?", mi.Id).
-		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "modality", "param_schema", "pricing_reference", "status", "sync_official", "name_rule", "updated_time").
+		Select("model_name", "description", "icon", "tags", "vendor_id", "endpoints", "modality", "input_modalities", "output_modalities", "param_schema", "pricing_reference", "status", "sync_official", "name_rule", "updated_time").
 		Updates(mi).Error
 }
 

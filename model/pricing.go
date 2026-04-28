@@ -33,7 +33,11 @@ type Pricing struct {
 	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"`
 	EnableGroup            []string                `json:"enable_groups"`
 	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
-	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	// InputModalities / OutputModalities 是 ResolveCapabilities 解析后的最终值，
+	// 数组形式（已按官方顺序去重）。前端直接用作能力图标点亮依据，无需再做推断。
+	InputModalities  []string `json:"input_modalities"`
+	OutputModalities []string `json:"output_modalities"`
+	PricingVersion   string   `json:"pricing_version,omitempty"`
 }
 
 type PricingVendor struct {
@@ -293,6 +297,25 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 			pricing.PricingReference = meta.PricingReference
+			// meta 自身的 Endpoints 字段在元数据未配置时可能为空，回退到运行时端点。
+			if strings.TrimSpace(meta.Endpoints) == "" {
+				if eps := modelSupportEndpointTypes[model]; len(eps) > 0 {
+					if b, err := json.Marshal(eps); err == nil {
+						meta.Endpoints = string(b)
+					}
+				}
+			}
+			pricing.InputModalities, pricing.OutputModalities = ResolveCapabilities(meta)
+		} else {
+			// 没有元数据时，用模型名 + 运行时端点构造一个 stub 让推断逻辑跑起来，
+			// 这样仅依据倍率/端点也能给出合理默认值。
+			stub := &Model{ModelName: model}
+			if eps := modelSupportEndpointTypes[model]; len(eps) > 0 {
+				if b, err := json.Marshal(eps); err == nil {
+					stub.Endpoints = string(b)
+				}
+			}
+			pricing.InputModalities, pricing.OutputModalities = ResolveCapabilities(stub)
 		}
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice {

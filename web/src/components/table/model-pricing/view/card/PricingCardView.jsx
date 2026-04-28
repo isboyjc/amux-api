@@ -17,45 +17,74 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Card,
   Tag,
   Tooltip,
   Empty,
-  Button,
   Avatar,
+  Modal,
 } from '@douyinfe/semi-ui';
-import { IconHelpCircle, IconCreditCard } from '@douyinfe/semi-icons';
-import { Copy } from 'lucide-react';
+import { IconCreditCard } from '@douyinfe/semi-icons';
+import {
+  Type,
+  Image as ImageIcon,
+  AudioLines,
+  Video,
+  FileText,
+  Boxes,
+  ArrowUpDown,
+} from 'lucide-react';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import {
-  stringToColor,
   calculateModelPrice,
-  formatPriceInfo,
   getLobeHubIcon,
-  getModelPriceItems,
   parsePricingReference,
+  formatGroupDiscount,
+  buildPlaygroundDeepLink,
+  MODEL_INPUT_CAPABILITIES,
+  MODEL_OUTPUT_CAPABILITIES,
 } from '../../../../../helpers';
 import PricingCardSkeleton from './PricingCardSkeleton';
 import ModelHealthTimeline from '../common/ModelHealthTimeline';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 import { renderLimitedItems } from '../../../../common/ui/RenderUtils';
-import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
 const CARD_STYLES = {
   container:
-    'w-12 h-12 rounded-xl flex items-center justify-center relative',
+    'w-11 h-11 rounded-xl flex items-center justify-center relative flex-shrink-0',
   containerStyle: {
     backgroundColor: 'var(--semi-color-fill-0)',
     border: '1px solid var(--semi-color-border)',
   },
-  icon: 'w-8 h-8 flex items-center justify-center',
-  default: '',
+  icon: 'w-7 h-7 flex items-center justify-center',
 };
+
+const CAPABILITY_ICONS = {
+  text: Type,
+  image: ImageIcon,
+  audio: AudioLines,
+  video: Video,
+  file: FileText,
+  embedding: Boxes,
+  rerank: ArrowUpDown,
+};
+
+// 工厂函数：让 i18next-cli 提取器能识别所有能力标签 key
+const buildCapabilityLabels = (t) => ({
+  text: t('文本'),
+  image: t('图片'),
+  audio: t('音频'),
+  video: t('视频'),
+  file: t('文件'),
+  embedding: t('向量嵌入'),
+  rerank: t('重排'),
+});
 
 const isDark = () =>
   document.body.getAttribute('theme-mode') === 'dark';
@@ -64,7 +93,7 @@ const getCardShadow = (type) => {
   if (isDark()) {
     switch (type) {
       case 'hover':
-        return '0 8px 25px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.1)';
+        return '0 4px 14px rgba(0,0,0,0.28), 0 0 0 1px rgba(255,255,255,0.08)';
       case 'selected':
         return '0 1px 4px rgba(0,0,0,0.2), 0 0 0 2px rgba(59,130,246,0.45)';
       default:
@@ -73,12 +102,38 @@ const getCardShadow = (type) => {
   }
   switch (type) {
     case 'hover':
-      return '0 8px 25px rgba(0,0,0,0.1), 0 4px 10px rgba(0,0,0,0.05)';
+      return '0 4px 12px rgba(0,0,0,0.06), 0 1px 4px rgba(0,0,0,0.04)';
     case 'selected':
       return '0 1px 4px rgba(0,0,0,0.08), 0 0 0 2px rgba(59,130,246,0.35)';
     default:
       return '0 1px 4px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04)';
   }
+};
+
+// 单个能力图标，亮/灰区分
+const CapabilityIcon = ({ type, active, label, t }) => {
+  const Icon = CAPABILITY_ICONS[type];
+  if (!Icon) return null;
+  return (
+    <Tooltip content={label} position='top' showArrow={false}>
+      <span
+        className='inline-flex items-center justify-center rounded'
+        style={{
+          width: 18,
+          height: 18,
+          backgroundColor: active
+            ? 'var(--semi-color-primary-light-default)'
+            : 'transparent',
+          color: active
+            ? 'var(--semi-color-primary)'
+            : 'var(--semi-color-text-3)',
+          opacity: active ? 1 : 0.45,
+        }}
+      >
+        <Icon size={11} strokeWidth={2.2} />
+      </span>
+    </Tooltip>
+  );
 };
 
 const PricingCardView = ({
@@ -108,68 +163,94 @@ const PricingCardView = ({
   openModelDetail,
   healthData,
   usableGroup = {},
+  actuallyUsableGroups = null,
 }) => {
+  const navigate = useNavigate();
   const showSkeleton = useMinimumLoadingTime(loading);
   const startIndex = (currentPage - 1) * pageSize;
   const paginatedModels = filteredModels.slice(
     startIndex,
     startIndex + pageSize,
   );
-  const getModelKey = (model) => model.key ?? model.model_name ?? model.id;
-  const isMobile = useIsMobile();
+  const capabilityLabels = buildCapabilityLabels(t);
 
-  const handleCheckboxChange = (model, checked) => {
-    if (!setSelectedRowKeys) return;
-    const modelKey = getModelKey(model);
-    const newKeys = checked
-      ? Array.from(new Set([...selectedRowKeys, modelKey]))
-      : selectedRowKeys.filter((key) => key !== modelKey);
-    setSelectedRowKeys(newKeys);
-    rowSelection?.onChange?.(newKeys, null);
+  // 每张卡片的"激活分组"覆盖。key 为模型唯一标识，value 为分组名。
+  // 未设置 / 'all' 时按 calculateModelPrice 的逻辑选最低倍率分组。
+  // 全局 selectedGroup 不为 'all' 时优先级更高，per-card 覆盖被忽略。
+  const [cardGroupOverride, setCardGroupOverride] = useState({});
+
+  const toggleCardGroup = (modelKey, group) => {
+    setCardGroupOverride((prev) => {
+      const next = { ...prev };
+      if (prev[modelKey] === group) {
+        delete next[modelKey];
+      } else {
+        next[modelKey] = group;
+      }
+      return next;
+    });
   };
 
-  // 获取模型图标
-  const getModelIcon = (model) => {
+  // 当前用户能否真正使用该分组：
+  //   - 未登录（userGroup 空）：跳过校验，让 playground 自身的登录拦截兜底
+  //   - 已登录但 actuallyUsableGroups 还没拉到：乐观放行
+  //   - 已加载：以 Set 为准
+  const isGroupUsable = (group) => {
+    if (!group) return true;
+    if (!userGroup) return true;
+    if (!actuallyUsableGroups) return true;
+    return actuallyUsableGroups.has(group);
+  };
+
+  // 不可用渠道分组弹升级提示，引导到充值页
+  const showUpgradeModal = (targetGroup) => {
+    Modal.confirm({
+      title: t('该渠道分组需要升级用户分组'),
+      content: t(
+        '当前用户分组「{{userGroup}}」暂时无法访问「{{targetGroup}}」渠道分组对应的内容。累计充值满 $20 即可自动升级「VIP」用户分组，解锁所有高级稳定渠道分组以及更优惠的「special/**」渠道分组折扣。',
+        { userGroup, targetGroup },
+      ),
+      okText: t('前往充值'),
+      cancelText: t('稍后再说'),
+      onOk: () => navigate('/console/topup'),
+    });
+  };
+
+  // 模型图标（自定义图标 > 厂商图标 > 名称缩写）
+  const renderModelAvatar = (model) => {
     if (!model || !model.model_name) {
       return (
         <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
-          <Avatar size='large'>?</Avatar>
+          <Avatar size='small'>?</Avatar>
         </div>
       );
     }
-    // 1) 优先使用模型自定义图标
     if (model.icon) {
       return (
         <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
-          <div className={CARD_STYLES.icon}>
-            {getLobeHubIcon(model.icon, 32)}
-          </div>
+          <div className={CARD_STYLES.icon}>{getLobeHubIcon(model.icon, 28)}</div>
         </div>
       );
     }
-    // 2) 退化为供应商图标
     if (model.vendor_icon) {
       return (
         <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
           <div className={CARD_STYLES.icon}>
-            {getLobeHubIcon(model.vendor_icon, 32)}
+            {getLobeHubIcon(model.vendor_icon, 28)}
           </div>
         </div>
       );
     }
-
-    // 如果没有供应商图标，使用模型名称生成头像
-
     const avatarText = model.model_name.slice(0, 2).toUpperCase();
     return (
       <div className={CARD_STYLES.container}>
         <Avatar
-          size='large'
+          size='small'
           style={{
-            width: 48,
-            height: 48,
-            borderRadius: 16,
-            fontSize: 16,
+            width: 44,
+            height: 44,
+            borderRadius: 12,
+            fontSize: 14,
             fontWeight: 'bold',
           }}
         >
@@ -179,67 +260,69 @@ const PricingCardView = ({
     );
   };
 
-  // 获取模型描述
-  const getModelDescription = (record) => {
-    return record.description || '';
+  // 计费类型标签：按次/按量统一为低饱和的主题色 chip，仅文本区分
+  const renderBillingTag = (model) => {
+    if (model.quota_type === 1) {
+      return <PlainChip accent>{t('按次计费')}</PlainChip>;
+    }
+    if (model.quota_type === 0) {
+      return <PlainChip accent>{t('按量计费')}</PlainChip>;
+    }
+    return <PlainChip>-</PlainChip>;
   };
 
-  // 渲染标签
-  const renderTags = (record) => {
-    // 计费类型标签（左边）
-    let billingTag = (
-      <Tag key='billing' shape='circle' color='white' size='small'>
-        -
-      </Tag>
-    );
-    if (record.quota_type === 1) {
-      billingTag = (
-        <Tag key='billing' shape='circle' color='teal' size='small'>
-          {t('按次计费')}
-        </Tag>
-      );
-    } else if (record.quota_type === 0) {
-      billingTag = (
-        <Tag key='billing' shape='circle' color='violet' size='small'>
-          {t('按量计费')}
-        </Tag>
-      );
-    }
-
-    // 自定义标签（右边）
-    const customTags = [];
-    if (record.tags) {
-      const tagArr = record.tags.split(',').filter(Boolean);
-      tagArr.forEach((tg, idx) => {
-        customTags.push(
-          <Tag
-            key={`custom-${idx}`}
-            shape='circle'
-            color={stringToColor(tg)}
-            size='small'
-          >
-            {tg}
-          </Tag>,
-        );
-      });
-    }
-
+  // 标签行（计费类型 + 自定义标签合并到一行；自定义标签统一中性色）
+  const renderTagsRow = (model) => {
+    const tagArr = model.tags
+      ? model.tags.split(',').filter(Boolean)
+      : [];
+    const customTags = tagArr.map((tg, idx) => (
+      <PlainChip key={`custom-${idx}`}>{tg}</PlainChip>
+    ));
     return (
-      <div className='flex items-center justify-between'>
-        <div className='flex items-center gap-2'>{billingTag}</div>
-        <div className='flex items-center gap-1'>
-          {customTags.length > 0 &&
-            renderLimitedItems({
-              items: customTags.map((tag, idx) => ({
-                key: `custom-${idx}`,
-                element: tag,
-              })),
-              renderItem: (item, idx) => item.element,
-              maxDisplay: 3,
-            })}
-        </div>
+      <div className='flex items-center flex-wrap gap-1'>
+        {renderBillingTag(model)}
+        {tagArr.length > 0 &&
+          renderLimitedItems({
+          items: customTags.map((tag, idx) => ({
+            key: `custom-${idx}`,
+            element: tag,
+          })),
+          renderItem: (item) => item.element,
+          maxDisplay: 4,
+        })}
       </div>
     );
+  };
+
+  // 取按量计费下的展示用值（价格字符串或倍率数值），缺失返回 null
+  const getPerTokenDisplay = (priceData, key) => {
+    if (!priceData || !priceData.isPerToken) return null;
+    if (priceData.isTokensDisplay) {
+      const map = {
+        input: priceData.inputRatio,
+        completion: priceData.completionRatio,
+        cache: priceData.cacheRatio,
+        createCache: priceData.createCacheRatio,
+      };
+      return map[key] !== undefined && map[key] !== null
+        ? `${map[key]}x`
+        : null;
+    }
+    const map = {
+      input: priceData.inputPrice,
+      completion: priceData.completionPrice,
+      cache: priceData.cachePrice,
+      createCache: priceData.createCachePrice,
+    };
+    return map[key] || null;
+  };
+
+  // 价格单位后缀
+  const getPriceSuffix = (priceData) => {
+    if (!priceData) return '';
+    if (priceData.isTokensDisplay) return '';
+    return ` / 1${priceData.unitLabel || 'M'} Tokens`;
   };
 
   // 显示骨架屏
@@ -270,12 +353,17 @@ const PricingCardView = ({
     <div className='px-2 pt-2'>
       <div className='grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3'>
         {paginatedModels.map((model, index) => {
-          const modelKey = getModelKey(model);
-          const isSelected = selectedRowKeys.includes(modelKey);
+          const modelKey = model.key || model.model_name || index;
+          // 全局选了具体分组时优先；否则用 per-card 覆盖；最后回退到 'all'（自动选最低）
+          const effectiveGroup =
+            selectedGroup !== 'all'
+              ? selectedGroup
+              : cardGroupOverride[modelKey] || 'all';
+          const allowCardSwitch = selectedGroup === 'all';
 
           const priceData = calculateModelPrice({
             record: model,
-            selectedGroup,
+            selectedGroup: effectiveGroup,
             groupRatio,
             tokenUnit,
             displayPrice,
@@ -283,7 +371,7 @@ const PricingCardView = ({
             quotaDisplayType: siteDisplayType,
           });
 
-          // 计算原价（倍率为1）用于对比
+          // 原价（倍率 1）用于折扣对比展示
           const originalPriceData = calculateModelPrice({
             record: model,
             selectedGroup: 'all',
@@ -293,426 +381,640 @@ const PricingCardView = ({
             currency,
             quotaDisplayType: siteDisplayType,
           });
+          const showPriceCompare =
+            priceData.usedGroupRatio !== undefined &&
+            priceData.usedGroupRatio !== 1;
 
-          // 获取该模型的折扣信息
-          const modelEnableGroups = Array.isArray(model.enable_groups) ? model.enable_groups : [];
+          const isPerCall = model.quota_type === 1;
+          const priceSuffix = getPriceSuffix(priceData);
+
+          // 输入/输出能力集合（后端 ResolveCapabilities 已解析，前端只渲染）
+          const inputCaps = new Set(model.input_modalities || []);
+          const outputCaps = new Set(model.output_modalities || []);
+
+          // 分组折扣（紧凑格式）
+          const modelEnableGroups = Array.isArray(model.enable_groups)
+            ? model.enable_groups
+            : [];
           const availableGroups = modelEnableGroups.filter(
-            (g) => g !== '' && g !== 'default' && g !== 'vip' && g !== 'auto'
+            (g) => g !== '' && g !== 'default' && g !== 'vip' && g !== 'auto',
           );
-          
-          // 当选中特定分组时，只显示该分组的折扣；选择全部分组时，显示所有分组的折扣
-          const groupsToShow = selectedGroup === 'all' 
-            ? availableGroups 
-            : availableGroups.filter((g) => g === selectedGroup);
-          
-          const groupDiscounts = groupsToShow.map((group) => {
-            const defaultRatio = defaultGroupRatio[group] || 1;
-            const vipRatio = vipGroupRatio[group] || defaultRatio;
-            const currentRatio = groupRatio[group] || defaultRatio;
-            
-            const defaultChangePercent = ((defaultRatio - 1) * 100);
-            const vipChangePercent = ((vipRatio - 1) * 100);
-            
-            // 判断是否为 VIP 独享折扣（VIP 倍率比 default 更优惠）
-            const isVipExclusive = vipRatio < defaultRatio;
-            
-            // 显示逻辑：
-            // 1. 未登录用户（userGroup = ''）或 default 用户：显示 default 折扣 + VIP 独享折扣（如果有）
-            // 2. VIP 用户：只在 VIP 独享折扣的分组上显示 VIP 标识
-            let showCurrentDiscount = false;
-            let showVipDiscount = false;
-            let currentChangePercent = 0;
-            
-            if (userGroup === 'vip') {
-              // VIP 用户：只在 VIP 独享折扣上显示 VIP 标识，其他显示普通折扣
-              if (isVipExclusive && currentRatio !== 1) {
-                showVipDiscount = true;
-              } else if (currentRatio !== 1) {
-                showCurrentDiscount = true;
-              }
-              currentChangePercent = ((currentRatio - 1) * 100);
-            } else {
-              // 未登录或 default 用户：显示当前折扣 + VIP 独享折扣
-              showCurrentDiscount = currentRatio !== 1;
-              showVipDiscount = isVipExclusive;
-              currentChangePercent = ((currentRatio - 1) * 100);
-            }
-            
-            return {
-              group,
-              currentRatio,
-              defaultRatio,
-              vipRatio,
-              currentChangePercent,
-              defaultChangePercent,
-              vipChangePercent,
-              showCurrentDiscount,
-              showVipDiscount,
-            };
-          }).filter((item) => item.showCurrentDiscount || item.showVipDiscount);
+          const groupsToShow =
+            selectedGroup === 'all'
+              ? availableGroups
+              : availableGroups.filter((g) => g === selectedGroup);
+          const groupDiscounts = groupsToShow
+            .map((group) => {
+              const defaultRatio = defaultGroupRatio[group] || 1;
+              const vipRatio = vipGroupRatio[group] || defaultRatio;
+              const currentRatio = groupRatio[group] || defaultRatio;
+              const isVipExclusive = vipRatio < defaultRatio;
+              const isVipUser = userGroup === 'vip';
+              const useRatio = isVipUser
+                ? currentRatio
+                : currentRatio !== 1
+                  ? currentRatio
+                  : isVipExclusive
+                    ? vipRatio
+                    : currentRatio;
+              const discount = formatGroupDiscount(useRatio, t);
+              if (!discount) return null;
+              return {
+                group,
+                ratio: useRatio,
+                discount,
+              };
+            })
+            .filter(Boolean)
+            // 按倍率从小到大（折扣力度从大到小）排序：低价分组在前
+            .sort((a, b) => a.ratio - b.ratio);
 
-          // 计算当前分组的价格变化
-          const shouldShowComparison = priceData.usedGroupRatio !== 1 && priceData.usedGroupRatio !== undefined;
-          let priceChangePercent = 0;
-          if (shouldShowComparison && priceData.usedGroupRatio) {
-            priceChangePercent = ((priceData.usedGroupRatio - 1) * 100);
-          }
+          const referenceData = parsePricingReference(model.pricing_reference);
+          const referenceItems = referenceData?.items || [];
 
           return (
             <Card
-              key={modelKey || index}
-              className={`!rounded-2xl !border-0 cursor-pointer ${CARD_STYLES.default}`}
+              key={model.key || model.model_name || index}
+              className={`!rounded-2xl !border-0 cursor-pointer group`}
               style={{
                 boxShadow: getCardShadow('base'),
-                transition: 'box-shadow 0.3s ease, transform 0.3s ease',
+                transition: 'box-shadow 0.2s ease',
               }}
               bodyStyle={{ height: '100%', padding: '14px 16px' }}
               onClick={() => openModelDetail && openModelDetail(model)}
               onMouseEnter={(e) => {
                 e.currentTarget.style.boxShadow = getCardShadow('hover');
-                e.currentTarget.style.transform = 'translateY(-2px)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.boxShadow = getCardShadow('base');
-                e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
               <div className='flex flex-col h-full'>
-                {/* 头部：图标 + 模型名称 + 操作按钮 */}
-                <div className='flex items-start justify-between mb-2'>
-                  <div className='flex items-start space-x-3 flex-1 min-w-0'>
-                    {getModelIcon(model)}
+                {/* 头部：图标 + 名称(可点击复制) + 副标题 + 右上预留 */}
+                <div className='flex items-start justify-between gap-2 mb-2'>
+                  <div className='flex items-start gap-3 flex-1 min-w-0'>
+                    {renderModelAvatar(model)}
                     <div className='flex-1 min-w-0'>
                       <h3
                         className='text-sm font-semibold truncate'
                         style={{ color: 'var(--semi-color-text-0)' }}
                       >
-                        {model.model_name}
-                      </h3>
-                      <div className='flex flex-col gap-1 text-xs mt-1'>
-                        {/* 价格信息（当前价格 + 官方价格对比） */}
-                        <div className='flex flex-col gap-0.5'>
-                          {(() => {
-                            const currentPriceItems = getModelPriceItems(priceData, t, siteDisplayType);
-                            const originalPriceItems = shouldShowComparison 
-                              ? getModelPriceItems(originalPriceData, t, siteDisplayType)
-                              : [];
-                            
-                            return currentPriceItems.map((item, index) => {
-                              const originalItem = originalPriceItems[index];
-                              return (
-                                <span key={item.key} style={{ color: 'var(--semi-color-text-1)' }}>
-                                  {item.label} {item.value}
-                                  {shouldShowComparison && originalItem && (
-                                    <span className='text-gray-400 line-through text-[10px] ml-1'>
-                                      ({originalItem.value})
-                                    </span>
-                                  )}
-                                  {item.suffix}
-                                </span>
-                              );
-                            });
-                          })()}
-                        </div>
-                        {/* 所有分组的折扣标签 */}
-                        {groupDiscounts.length > 0 && (
-                          <div className='flex flex-wrap gap-1 mt-1.5'>
-                            {groupDiscounts.map((item) => (
-                              <React.Fragment key={item.group}>
-                                {/* 当前用户分组的折扣 */}
-                                {item.showCurrentDiscount && (
-                                  <Tag
-                                    size='small'
-                                    color={item.currentChangePercent > 0 ? 'red' : 'green'}
-                                    style={{ 
-                                      fontSize: '10px', 
-                                      padding: '2px 6px',
-                                      fontWeight: '600',
-                                    }}
-                                  >
-                                    {item.group}: {item.currentChangePercent > 0 ? '↑' : '↓'}{' '}
-                                    {Math.abs(item.currentChangePercent).toFixed(0)}%
-                                  </Tag>
-                                )}
-                                {/* VIP 折扣对比（仅 default 用户且 VIP 有更优惠时显示） */}
-                                {item.showVipDiscount && (
-                                  <Tag
-                                    size='small'
-                                    color={item.vipChangePercent > 0 ? 'orange' : 'cyan'}
-                                    style={{
-                                      fontSize: '10px',
-                                      padding: '0',
-                                      fontWeight: '600',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      overflow: 'hidden',
-                                    }}
-                                  >
-                                    <span
-                                      style={{
-                                        backgroundColor: 'var(--semi-color-fill-1)',
-                                        color: 'var(--semi-color-text-0)',
-                                        padding: '2px 4px',
-                                        fontSize: '8px',
-                                        fontWeight: '700',
-                                        letterSpacing: '0.3px',
-                                      }}
-                                    >
-                                      VIP
-                                    </span>
-                                    <span
-                                      style={{
-                                        padding: '2px 6px',
-                                        fontSize: '10px',
-                                        fontWeight: '600',
-                                      }}
-                                    >
-                                      {item.group}: {item.vipChangePercent > 0 ? '↑' : '↓'}{' '}
-                                      {Math.abs(item.vipChangePercent).toFixed(0)}%
-                                    </span>
-                                  </Tag>
-                                )}
-                              </React.Fragment>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className='ml-2 flex-shrink-0'>
-                    <Tooltip content={t('复制')} position='top' showArrow={false}>
-                      <Button
-                        size='small'
-                        theme='borderless'
-                        type='tertiary'
-                        icon={<Copy size={13} />}
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: '50%',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: 'var(--semi-color-text-2)',
-                        }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          copyText(model.model_name);
-                        }}
-                      />
-                    </Tooltip>
-                  </div>
-                </div>
-
-                {/* 模型描述 - 占据剩余空间 */}
-                <div className='flex-1 mb-2'>
-                  <p
-                    className='text-xs line-clamp-1 leading-relaxed'
-                    style={{ color: 'var(--semi-color-text-2)' }}
-                  >
-                    {getModelDescription(model)}
-                  </p>
-                </div>
-
-                {/* 价格参考（紧凑版：首条高亮，多条以"+N"悬浮展开） */}
-                {(() => {
-                  const ref = parsePricingReference(model.pricing_reference);
-                  if (!ref || ref.items.length === 0) return null;
-                  const first = ref.items[0];
-                  const rest = ref.items.slice(1);
-                  const restTooltip = (
-                    <div className='text-xs' style={{ minWidth: 180 }}>
-                      {ref.note && (
-                        <div className='mb-1 text-gray-400'>{ref.note}</div>
-                      )}
-                      {ref.items.map((it, i) => (
-                        <div
-                          key={i}
-                          className='flex items-center gap-1 py-0.5'
+                        <Tooltip
+                          content={t('点击复制模型名称')}
+                          position='top'
+                          showArrow={false}
                         >
-                          <span className='font-medium'>
-                            {it.scenario || '-'}
-                          </span>
-                          {it.official && (
-                            <span className='line-through text-gray-400'>
-                              {it.official}
-                            </span>
-                          )}
-                          {it.ours && (
-                            <span className='font-semibold text-green-500'>
-                              {it.ours}
-                            </span>
-                          )}
-                          {it.discount && (
-                            <span className='text-green-500'>
-                              ({it.discount})
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                  return (
-                    <Tooltip content={restTooltip} position='top'>
-                      <div
-                        className='mb-2 rounded-lg px-2 py-1.5 flex items-center gap-1.5 text-xs'
-                        style={{
-                          backgroundColor:
-                            'var(--semi-color-success-light-default)',
-                          border:
-                            '1px solid var(--semi-color-success-light-active)',
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <IconCreditCard
-                          size={12}
-                          style={{ color: 'var(--semi-color-success)' }}
-                        />
-                        <div className='flex-1 min-w-0 flex items-center gap-1.5 flex-wrap'>
-                          {first.scenario && (
-                            <span
-                              className='font-medium'
-                              style={{
-                                color: 'var(--semi-color-text-0)',
-                              }}
-                            >
-                              {first.scenario}
-                            </span>
-                          )}
-                          {first.official && (
-                            <span
-                              className='line-through'
-                              style={{
-                                color: 'var(--semi-color-text-2)',
-                              }}
-                            >
-                              {first.official}
-                            </span>
-                          )}
-                          {first.ours && (
-                            <span
-                              className='font-semibold'
-                              style={{
-                                color: 'var(--semi-color-success)',
-                              }}
-                            >
-                              {first.ours}
-                            </span>
-                          )}
-                          {first.discount && (
-                            <Tag
-                              size='small'
-                              color='green'
-                              shape='circle'
-                              style={{
-                                fontSize: '10px',
-                                padding: '0 6px',
-                                height: 16,
-                                lineHeight: '16px',
-                              }}
-                            >
-                              {first.discount}
-                            </Tag>
-                          )}
-                        </div>
-                        {rest.length > 0 && (
-                          <Tag
-                            size='small'
-                            color='white'
-                            shape='circle'
-                            style={{
-                              fontSize: '10px',
-                              padding: '0 6px',
-                              height: 16,
-                              lineHeight: '16px',
-                              flexShrink: 0,
+                          <span
+                            className='cursor-pointer hover:underline'
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyText(model.model_name);
                             }}
                           >
-                            +{rest.length}
-                          </Tag>
-                        )}
-                      </div>
+                            {model.model_name}
+                          </span>
+                        </Tooltip>
+                      </h3>
+                      {model.vendor_name && (
+                        <div
+                          className='text-xs mt-0.5 truncate'
+                          style={{ color: 'var(--semi-color-text-2)' }}
+                        >
+                          {model.vendor_name}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {/* 右上：悬停展示 Chat 跳转按钮（在 Playground 中聊天） */}
+                  <div
+                    className='flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150'
+                    style={{ minWidth: 58, height: 28 }}
+                  >
+                    <Tooltip
+                      content={t('在 Playground 中聊天')}
+                      position='left'
+                      showArrow={false}
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const targetGroup = priceData.usedGroup;
+                          if (
+                            targetGroup &&
+                            !isGroupUsable(targetGroup)
+                          ) {
+                            showUpgradeModal(targetGroup);
+                            return;
+                          }
+                          const url = buildPlaygroundDeepLink({
+                            model: model.model_name,
+                            group: targetGroup,
+                          });
+                          if (url) {
+                            window.open(url, '_blank', 'noopener,noreferrer');
+                          }
+                        }}
+                        style={{
+                          height: 28,
+                          padding: '0 14px',
+                          border: 'none',
+                          borderRadius: 8,
+                          background: 'var(--semi-color-text-0)',
+                          color: 'var(--semi-color-bg-0)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          letterSpacing: 0.2,
+                          transition: 'opacity 0.15s ease',
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.opacity = '0.85';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.opacity = '1';
+                        }}
+                      >
+                        {t('聊天')}
+                      </button>
                     </Tooltip>
-                  );
-                })()}
+                  </div>
+                </div>
 
-                {/* 健康状态时间线 */}
-                {healthData && (
-                  <div className='mb-2'>
-                    <ModelHealthTimeline
-                      healthData={healthData}
-                      modelName={model.model_name}
-                      groups={
-                        model.enable_groups
-                          ? model.enable_groups.filter(
-                              (g) => usableGroup[g],
-                            )
-                          : undefined
-                      }
-                      compact={true}
-                      t={t}
-                    />
+                {/* 描述（无内容时不留空间） */}
+                {model.description && (
+                  <p
+                    className='text-xs line-clamp-2 leading-relaxed mb-3'
+                    style={{ color: 'var(--semi-color-text-2)' }}
+                  >
+                    {model.description}
+                  </p>
+                )}
+
+                {/* 双列：能力 + 价格 */}
+                <div
+                  className='grid grid-cols-2 gap-x-3 gap-y-1 text-xs mb-3'
+                  style={{ color: 'var(--semi-color-text-1)' }}
+                >
+                  {/* 输入列 */}
+                  <div className='min-w-0 space-y-1'>
+                    <div className='flex items-center gap-1.5'>
+                      <span style={{ color: 'var(--semi-color-text-2)' }}>
+                        {t('输入类型')}:
+                      </span>
+                      <div className='flex items-center gap-0.5'>
+                        {MODEL_INPUT_CAPABILITIES.map((cap) => (
+                          <CapabilityIcon
+                            key={cap}
+                            type={cap}
+                            active={inputCaps.has(cap)}
+                            label={capabilityLabels[cap]}
+                            t={t}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    {!isPerCall && (
+                      <>
+                        <PriceLine
+                          label={t('输入')}
+                          value={getPerTokenDisplay(priceData, 'input')}
+                          originalValue={
+                            showPriceCompare
+                              ? getPerTokenDisplay(originalPriceData, 'input')
+                              : null
+                          }
+                          suffix={priceSuffix}
+                        />
+                        <PriceLine
+                          label={t('缓存读取')}
+                          value={getPerTokenDisplay(priceData, 'cache')}
+                          originalValue={
+                            showPriceCompare
+                              ? getPerTokenDisplay(originalPriceData, 'cache')
+                              : null
+                          }
+                          suffix={priceSuffix}
+                        />
+                      </>
+                    )}
+                  </div>
+                  {/* 输出列 */}
+                  <div className='min-w-0 space-y-1'>
+                    <div className='flex items-center gap-1.5'>
+                      <span style={{ color: 'var(--semi-color-text-2)' }}>
+                        {t('输出类型')}:
+                      </span>
+                      <div className='flex items-center gap-0.5'>
+                        {MODEL_OUTPUT_CAPABILITIES.map((cap) => (
+                          <CapabilityIcon
+                            key={cap}
+                            type={cap}
+                            active={outputCaps.has(cap)}
+                            label={capabilityLabels[cap]}
+                            t={t}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    {!isPerCall && (
+                      <>
+                        <PriceLine
+                          label={t('输出')}
+                          value={getPerTokenDisplay(priceData, 'completion')}
+                          originalValue={
+                            showPriceCompare
+                              ? getPerTokenDisplay(
+                                  originalPriceData,
+                                  'completion',
+                                )
+                              : null
+                          }
+                          suffix={priceSuffix}
+                        />
+                        <PriceLine
+                          label={t('缓存写入')}
+                          value={getPerTokenDisplay(priceData, 'createCache')}
+                          originalValue={
+                            showPriceCompare
+                              ? getPerTokenDisplay(
+                                  originalPriceData,
+                                  'createCache',
+                                )
+                              : null
+                          }
+                          suffix={priceSuffix}
+                        />
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* 按次计费单价行 */}
+                {isPerCall && (
+                  <div
+                    className='text-xs mb-3 px-2 py-1.5 rounded-md'
+                    style={{
+                      backgroundColor: 'var(--semi-color-fill-0)',
+                      color: 'var(--semi-color-text-1)',
+                    }}
+                  >
+                    <span style={{ color: 'var(--semi-color-text-2)' }}>
+                      {t('模型价格')}:
+                    </span>{' '}
+                    <span className='font-semibold'>
+                      {priceData.price ?? '-'}
+                    </span>
+                    {showPriceCompare &&
+                      originalPriceData.price &&
+                      originalPriceData.price !== priceData.price && (
+                        <span
+                          className='line-through ml-1'
+                          style={{
+                            color: 'var(--semi-color-text-3)',
+                            fontSize: 10,
+                          }}
+                        >
+                          {originalPriceData.price}
+                        </span>
+                      )}
+                    <span style={{ color: 'var(--semi-color-text-2)' }}>
+                      {' '}
+                      / {t('次')}
+                    </span>
                   </div>
                 )}
 
-                {/* 底部区域 */}
-                <div className='mt-auto'>
-                  {/* 标签区域 */}
-                  {renderTags(model)}
+                {/* 价格参考 */}
+                {referenceItems.length > 0 && (
+                  <PricingReferenceBlock data={referenceData} t={t} />
+                )}
 
-                  {/* 倍率信息（可选） */}
-                  {showRatio && (
-                    <div className='pt-3'>
-                      <div className='flex items-center space-x-1 mb-2'>
-                        <span
-                          className='text-xs font-medium'
-                          style={{ color: 'var(--semi-color-text-1)' }}
-                        >
-                          {t('倍率信息')}
-                        </span>
-                        <Tooltip
-                          content={t('倍率是为了方便换算不同价格的模型')}
-                        >
-                          <IconHelpCircle
-                            className='text-blue-500 cursor-pointer'
-                            size='small'
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setModalImageUrl('/ratio.png');
-                              setIsModalOpenurl(true);
-                            }}
-                          />
-                        </Tooltip>
-                      </div>
-                      <div
-                        className='grid grid-cols-3 gap-2 text-xs'
-                        style={{ color: 'var(--semi-color-text-2)' }}
-                      >
-                        <div>
-                          {t('模型')}:{' '}
-                          {model.quota_type === 0 ? model.model_ratio : t('无')}
+                {/* 底部：左半（标签行顶 + 分组贴底）+ 右半（健康时间线贴底） */}
+                <div className='mt-auto pt-2'>
+                  <div className='grid grid-cols-2 gap-3'>
+                    {/* 左：标签顶部，分组底部对齐 */}
+                    <div className='min-w-0 flex flex-col'>
+                      {/* 标签行（计费类型 + 自定义标签） */}
+                      <div>{renderTagsRow(model)}</div>
+
+                      {/* 可用分组 + 折扣 chip（贴底对齐；最多 4 个，自动换行） */}
+                      {availableGroups.length > 0 && (
+                        <div className='mt-auto pt-2'>
+                          <div
+                            className='text-[11px] mb-1'
+                            style={{ color: 'var(--semi-color-text-2)' }}
+                          >
+                            {t('可用于 {{n}} 个分组', {
+                              n: availableGroups.length,
+                            })}
+                          </div>
+                          {groupDiscounts.length > 0 && (
+                            <div className='flex flex-wrap gap-1'>
+                              {renderLimitedItems({
+                                items: groupDiscounts.map((d) => {
+                                  const isActive =
+                                    d.group === priceData.usedGroup;
+                                  const unavailable = !isGroupUsable(d.group);
+                                  return {
+                                    key: d.group,
+                                    element: (
+                                      <GroupChip
+                                        group={d.group}
+                                        discountText={d.discount.text}
+                                        isActive={isActive}
+                                        clickable={allowCardSwitch}
+                                        unavailable={unavailable}
+                                        unavailableTooltip={t(
+                                          '当前用户分组无法访问此渠道分组，点击查看升级方式',
+                                        )}
+                                        onClick={() => {
+                                          if (unavailable) {
+                                            showUpgradeModal(d.group);
+                                            return;
+                                          }
+                                          toggleCardGroup(modelKey, d.group);
+                                        }}
+                                      />
+                                    ),
+                                  };
+                                }),
+                                renderItem: (item) => item.element,
+                                maxDisplay: 4,
+                              })}
+                            </div>
+                          )}
                         </div>
-                        <div>
-                          {t('补全')}:{' '}
-                          {model.quota_type === 0
-                            ? parseFloat(model.completion_ratio.toFixed(3))
-                            : t('无')}
-                        </div>
-                        <div>
-                          {t('分组')}: {priceData?.usedGroupRatio ?? '-'}
-                        </div>
-                      </div>
+                      )}
                     </div>
-                  )}
+                    {/* 右：健康时间线（多状态时纵向堆叠；左列更高时整体贴底对齐） */}
+                    <div className='min-w-0 flex flex-col justify-end'>
+                      {healthData && (
+                        <ModelHealthTimeline
+                          healthData={healthData}
+                          modelName={model.model_name}
+                          groups={
+                            model.enable_groups
+                              ? model.enable_groups.filter(
+                                  (g) => usableGroup[g],
+                                )
+                              : undefined
+                          }
+                          compact={true}
+                          t={t}
+                        />
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
             </Card>
           );
         })}
       </div>
-
     </div>
+  );
+};
+
+// 通用质朴 chip：与 GroupChip 视觉一致，但更中性。
+// - accent: 低饱和主题色底（用于计费类型这种"次重要但需要识别"的信息）
+// - 默认：填充中性灰底（用于自定义标签等装饰信息）
+const PlainChip = ({ children, accent }) => (
+  <span
+    style={{
+      display: 'inline-flex',
+      alignItems: 'center',
+      height: 20,
+      padding: '0 8px',
+      borderRadius: 4,
+      fontSize: 11,
+      fontWeight: 500,
+      lineHeight: 1,
+      backgroundColor: accent
+        ? 'var(--semi-color-primary-light-default)'
+        : 'var(--semi-color-fill-1)',
+      color: accent
+        ? 'var(--semi-color-primary)'
+        : 'var(--semi-color-text-2)',
+      whiteSpace: 'nowrap',
+    }}
+  >
+    {children}
+  </span>
+);
+
+// 分组折扣 chip：可点击切换价格显示。统一用系统主题色（primary）。
+// - 激活态（priceData.usedGroup === group）：实色主题色背景 + 白字
+// - 未激活：浅主题色底 + 主题色字
+// - 不可用（用户分组无访问权限）：灰系样式 + tooltip 解释，点击弹升级 Modal
+const GroupChip = ({
+  group,
+  discountText,
+  isActive,
+  clickable,
+  unavailable,
+  unavailableTooltip,
+  onClick,
+}) => {
+  const [hover, setHover] = React.useState(false);
+
+  let bg, fg;
+  if (unavailable) {
+    bg =
+      clickable && hover
+        ? 'var(--semi-color-fill-2)'
+        : isActive
+          ? 'var(--semi-color-fill-2)'
+          : 'var(--semi-color-fill-1)';
+    fg = 'var(--semi-color-text-2)';
+  } else if (isActive) {
+    bg = 'var(--semi-color-primary)';
+    fg = '#fff';
+  } else {
+    bg =
+      clickable && hover
+        ? 'var(--semi-color-primary-light-hover)'
+        : 'var(--semi-color-primary-light-default)';
+    fg = 'var(--semi-color-primary)';
+  }
+
+  const chip = (
+    <span
+      role={clickable ? 'button' : undefined}
+      onMouseEnter={() => clickable && setHover(true)}
+      onMouseLeave={() => clickable && setHover(false)}
+      onClick={(e) => {
+        if (!clickable) return;
+        e.stopPropagation();
+        onClick?.();
+      }}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        height: 20,
+        padding: '0 8px',
+        borderRadius: 4,
+        fontSize: 11,
+        fontWeight: 600,
+        lineHeight: 1,
+        backgroundColor: bg,
+        color: fg,
+        cursor: clickable ? 'pointer' : 'default',
+        userSelect: 'none',
+        transition: 'background-color 0.15s ease, color 0.15s ease',
+        whiteSpace: 'nowrap',
+        textDecoration: unavailable ? 'line-through' : 'none',
+      }}
+    >
+      <span>{group}</span>
+      <span style={{ opacity: 0.85 }}>{discountText}</span>
+    </span>
+  );
+
+  if (unavailable && unavailableTooltip) {
+    return (
+      <Tooltip content={unavailableTooltip} position='top' showArrow={false}>
+        {chip}
+      </Tooltip>
+    );
+  }
+  return chip;
+};
+
+// 单行价格（缺失值显示 -；当 originalValue 与 value 不同时附带划线原价）
+const PriceLine = ({ label, value, originalValue, suffix }) => {
+  const empty = value === null || value === undefined || value === '';
+  const showOriginal =
+    !empty &&
+    originalValue !== null &&
+    originalValue !== undefined &&
+    originalValue !== '' &&
+    originalValue !== value;
+  return (
+    <div className='flex items-baseline gap-1 truncate'>
+      <span style={{ color: 'var(--semi-color-text-2)' }}>{label}:</span>
+      {empty ? (
+        <span style={{ color: 'var(--semi-color-text-3)' }}>-</span>
+      ) : (
+        <>
+          <span className='font-medium' style={{ color: 'var(--semi-color-text-0)' }}>
+            {value}
+          </span>
+          {showOriginal && (
+            <span
+              className='line-through'
+              style={{ color: 'var(--semi-color-text-3)', fontSize: 10 }}
+            >
+              {originalValue}
+            </span>
+          )}
+          {suffix && (
+            <span
+              className='truncate'
+              style={{ color: 'var(--semi-color-text-2)', fontSize: 10 }}
+            >
+              {suffix}
+            </span>
+          )}
+        </>
+      )}
+    </div>
+  );
+};
+
+// 价格参考紧凑展示（首条 + 悬浮全部）
+const PricingReferenceBlock = ({ data, t }) => {
+  if (!data || !data.items || data.items.length === 0) return null;
+  const first = data.items[0];
+  const rest = data.items.slice(1);
+  const tooltip = (
+    <div className='text-xs' style={{ minWidth: 180 }}>
+      {data.note && <div className='mb-1 text-gray-400'>{data.note}</div>}
+      {data.items.map((it, i) => (
+        <div key={i} className='flex items-center gap-1 py-0.5'>
+          <span className='font-medium'>{it.scenario || '-'}</span>
+          {it.official && (
+            <span className='line-through text-gray-400'>{it.official}</span>
+          )}
+          {it.ours && <span className='font-semibold text-green-500'>{it.ours}</span>}
+          {it.discount && <span className='text-green-500'>({it.discount})</span>}
+        </div>
+      ))}
+    </div>
+  );
+  return (
+    <Tooltip content={tooltip} position='top'>
+      <div
+        className='mb-3 rounded-lg px-2 py-1.5 flex items-center gap-1.5 text-xs'
+        style={{
+          backgroundColor: 'var(--semi-color-success-light-default)',
+          border: '1px solid var(--semi-color-success-light-active)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <IconCreditCard
+          size={12}
+          style={{ color: 'var(--semi-color-success)' }}
+        />
+        <div className='flex-1 min-w-0 flex items-center gap-1.5 flex-wrap'>
+          {first.scenario && (
+            <span
+              className='font-medium'
+              style={{ color: 'var(--semi-color-text-0)' }}
+            >
+              {first.scenario}
+            </span>
+          )}
+          {first.official && (
+            <span
+              className='line-through'
+              style={{ color: 'var(--semi-color-text-2)' }}
+            >
+              {first.official}
+            </span>
+          )}
+          {first.ours && (
+            <span
+              className='font-semibold'
+              style={{ color: 'var(--semi-color-success)' }}
+            >
+              {first.ours}
+            </span>
+          )}
+          {first.discount && (
+            <Tag
+              size='small'
+              color='green'
+              shape='circle'
+              style={{
+                fontSize: '10px',
+                padding: '0 6px',
+                height: 16,
+                lineHeight: '16px',
+              }}
+            >
+              {first.discount}
+            </Tag>
+          )}
+        </div>
+        {rest.length > 0 && (
+          <Tag
+            size='small'
+            color='white'
+            shape='circle'
+            style={{
+              fontSize: '10px',
+              padding: '0 6px',
+              height: 16,
+              lineHeight: '16px',
+              flexShrink: 0,
+            }}
+          >
+            +{rest.length}
+          </Tag>
+        )}
+      </div>
+    </Tooltip>
   );
 };
 

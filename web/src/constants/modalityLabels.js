@@ -63,6 +63,46 @@ export const getModalityShortLabel = (t, modality) => {
   }
 };
 
+// 输入/输出能力（input_modalities / output_modalities）的显示文案。
+// 与 Modality 枚举有重叠，但 capability 是更细粒度的多值集合，且多了 file。
+export const getCapabilityLabel = (t, cap) => {
+  switch (cap) {
+    case 'text':
+      return t('文本');
+    case 'image':
+      return t('图片');
+    case 'audio':
+      return t('音频');
+    case 'video':
+      return t('视频');
+    case 'file':
+      return t('文件');
+    case 'embedding':
+      return t('向量嵌入');
+    case 'rerank':
+      return t('重排');
+    default:
+      return cap || '';
+  }
+};
+
+// 后备顺序：当后端没返回枚举时使用
+export const INPUT_CAPABILITY_FALLBACK = [
+  'text',
+  'image',
+  'audio',
+  'video',
+  'file',
+];
+export const OUTPUT_CAPABILITY_FALLBACK = [
+  'text',
+  'image',
+  'audio',
+  'video',
+  'embedding',
+  'rerank',
+];
+
 // Tag 色调
 export const MODALITY_COLOR = {
   text: 'blue',

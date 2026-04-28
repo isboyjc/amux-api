@@ -26,6 +26,8 @@ func GetModelModalityMeta(c *gin.Context) {
 		"modalities":                constant.ModalityList,
 		"templates":                 templates,
 		"modality_patterns_default": model_setting.DefaultCustomModalityPatterns,
+		"input_capabilities":        constant.InputCapabilityList,
+		"output_capabilities":       constant.OutputCapabilityList,
 	})
 }
 
@@ -93,7 +95,8 @@ func GetModelMeta(c *gin.Context) {
 	common.ApiSuccess(c, &m)
 }
 
-// validateModalityAndSchema 校验 modality 合法性与 param_schema 的 JSON 合法性。
+// validateModalityAndSchema 校验 modality 合法性与 param_schema 的 JSON 合法性，
+// 并对 input_modalities / output_modalities 做白名单过滤、规范化（去重、排序、剔除非法值）。
 func validateModalityAndSchema(m *model.Model) (string, bool) {
 	if !constant.IsValidModality(m.Modality) {
 		return "不支持的模型类别 (modality)", false
@@ -104,7 +107,49 @@ func validateModalityAndSchema(m *model.Model) (string, bool) {
 			return "参数 Schema 不是合法 JSON: " + err.Error(), false
 		}
 	}
+	if normalized, ok := normalizeCapabilityCSV(m.InputModalities, constant.ValidInputCapabilities, constant.InputCapabilityList); ok {
+		m.InputModalities = normalized
+	} else {
+		return "包含非法的输入模态值", false
+	}
+	if normalized, ok := normalizeCapabilityCSV(m.OutputModalities, constant.ValidOutputCapabilities, constant.OutputCapabilityList); ok {
+		m.OutputModalities = normalized
+	} else {
+		return "包含非法的输出模态值", false
+	}
 	return "", true
+}
+
+// normalizeCapabilityCSV 将逗号分隔的能力字符串去重、按官方顺序排序、剔除非法值。
+// 全部值都非法时返回 false（避免静默吞掉用户的脏输入）；空值视为合法（后端会走推断回退）。
+func normalizeCapabilityCSV(raw string, allowed map[string]bool, order []string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", true
+	}
+	set := make(map[string]bool)
+	hasInvalid := false
+	for _, part := range strings.Split(raw, ",") {
+		v := strings.TrimSpace(part)
+		if v == "" {
+			continue
+		}
+		if allowed[v] {
+			set[v] = true
+		} else {
+			hasInvalid = true
+		}
+	}
+	if len(set) == 0 && hasInvalid {
+		return "", false
+	}
+	parts := make([]string, 0, len(set))
+	for _, k := range order {
+		if set[k] {
+			parts = append(parts, k)
+		}
+	}
+	return strings.Join(parts, ","), true
 }
 
 // CreateModelMeta 新建模型

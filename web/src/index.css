@@ -1769,7 +1769,7 @@ html.dark .with-pastel-balls::before {
 }
 
 .pricing-search-header {
-  padding: 12px 8px;
+  padding: 12px 16px;
   background-color: var(--semi-color-bg-0);
   flex-shrink: 0;
   position: sticky;
@@ -1780,14 +1780,14 @@ html.dark .with-pastel-balls::before {
 .pricing-view-container {
   flex: 1;
   overflow: auto;
-  padding-bottom: 24px;
+  padding: 0 8px 24px;
 }
 
 .pricing-view-container-mobile {
   flex: 1;
   overflow: auto;
   min-height: 0;
-  padding-bottom: 24px;
+  padding: 0 8px 24px;
 }
 
 /* ==================== semi-ui 组件自定义样式 ==================== */
