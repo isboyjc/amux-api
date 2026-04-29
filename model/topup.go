@@ -15,15 +15,18 @@ import (
 )
 
 type TopUp struct {
-	Id               int     `json:"id"`
-	UserId           int     `json:"user_id" gorm:"index:idx_user_status,priority:1;index"`
-	Amount           int64   `json:"amount"`
-	Money            float64 `json:"money"`
-	TradeNo          string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod    string  `json:"payment_method" gorm:"type:varchar(50)"`
-	CreateTime       int64   `json:"create_time"`
-	CompleteTime     int64   `json:"complete_time"`
-	Status           string  `json:"status" gorm:"index:idx_user_status,priority:2"`
+	Id              int     `json:"id"`
+	UserId          int     `json:"user_id" gorm:"index:idx_user_status,priority:1;index"`
+	Amount          int64   `json:"amount"`
+	Money           float64 `json:"money"`
+	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
+	// PaymentProvider 标识下单时使用的支付网关，用于回调时校验防止跨网关攻击。
+	// 为空时回退到 PaymentMethod 推断（兼容历史订单）。
+	PaymentProvider string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	CreateTime      int64  `json:"create_time"`
+	CompleteTime    int64  `json:"complete_time"`
+	Status          string `json:"status" gorm:"index:idx_user_status,priority:2"`
 }
 
 // TopupListItem 管理员账单列表项，携带用户名、邮箱及该用户的成功充值序次/累计金额
@@ -35,7 +38,45 @@ type TopupListItem struct {
 	TopupCumulative float64 `json:"topup_cumulative" gorm:"column:topup_cumulative"`
 }
 
+// 支付网关标识（PaymentProvider 字段取值）。
+// 用于回调时校验"创建订单的网关 == 实际回调的网关"，
+// 防止跨网关回调攻击（用便宜网关下单 + 伪造贵网关回调）。
+const (
+	PaymentProviderEpay         = "epay"
+	PaymentProviderStripe       = "stripe"
+	PaymentProviderCreem        = "creem"
+	PaymentProviderWaffo        = "waffo"
+	PaymentProviderWaffoPancake = "waffo_pancake"
+)
+
 var ErrPaymentMethodMismatch = errors.New("payment method mismatch")
+
+// derivePaymentProvider 根据 PaymentMethod 推断 PaymentProvider，
+// 用于历史订单（PaymentProvider 为空）的回退校验。
+// EPay 支持多种子方式（alipay / wxpay / qq 等），统一归到 PaymentProviderEpay。
+func derivePaymentProvider(paymentMethod string) string {
+	switch paymentMethod {
+	case "stripe":
+		return PaymentProviderStripe
+	case "creem":
+		return PaymentProviderCreem
+	case "waffo":
+		return PaymentProviderWaffo
+	case "waffo_pancake":
+		return PaymentProviderWaffoPancake
+	default:
+		return PaymentProviderEpay
+	}
+}
+
+// MatchesPaymentProvider 判断订单是否由指定网关创建。
+// 优先用显式 PaymentProvider 字段；为空时（历史订单）回退到 PaymentMethod 推断。
+func (topUp *TopUp) MatchesPaymentProvider(expected string) bool {
+	if topUp.PaymentProvider != "" {
+		return topUp.PaymentProvider == expected
+	}
+	return derivePaymentProvider(topUp.PaymentMethod) == expected
+}
 
 func (topUp *TopUp) Insert() error {
 	var err error
@@ -88,7 +129,7 @@ func Recharge(referenceId string, customerId string) (err error) {
 			return errors.New("充值订单不存在")
 		}
 
-		if topUp.PaymentMethod != "stripe" {
+		if !topUp.MatchesPaymentProvider(PaymentProviderStripe) {
 			return ErrPaymentMethodMismatch
 		}
 
@@ -416,7 +457,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			return errors.New("充值订单不存在")
 		}
 
-		if topUp.PaymentMethod != "creem" {
+		if !topUp.MatchesPaymentProvider(PaymentProviderCreem) {
 			return ErrPaymentMethodMismatch
 		}
 
@@ -501,7 +542,7 @@ func RechargeWaffo(tradeNo string) (err error) {
 			return errors.New("充值订单不存在")
 		}
 
-		if topUp.PaymentMethod != "waffo" {
+		if !topUp.MatchesPaymentProvider(PaymentProviderWaffo) {
 			return ErrPaymentMethodMismatch
 		}
 

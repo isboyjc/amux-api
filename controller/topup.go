@@ -236,13 +236,14 @@ func RequestEpay(c *gin.Context) {
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
 	topUp := &model.TopUp{
-		UserId:        id,
-		Amount:        amount,
-		Money:         payMoney,
-		TradeNo:       tradeNo,
-		PaymentMethod: req.PaymentMethod,
-		CreateTime:    time.Now().Unix(),
-		Status:        "pending",
+		UserId:          id,
+		Amount:          amount,
+		Money:           payMoney,
+		TradeNo:         tradeNo,
+		PaymentMethod:   req.PaymentMethod,
+		PaymentProvider: model.PaymentProviderEpay,
+		CreateTime:      time.Now().Unix(),
+		Status:          "pending",
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -354,8 +355,9 @@ func EpayNotify(c *gin.Context) {
 			log.Printf("易支付回调未找到订单: %v", verifyInfo)
 			return
 		}
-		if topUp.PaymentMethod == "stripe" || topUp.PaymentMethod == "creem" || topUp.PaymentMethod == "waffo" {
-			log.Printf("易支付回调订单支付方式不匹配: %s, 订单号: %s", topUp.PaymentMethod, verifyInfo.ServiceTradeNo)
+		// 防跨网关回调攻击：校验订单创建时使用的网关 == 当前回调来源（易支付）
+		if !topUp.MatchesPaymentProvider(model.PaymentProviderEpay) {
+			log.Printf("易支付回调订单支付网关不匹配: provider=%s method=%s, 订单号: %s", topUp.PaymentProvider, topUp.PaymentMethod, verifyInfo.ServiceTradeNo)
 			return
 		}
 		if topUp.Status == "pending" {

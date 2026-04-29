@@ -201,11 +201,23 @@ type SubscriptionOrder struct {
 
 	TradeNo       string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod string `json:"payment_method" gorm:"type:varchar(50)"`
-	Status        string `json:"status"`
-	CreateTime    int64  `json:"create_time"`
-	CompleteTime  int64  `json:"complete_time"`
+	// PaymentProvider 标识下单时使用的支付网关，用于回调时校验防止跨网关攻击。
+	// 为空时回退到 PaymentMethod 推断（兼容历史订单）。
+	PaymentProvider string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	Status          string `json:"status"`
+	CreateTime      int64  `json:"create_time"`
+	CompleteTime    int64  `json:"complete_time"`
 
 	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
+}
+
+// MatchesPaymentProvider 判断订单是否由指定网关创建。
+// 优先用显式 PaymentProvider 字段；为空时回退到 PaymentMethod 推断（兼容历史订单）。
+func (o *SubscriptionOrder) MatchesPaymentProvider(expected string) bool {
+	if o.PaymentProvider != "" {
+		return o.PaymentProvider == expected
+	}
+	return derivePaymentProvider(o.PaymentMethod) == expected
 }
 
 func (o *SubscriptionOrder) Insert() error {
@@ -506,7 +518,10 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 }
 
 // Complete a subscription order (idempotent). Creates a UserSubscription snapshot from the plan.
-func CompleteSubscriptionOrder(tradeNo string, providerPayload string) error {
+// CompleteSubscriptionOrder 完成订阅订单。
+// expectedPaymentProvider 用于防跨网关回调攻击：传入预期网关，
+// 与订单创建时的网关不一致直接拒绝；传 "" 表示跳过校验（仅在调用方已自行校验时使用）。
+func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentProvider string) error {
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
@@ -523,6 +538,9 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string) error {
 		var order SubscriptionOrder
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
+		}
+		if expectedPaymentProvider != "" && !order.MatchesPaymentProvider(expectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
 		}
 		if order.Status == common.TopUpStatusSuccess {
 			return nil
@@ -613,7 +631,9 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	return tx.Save(&topup).Error
 }
 
-func ExpireSubscriptionOrder(tradeNo string) error {
+// ExpireSubscriptionOrder 标记订阅订单为过期。
+// expectedPaymentProvider 用于防跨网关回调攻击；传 "" 跳过校验。
+func ExpireSubscriptionOrder(tradeNo string, expectedPaymentProvider string) error {
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
@@ -625,6 +645,9 @@ func ExpireSubscriptionOrder(tradeNo string) error {
 		var order SubscriptionOrder
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
+		}
+		if expectedPaymentProvider != "" && !order.MatchesPaymentProvider(expectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
 		}
 		if order.Status != common.TopUpStatusPending {
 			return nil
