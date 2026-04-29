@@ -122,21 +122,34 @@ go build ./...
 
 ---
 
-## Wave 7 — 分级计费 (Tiered Billing)（重大功能，需专项）
+## Wave 7 — 分级计费 (Tiered Billing)（已完成 ✓ 2026-04-29）
 
-⚠️ **这是单独项目，不要混在以上 wave 里**。
+在 `feature/tiered-billing` 专项分支上 cherry-pick 完成，共 21 个 commit：
 
-涉及 commit（15+ 个）：
-- `91ed4e196` `f0589cc47` `f6c0852da` `5b03b39db` `c5405b2a1` `6e3ef48c9`
-- `44fc10ba9` `d66311e98` `3a2138ba6` `0220df842`
-- `1fe9f6f98` `5c4ed5be9` `3e5f2ee1d` `8eeae0073` `9f8a4ec05`
-- `eab478bdc` `e3d64cb76` `f2f3410dc` `63ce2db98`
+| 类别 | Commit |
+|---|---|
+| 基础 | `91ed4e196` `f0589cc47` `f6c0852da` `5b03b39db` `c5405b2a1` `6e3ef48c9` `44fc10ba9` `d66311e98` |
+| 修复 | `0220df842` `1fe9f6f98` `5c4ed5be9` `8eeae0073` `3e5f2ee1d` `eab478bdc` `63ce2db98` |
+| 增强 | `3a2138ba6` `f2f3410dc` `f424f906d` `bee339d27` `9f8a4ec05` |
 
-新增 `pkg/billingexpr/`（设计文档 `expr.md` 说明清楚），扩展 `model/pricing.go`（`BillingMode` / `BillingExpr` 字段），前端有 `TieredPricingEditor`、`DynamicPricingBreakdown`、`render.jsx` 大改。
+新增能力：
+- `pkg/billingexpr/`：DSL 解析器（`compile.go` / `run.go` / `settle.go`），含 `expr.md` 设计文档
+- `model/pricing.go`：增加 `BillingMode` / `BillingExpr` 字段
+- `service/tiered_settle.go` + `text_quota.go` 中的 tiered 结算路径
+- 前端：`TieredPricingEditor`（pages/Setting/Ratio）、`DynamicPricingBreakdown`（model-pricing 弹窗）、`render.jsx` 计费日志渲染重构（统一为 opts 对象签名）
+- Tool 价格 API：`operation_setting/tools.go` 重构为 `GetToolPrice(key)` + 后台可配置 `tool_price_setting.prices`
 
-**建议**：当**专项 epic 处理**：
-1. 先决定要不要这个能力（如果你只用统一倍率就跳过）
-2. 要的话单独开分支 `feature/tiered-billing`，把整组 commit 一次性 squash merge 进来，单独 review + 测试
+冲突解决要点：
+- `service/text_quota.go`：与已存在的 `9ecad9065` (text quota 重构) 配合，将 inline 工具计费替换为 `calculateTextToolCallSurcharge` 辅助函数；`GetWebSearchPricePerThousand` 等旧 API 改为 `GetToolPrice("web_search" / "claude_web_search" / "file_search")`
+- `relay/helper/price.go`：保留我方的 `ContainPriceOrRatio`，但被 `3a2138ba6` 重命名为 `HasModelBillingConfig`，同步更新 `controller/model.go` 调用点
+- `model/pricing.go`：保留 `InputModalities` / `OutputModalities`，新增 `BillingMode` / `BillingExpr`
+- `web/src/i18n/locales/{en,zh-CN}.json`：用 Python 脚本去重，保留首次出现的翻译（许多签到 / 订阅 keys 我方已有）
+- `web/src/components/table/model-pricing/view/card/PricingCardView.jsx`：保留我方 `vendor_name` 显示，仅在 `priceData.isDynamicPricing` 时叠加 `formatDynamicPriceSummary`
+
+合并到 develop 之前需 review 的点：
+1. tiered billing 流程需手动 e2e 测试（管理员配置 tier 表达式 → 用户调用 → log 中显示阶梯）
+2. `service/quota.go::PostClaudeConsumeQuota` 是新增函数，关注 Claude 路径计费是否一致
+3. 前端 `formatDynamicPriceSummary` 在 PricingCard 顶部和详情面板都会显示，确认重复展示是否合适
 
 ---
 
@@ -242,19 +255,18 @@ cd web && bun run build  # 如果触到前端
 
 **关键差异**：上游直接做严格校验（`topUp.PaymentProvider != X` 即拒），我方加了 fallback：`PaymentProvider` 为空时退化为 `PaymentMethod` 推断，保护部署窗口期已存在的 pending 订单不被误拒。新订单仍是严格 PaymentProvider 校验。
 
+### 2026-04-29 第三批（Wave 7 阶梯计费，专项分支）
+
+在 `feature/tiered-billing` 分支完成，待 review 后 squash merge 到 develop。涉及 21 个 commit，详情见前面 Wave 7 章节。
+
 ### 已跳过 / 推迟
 
 | 上游 hash | 原因 |
 |---|---|
-| `bee339d27` | 依赖 tiered_billing（Wave 7 范围） |
-| `f424f906d` | 同上 |
 | Wave 5 全部（`209d90e86` `c31343ac7` `6ff8c7ab0` `209645e26` `2d4bdd297` `600ae8599`） | 主要为 i18n 翻译键扩展 + topup.go 二次改造，与我方 RecordTopupLog 已有审计能力高度重叠，i18n 冲突量级大；本期跳过 |
+| `fbca2561e` | Docker workflow（推 Docker Hub），与 Wave 7 时间线重叠但与计费无关 |
 
-### 待单独立项
-
-- **Wave 7 阶梯计费 (Tiered Billing)**：`pkg/billingexpr/` 完整体系，独立 epic。判断标准见前面 plan 章节。
-
-**最后 cherry-pick 的 upstream hash**：以本批为基线，下次只看 `2026-04-29` 之后的新 upstream commit。
+**最后 cherry-pick 的 upstream hash**：以本批为基线（含 Wave 7），下次只看 `2026-04-29` 之后的新 upstream commit。
 
 ---
 
