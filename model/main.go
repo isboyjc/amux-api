@@ -282,6 +282,8 @@ func migrateDB() error {
 		&UserOAuthBinding{},
 		&AffRebateLog{},
 		&DesktopAuthSession{},
+		&UserAccessToken{},
+		&OAuthClient{},
 	)
 	if err != nil {
 		return err
@@ -302,6 +304,16 @@ func migrateDB() error {
 	MigrateModelVendorIDs()
 	// 一次性迁移：按真值重算 aff_count（修复 QuotaForInviter==0 时未递增的历史数据）
 	BackfillAffCount()
+	// 一次性迁移：把 users.access_token 复制进 user_access_tokens 表（source=legacy）。
+	// 字面值不变，存量调用方继续工作；用户首次进新版后台会看到一条 "Imported" 记录。
+	if err := MigrateLegacyAccessTokens(); err != nil {
+		common.SysLog("MigrateLegacyAccessTokens error: " + err.Error())
+	}
+	// 幂等创建内置 OAuth client（amux-desktop），给未传 client_id 的 device flow
+	// 兜底，授权页能渲染统一文案。旧安装中的 "legacy-desktop" 记录会自动改名。
+	if err := EnsureBuiltinOAuthClient(); err != nil {
+		common.SysLog("EnsureBuiltinOAuthClient error: " + err.Error())
+	}
 
 	return nil
 }

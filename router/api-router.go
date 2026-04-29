@@ -48,13 +48,16 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/oauth/:provider", middleware.CriticalRateLimit(), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.CriticalRateLimit(), controller.GetRatioConfig)
 
-		// Desktop auth routes
-		desktopAuthRoute := apiRouter.Group("/desktop/auth")
+		// OAuth Device Authorization Grant（简化版 RFC 8628）
+		// client_id 未传时兜底到内置 "amux-desktop"；已传则校验 oauth_clients 表
+		// 存在且 active。
+		oauthDeviceRoute := apiRouter.Group("/oauth/device")
 		{
-			desktopAuthRoute.POST("/session", middleware.CriticalRateLimit(), controller.CreateDesktopAuthSession)
-			desktopAuthRoute.GET("/info", middleware.CriticalRateLimit(), controller.GetDesktopAuthInfo)
-			desktopAuthRoute.GET("/check", middleware.CriticalRateLimit(), controller.CheckDesktopAuth)
-			desktopAuthRoute.POST("/confirm", middleware.UserAuth(), controller.ConfirmDesktopAuth)
+			oauthDeviceRoute.POST("/authorize", middleware.CriticalRateLimit(), controller.OAuthDeviceAuthorize)
+			oauthDeviceRoute.GET("/info", middleware.CriticalRateLimit(), controller.OAuthDeviceInfo)
+			// /check 是客户端高频轮询端点，用专用宽松限流而非 CriticalRateLimit
+			oauthDeviceRoute.GET("/check", middleware.OAuthPollRateLimit(), controller.OAuthDeviceCheck)
+			oauthDeviceRoute.POST("/confirm", middleware.UserAuth(), controller.OAuthDeviceConfirm)
 		}
 
 		apiRouter.POST("/stripe/webhook", controller.StripeWebhook)
@@ -98,6 +101,12 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.PUT("/self", controller.UpdateSelf)
 				selfRoute.DELETE("/self", controller.DeleteSelf)
 				selfRoute.GET("/token", controller.GenerateAccessToken)
+				// 新版 PAT 自助管理（推荐路径，老客户端继续用 GET /token）
+				selfRoute.POST("/access_tokens", controller.CreateUserAccessToken)
+				selfRoute.GET("/access_tokens", controller.ListUserAccessTokens)
+				selfRoute.PATCH("/access_tokens/:id", controller.UpdateUserAccessToken)
+				selfRoute.DELETE("/access_tokens/:id", controller.DeleteUserAccessToken)
+				selfRoute.POST("/access_tokens/:id/rotate", controller.RotateUserAccessToken)
 				selfRoute.GET("/passkey", controller.PasskeyStatus)
 				selfRoute.POST("/passkey/register/begin", controller.PasskeyRegisterBegin)
 				selfRoute.POST("/passkey/register/finish", controller.PasskeyRegisterFinish)
@@ -156,6 +165,30 @@ func SetApiRouter(router *gin.Engine) {
 				// Admin 2FA routes
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+			}
+
+			// 管理员 access_token 治理面板（按用户/状态/来源筛选 + 强制撤销）。
+			// 鉴权：AdminAuth（不是 RootAuth）—— 客服/运营场景下普通管理员需要能撤滥用 token，
+			// 这是治理性操作，不会引入新身份或权限。注意与下面 oauth/clients 的 RootAuth 区分，
+			// 不要"为了一致性"把这里也升级到 RootAuth。
+			accessTokenAdminRoute := apiRouter.Group("/admin/access_tokens")
+			accessTokenAdminRoute.Use(middleware.AdminAuth())
+			{
+				accessTokenAdminRoute.GET("", controller.AdminListAccessTokens)
+				accessTokenAdminRoute.DELETE("/:id", controller.AdminRevokeAccessToken)
+			}
+
+			// OAuth Client 注册管理（系统设置 tab 下）。
+			// 鉴权：RootAuth（不是 AdminAuth）—— 注册新 OAuth Client 等于在平台上发布一个能拿
+			// 任意用户 OAT 的应用，权限提升风险极高；这必须只对 root 开放。不要"为一致性"降级到 AdminAuth。
+			oauthClientAdminRoute := apiRouter.Group("/admin/oauth/clients")
+			oauthClientAdminRoute.Use(middleware.RootAuth())
+			{
+				oauthClientAdminRoute.GET("", controller.AdminListOAuthClients)
+				oauthClientAdminRoute.POST("", controller.AdminCreateOAuthClient)
+				oauthClientAdminRoute.PATCH("/:id", controller.AdminUpdateOAuthClient)
+				oauthClientAdminRoute.DELETE("/:id", controller.AdminDeleteOAuthClient)
+				oauthClientAdminRoute.POST("/:id/rotate", controller.AdminRotateOAuthClientSecret)
 			}
 		}
 

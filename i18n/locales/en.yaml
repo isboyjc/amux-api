@@ -281,3 +281,11 @@ custom_oauth.provider_id_field_invalid: "Could not extract user ID from provider
 # Desktop auth messages
 desktop_auth.session_exists: "Authorization session already exists"
 desktop_auth.session_invalid: "Authorization link is invalid or has expired, please go back to Desktop and try again"
+
+# User access token (PAT/OAT) messages
+uat.name_required: "Token name is required (max 64 chars)"
+uat.limit_exceeded: "Reached the maximum number of tokens. Revoke unused ones first."
+uat.not_found: "Token not found"
+uat.not_active: "Token is no longer active"
+uat.rotate_failed: "Failed to rotate token, please try again later"
+uat.expires_invalid: "Invalid expiration time"

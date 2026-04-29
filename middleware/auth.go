@@ -51,7 +51,7 @@ func authHelper(c *gin.Context, minRole int) {
 			c.Abort()
 			return
 		}
-		user, authErr := model.ValidateAccessToken(accessToken)
+		user, _, authErr := model.ValidateAccessTokenWithIP(accessToken, c.ClientIP())
 		if authErr != nil {
 			if errors.Is(authErr, model.ErrDatabase) {
 				common.SysLog("ValidateAccessToken database error: " + authErr.Error())

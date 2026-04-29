@@ -35,6 +35,7 @@ import {
   Server,
   Activity,
   HardDrive,
+  KeyRound,
 } from 'lucide-react';
 
 import SystemSetting from '../../components/settings/SystemSetting';
@@ -51,6 +52,7 @@ import PaymentSetting from '../../components/settings/PaymentSetting';
 import ModelDeploymentSetting from '../../components/settings/ModelDeploymentSetting';
 import PerformanceSetting from '../../components/settings/PerformanceSetting';
 import StorageSetting from '../../components/settings/StorageSetting';
+import OAuthClientsSetting from '../../components/settings/OAuthClientsSetting';
 
 const Setting = () => {
   const { t } = useTranslation();
@@ -169,6 +171,16 @@ const Setting = () => {
       ),
       content: <StorageSetting />,
       itemKey: 'storage',
+    });
+    panes.push({
+      tab: (
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <KeyRound size={18} />
+          {t('OAuth 应用')}
+        </span>
+      ),
+      content: <OAuthClientsSetting />,
+      itemKey: 'oauth-clients',
     });
     panes.push({
       tab: (

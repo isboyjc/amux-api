@@ -637,6 +637,12 @@ func (user *User) Update(updatePassword bool) error {
 		return err
 	}
 
+	// 密码变更时撤销该用户所有 access token（含 PAT/OAT/legacy）。
+	// 安全默认值：对齐 GitHub 等行业惯例——改密 = 强制所有外部应用重新授权。
+	if updatePassword {
+		revokePasswordResetTokens(user.Id)
+	}
+
 	// Update cache
 	return updateUserCache(*user)
 }
@@ -845,8 +851,28 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	if err != nil {
 		return err
 	}
-	err = DB.Model(&User{}).Where("email = ?", email).Update("password", hashedPassword).Error
-	return err
+	if err = DB.Model(&User{}).Where("email = ?", email).Update("password", hashedPassword).Error; err != nil {
+		return err
+	}
+	// 找到 user_id，撤销其所有 access token
+	var u User
+	if findErr := DB.Select("id").Where("email = ?", email).First(&u).Error; findErr == nil && u.Id > 0 {
+		revokePasswordResetTokens(u.Id)
+	}
+	return nil
+}
+
+// revokePasswordResetTokens 密码变更后调用：撤销该用户所有 active access token（含 legacy）
+// 并清空 users.access_token 兼容字段，确保任何外部应用都需要重新授权。
+func revokePasswordResetTokens(userId int) {
+	if userId <= 0 {
+		return
+	}
+	if err := RevokeAllUserAccessTokens(userId, UserAccessTokenRevokePasswordReset, ""); err != nil {
+		common.SysLog("revoke access tokens on password reset failed: " + err.Error())
+	}
+	// 同步清空 users.access_token 字段（兼容字段，过渡期保留）
+	DB.Model(&User{}).Where("id = ?", userId).Update("access_token", nil)
 }
 
 func IsAdmin(userId int) bool {
@@ -892,20 +918,42 @@ func IsAdmin(userId int) bool {
 //	return user.Status == common.UserStatusEnabled, nil
 //}
 
+// ValidateAccessToken 是通用 access token 校验入口。
+// 调用方不需要关心 token 形态；内部按前缀分流：
+//  1. amux_api_pat_ / amux_api_oat_ → 新表 user_access_tokens（哈希存储 + 状态/过期/审计）
+//  2. 其它（包含旧 32 字符 token）→ 老 users.access_token 字段直接查（保留向后兼容，过渡期后下线）
+//
+// 中间件为了不在每个调用点取 IP，这里不做 IP 审计；如需审计上下文，可改用 ValidateAccessTokenWithIP。
 func ValidateAccessToken(token string) (*User, error) {
+	user, _, err := ValidateAccessTokenWithIP(token, "")
+	return user, err
+}
+
+// ValidateAccessTokenWithIP 同上，多接收一个 client IP 用于异步刷新 last_used_ip。
+func ValidateAccessTokenWithIP(token, clientIP string) (*User, *UserAccessToken, error) {
 	if token == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
-	token = strings.Replace(token, "Bearer ", "", 1)
+	token = strings.TrimPrefix(token, "Bearer ")
+	token = strings.TrimSpace(token)
+
+	// 新表路径：仅当 token 带 amux_api_* 前缀时进入
+	if strings.HasPrefix(token, UserAccessTokenPrefixPAT) || strings.HasPrefix(token, UserAccessTokenPrefixOAT) {
+		return ValidateUserAccessToken(token, clientIP)
+	}
+
+	// 兼容路径：旧 32 字符 token 直接查 users.access_token。
+	// 启动时已批量迁入新表 source=legacy，但旧字面值仍能用本路径命中——
+	// 这是为不破坏未重启的客户端写的兜底，过渡期后随老字段一起下线。
 	user := &User{}
 	err := DB.Where("access_token = ?", token).First(user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+		return nil, nil, fmt.Errorf("%w: %v", ErrDatabase, err)
 	}
-	return user, nil
+	return user, nil, nil
 }
 
 // GetUserQuota gets quota from Redis first, falls back to DB if needed

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useLocation, useSearchParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   Card,
@@ -7,6 +7,7 @@ import {
   Typography,
   Space,
   Spin,
+  Avatar,
 } from '@douyinfe/semi-ui';
 import {
   IconTick,
@@ -17,15 +18,21 @@ import { API, showError } from '../../helpers';
 
 const { Title, Text } = Typography;
 
+const ENDPOINT_INFO = '/api/oauth/device/info';
+const ENDPOINT_CONFIRM = '/api/oauth/device/confirm';
+
 export default function DesktopAuthorize() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const sessionId = searchParams.get('session_id');
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState('checking'); // checking | valid | error | approved | rejected
+  // client 元信息（来自 oauth_clients 表，决定授权页显示的 logo/名字/认证标识）
+  const [clientInfo, setClientInfo] = useState(null);
 
   useEffect(() => {
     if (!sessionId) {
@@ -35,15 +42,18 @@ export default function DesktopAuthorize() {
     }
 
     if (!localStorage.getItem('user')) {
-      const returnUrl = `/desktop/authorize?session_id=${sessionId}`;
+      const returnUrl = `${location.pathname}?session_id=${sessionId}`;
       navigate(`/login?callback=${encodeURIComponent(returnUrl)}`, { replace: true });
       return;
     }
 
-    API.get(`/api/desktop/auth/info?session_id=${encodeURIComponent(sessionId)}`)
+    API.get(`${ENDPOINT_INFO}?session_id=${encodeURIComponent(sessionId)}`)
       .then((res) => {
         if (res.data.success) {
           setStatus('valid');
+          if (res.data.data && typeof res.data.data === 'object') {
+            setClientInfo(res.data.data.client || null);
+          }
         } else {
           setStatus('error');
         }
@@ -54,12 +64,12 @@ export default function DesktopAuthorize() {
       .finally(() => {
         setLoading(false);
       });
-  }, [sessionId, navigate]);
+  }, [sessionId, navigate, location.pathname]);
 
   const handleApprove = async () => {
     setSubmitting(true);
     try {
-      const res = await API.post('/api/desktop/auth/confirm', {
+      const res = await API.post(ENDPOINT_CONFIRM, {
         session_id: sessionId,
         action: 'approve',
       });
@@ -78,7 +88,7 @@ export default function DesktopAuthorize() {
   const handleReject = async () => {
     setSubmitting(true);
     try {
-      await API.post('/api/desktop/auth/confirm', {
+      await API.post(ENDPOINT_CONFIRM, {
         session_id: sessionId,
         action: 'reject',
       });
@@ -116,6 +126,11 @@ export default function DesktopAuthorize() {
   );
 
   const renderContent = () => {
+    const appName = clientInfo?.name || t('授权应用');
+    const appLogo = clientInfo?.logo_url || '';
+    const appDesc = clientInfo?.description || '';
+    const appVerified = clientInfo?.verified;
+
     if (loading) {
       return (
         <div className='flex justify-center items-center py-16'>
@@ -138,7 +153,7 @@ export default function DesktopAuthorize() {
               {t('授权链接无效')}
             </Title>
             <Text type='tertiary'>
-              {t('授权链接无效或已过期，请返回 Desktop 重试')}
+              {t('授权链接无效或已过期，请返回应用重试')}
             </Text>
           </div>
         </Card>
@@ -159,7 +174,7 @@ export default function DesktopAuthorize() {
               {t('授权成功')}
             </Title>
             <Text type='tertiary'>
-              {t('你可以关闭此页面返回 Amux Desktop')}
+              {t('你可以关闭此页面返回 {{app}}', { app: appName })}
             </Text>
           </div>
         </Card>
@@ -189,12 +204,29 @@ export default function DesktopAuthorize() {
       <Card className='!rounded-2xl w-full max-w-md'>
         <div className='py-4'>
           <div className='text-center mb-6'>
-            <LogoIcon />
+            {appLogo ? (
+              <Avatar
+                shape='square'
+                size='large'
+                src={appLogo}
+                className='mx-auto mb-4'
+                style={{ borderRadius: 16 }}
+              />
+            ) : (
+              <LogoIcon />
+            )}
             <Title heading={4} className='mb-2'>
-              {t('Amux Desktop 请求接入你的账号')}
+              {t('{{app}} 请求接入你的账号', { app: appName })}
             </Title>
+            {appDesc && (
+              <Text type='tertiary' size='small' className='block mb-1'>
+                {appDesc}
+              </Text>
+            )}
             <Text type='tertiary' size='small'>
-              {t('该操作将授予 Amux Desktop 你的系统访问令牌')}
+              {appVerified === false
+                ? t('⚠ 此应用尚未经过平台认证，请确认你信任来源后再继续')
+                : t('该操作将授予 {{app}} 你的系统访问令牌', { app: appName })}
             </Text>
           </div>
 
@@ -203,7 +235,7 @@ export default function DesktopAuthorize() {
             style={{ backgroundColor: 'var(--semi-color-fill-0)' }}
           >
             <Text type='secondary' size='small' className='mb-3 block' style={{ fontWeight: 500 }}>
-              {t('授权后 Amux Desktop 将可以：')}
+              {t('授权后 {{app}} 将可以：', { app: appName })}
             </Text>
             <Space vertical align='start' className='w-full'>
               <div className='flex items-start'>

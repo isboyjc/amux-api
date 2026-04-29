@@ -336,3 +336,13 @@ const (
 	MsgDesktopAuthSessionExists  = "desktop_auth.session_exists"
 	MsgDesktopAuthSessionInvalid = "desktop_auth.session_invalid"
 )
+
+// User access token (PAT/OAT) related messages
+const (
+	MsgUatNameRequired   = "uat.name_required"
+	MsgUatLimitExceeded  = "uat.limit_exceeded"
+	MsgUatNotFound       = "uat.not_found"
+	MsgUatNotActive      = "uat.not_active"
+	MsgUatRotateFailed   = "uat.rotate_failed"
+	MsgUatExpiresInvalid = "uat.expires_invalid"
+)

@@ -294,6 +294,9 @@ func InitResources() error {
 	// 必须在 InitLogDB() 之后启动，确保 LOG_DB 已初始化
 	go model.MigrateQuotaDataTokenSplit()
 
+	// 启动 access_token 定时清理：每天扫一次硬过期 + 空闲过期（默认 90 天）
+	model.StartUserAccessTokenJanitor()
+
 	// Initialize Redis
 	err = common.InitRedisClient()
 	if err != nil {

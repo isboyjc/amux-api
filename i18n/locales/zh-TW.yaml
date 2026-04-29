@@ -282,3 +282,11 @@ custom_oauth.provider_id_field_invalid: "無法從供應者響應中提取使用
 # Desktop auth messages
 desktop_auth.session_exists: "授權會話已存在"
 desktop_auth.session_invalid: "授權連結無效或已過期，請返回 Desktop 重試"
+
+# User access token (PAT/OAT) messages
+uat.name_required: "請填寫令牌名稱（不超過 64 字元）"
+uat.limit_exceeded: "已達令牌數量上限，請先撤銷不再使用的令牌"
+uat.not_found: "找不到該令牌"
+uat.not_active: "該令牌已失效，無法執行此操作"
+uat.rotate_failed: "令牌輪換失敗，請稍後重試"
+uat.expires_invalid: "無效的過期時間"

@@ -116,6 +116,12 @@ func UploadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.UploadRateLimitNum, common.UploadRateLimitDuration, "UP")
 }
 
+// OAuthPollRateLimit 用于 /oauth/device/check 这种「客户端高频轮询拿结果」的端点。
+// CriticalRateLimit（20/20min）对轮询场景太紧——device flow 5s 轮一次、5 分钟 60 次，会被拒。
+func OAuthPollRateLimit() func(c *gin.Context) {
+	return rateLimitFactory(common.OAuthPollRateLimitNum, common.OAuthPollRateLimitDuration, "OP")
+}
+
 // userRateLimitFactory creates a rate limiter keyed by authenticated user ID
 // instead of client IP, making it resistant to proxy rotation attacks.
 // Must be used AFTER authentication middleware (UserAuth).

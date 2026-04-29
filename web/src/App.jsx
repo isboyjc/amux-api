@@ -109,8 +109,9 @@ function App() {
           }
         />
         <Route path='/forbidden' element={<Forbidden />} />
+        {/* OAuth Device Flow 授权页：外部应用通过此路径请求用户授权 */}
         <Route
-          path='/desktop/authorize'
+          path='/oauth/authorize'
           element={
             <Suspense fallback={<Loading></Loading>} key={location.pathname}>
               <DesktopAuthorize />

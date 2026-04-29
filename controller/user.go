@@ -287,39 +287,14 @@ func GetUser(c *gin.Context) {
 	return
 }
 
+// GenerateAccessToken 是旧 GET /api/user/token 端点的后向兼容入口。
+// 新行为：转发到 GenerateAccessTokenLegacy——后者会撤销该用户当前 source=legacy
+// token、签发新的同样 source=legacy token 并同步写 users.access_token 兼容字段，
+// 旧脚本/客户端拿到的字面值仍可调 /api/... 接口。
+//
+// 推荐路径：用户在新版后台用 /api/user/access_tokens（PAT）。
 func GenerateAccessToken(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	// get rand int 28-32
-	randI := common.GetRandomInt(4)
-	key, err := common.GenerateRandomKey(29 + randI)
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgGenerateFailed)
-		common.SysLog("failed to generate key: " + err.Error())
-		return
-	}
-	user.SetAccessToken(key)
-
-	if model.DB.Where("access_token = ?", user.AccessToken).First(user).RowsAffected != 0 {
-		common.ApiErrorI18n(c, i18n.MsgUuidDuplicate)
-		return
-	}
-
-	if err := user.Update(false); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    user.AccessToken,
-	})
-	return
+	GenerateAccessTokenLegacy(c)
 }
 
 type TransferAffQuotaRequest struct {

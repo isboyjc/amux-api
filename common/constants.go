@@ -181,6 +181,12 @@ var (
 	DownloadRateLimitNum            = 10
 	DownloadRateLimitDuration int64 = 60
 
+	// OAuth Device Flow 客户端轮询 /oauth/device/check 的限流。
+	// 标准 device flow 客户端每 5s 轮询一次、最长 5 分钟，单 session 约 60 次；
+	// 同 IP 多 session 并行也很常见，所以给 120/分钟（约等于持续 2 RPS）兜底。
+	OAuthPollRateLimitNum            = 120
+	OAuthPollRateLimitDuration int64 = 60
+
 	// Per-user search rate limit (applies after authentication, keyed by user ID)
 	SearchRateLimitEnable         = true
 	SearchRateLimitNum            = 10
