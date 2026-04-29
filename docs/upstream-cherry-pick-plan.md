@@ -234,19 +234,25 @@ cd web && bun run build  # 如果触到前端
 | `b60bc94f9` | tokens 表显示 last_used_at 列 |
 | `2431efc01` `81ddf6e72` `0feb6f2c3` `49474520e` | 旧 token 长 key 兼容 + 跨 DB 迁移测试 |
 
+### 2026-04-29 第二批（手工实现 PaymentProvider）
+
+| 我方 commit | 等价上游 hash | 说明 |
+|---|---|---|
+| `f397d9dc1` | `a7c38ec85` | 防跨网关回调攻击：手工实现 PaymentProvider 字段 + MatchesPaymentProvider helper（带历史订单回退）+ 6 个 controller 集成 + 2 个 subscription 函数加 expectedPaymentProvider 参数 |
+
+**关键差异**：上游直接做严格校验（`topUp.PaymentProvider != X` 即拒），我方加了 fallback：`PaymentProvider` 为空时退化为 `PaymentMethod` 推断，保护部署窗口期已存在的 pending 订单不被误拒。新订单仍是严格 PaymentProvider 校验。
+
 ### 已跳过 / 推迟
 
 | 上游 hash | 原因 |
 |---|---|
 | `bee339d27` | 依赖 tiered_billing（Wave 7 范围） |
 | `f424f906d` | 同上 |
-| `a7c38ec85` (PaymentProvider) | 涉及 12 个文件互动且依赖上游中间状态，无法直接 cherry-pick；**待单独 epic 手工实现核心字段 + 跨网关校验** |
 | Wave 5 全部（`209d90e86` `c31343ac7` `6ff8c7ab0` `209645e26` `2d4bdd297` `600ae8599`） | 主要为 i18n 翻译键扩展 + topup.go 二次改造，与我方 RecordTopupLog 已有审计能力高度重叠，i18n 冲突量级大；本期跳过 |
 
 ### 待单独立项
 
-- **PaymentProvider 跨网关回调校验**：手工添加 `PaymentProvider` 字段到 TopUp / SubscriptionOrder + 在每个回调入口校验。安全价值高，建议下一轮独立做。
-- **Wave 7 阶梯计费 (Tiered Billing)**：`pkg/billingexpr/` 完整体系，独立 epic。
+- **Wave 7 阶梯计费 (Tiered Billing)**：`pkg/billingexpr/` 完整体系，独立 epic。判断标准见前面 plan 章节。
 
 **最后 cherry-pick 的 upstream hash**：以本批为基线，下次只看 `2026-04-29` 之后的新 upstream commit。
 
