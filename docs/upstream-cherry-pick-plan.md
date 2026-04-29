@@ -179,12 +179,76 @@ cd web && bun run build  # 如果触到前端
 > 每完成一个就追加一行，记录 commit hash + 落地到 develop 的 commit hash + 日期。
 > 下次评估上游新 commit 时，只看「最后 cherry-pick 的上游 hash 之后」的内容。
 
-| 日期 | 上游 hash | 我方 commit | 备注 |
-|---|---|---|---|
-| _(none yet)_ | | | |
-
-**最后 cherry-pick 的 upstream hash**：（待填）
 **当前 upstream/main 顶端**：`3b592895c`（2026-04-29 fetch 时）
+**Cherry-pick 分支**：`cherry-pick/upstream-essentials`
+
+### 2026-04-29 第一批（29 commits）
+
+**Wave 6 — 依赖升级**
+
+| 上游 hash | 说明 | 处理方式 |
+|---|---|---|
+| `dd57eeb51` + `6c69d60fb` | pgx/v5 5.7.1 → 5.9.2 | 手工 `go get`（中间版本冲突） |
+| `346de0268` | xmldom 0.8.12 → 0.8.13 | cherry-pick 干净 |
+
+**Wave 1 — 安全/正确性**
+
+| 上游 hash | 说明 |
+|---|---|
+| `e2807c5f9` | SSRF 防护增强 |
+| `095e1920f` | 渠道刷新模型时先加载 model_mapping |
+| `4e93148d9` | Config map 字段 unmarshal 修复 |
+| `925342622` | 禁用用户时清缓存 |
+| `8ca103342` | Reasoning/ReasoningContent 改 *string |
+| `6f57dcd2f` | 删除测试文件 followup |
+| `ce66bb93f`(对应 `b2e62a44e`) | topup 搜索 DoS 加固（手工合并冲突，保留我方 TopupListItem 结构） |
+
+**Wave 2 — 渠道兼容**
+
+| 上游 hash | 说明 |
+|---|---|
+| `45cc95a25` | Gemini ToolConfig.IncludeServerSideToolInvocations |
+| `db89b57e1` | 工具调用 raw JSON arguments 兼容 |
+| `435d7ae0d` | DeepSeek V4 reasoning 后缀处理 |
+| `47d7bca26` | claude-opus-4-7 支持 |
+| `6c922ffc0`(对应 `69ba18d39`) | image N 倍率仅作用于 image 模型 |
+| `bd4b104fe`(对应 `df6d86289`) | gpt-5.5 completion ratio 修正 |
+| `5fe9d808e`(对应 `355307223`) | affinity 重试提示 |
+| `102bd82b5`(对应 `62d4b63fc`) | native messages 模型匹配配置 |
+
+**Wave 3 — Codex**
+
+| 上游 hash | 说明 |
+|---|---|
+| `e729b2219` | 自动禁用 codex 渠道恢复时刷新凭据 |
+| `5f67d2a28` | codex auto test 用 stream 模式 |
+| `d586a567e` | codex usage modal 折叠 raw JSON |
+| `4c21c4c43` | 显示已下架但本地仍有的模型 |
+
+**Wave 4 — 用户/Token UI**
+
+| 上游 hash | 说明 |
+|---|---|
+| `1d83b5472` | passkey 修改需二次验证 |
+| `02aacb38a` | User 加 LastLoginAt（**手工跳过 CreatedAt**，保留我方 CreatedTime） |
+| `b60bc94f9` | tokens 表显示 last_used_at 列 |
+| `2431efc01` `81ddf6e72` `0feb6f2c3` `49474520e` | 旧 token 长 key 兼容 + 跨 DB 迁移测试 |
+
+### 已跳过 / 推迟
+
+| 上游 hash | 原因 |
+|---|---|
+| `bee339d27` | 依赖 tiered_billing（Wave 7 范围） |
+| `f424f906d` | 同上 |
+| `a7c38ec85` (PaymentProvider) | 涉及 12 个文件互动且依赖上游中间状态，无法直接 cherry-pick；**待单独 epic 手工实现核心字段 + 跨网关校验** |
+| Wave 5 全部（`209d90e86` `c31343ac7` `6ff8c7ab0` `209645e26` `2d4bdd297` `600ae8599`） | 主要为 i18n 翻译键扩展 + topup.go 二次改造，与我方 RecordTopupLog 已有审计能力高度重叠，i18n 冲突量级大；本期跳过 |
+
+### 待单独立项
+
+- **PaymentProvider 跨网关回调校验**：手工添加 `PaymentProvider` 字段到 TopUp / SubscriptionOrder + 在每个回调入口校验。安全价值高，建议下一轮独立做。
+- **Wave 7 阶梯计费 (Tiered Billing)**：`pkg/billingexpr/` 完整体系，独立 epic。
+
+**最后 cherry-pick 的 upstream hash**：以本批为基线，下次只看 `2026-04-29` 之后的新 upstream commit。
 
 ---
 
