@@ -43,7 +43,6 @@ import {
 } from '@douyinfe/semi-illustrations';
 import {
   calculateModelPrice,
-  formatDynamicPriceSummary,
   getLobeHubIcon,
   parsePricingReference,
   formatGroupDiscount,
@@ -262,7 +261,11 @@ const PricingCardView = ({
   };
 
   // 计费类型标签：按次/按量统一为低饱和的主题色 chip，仅文本区分
+  // 动态计费用 warning 色和按次/按量区分；多档/时间条件/请求条件以中性 chip 补充
   const renderBillingTag = (model) => {
+    if (model.billing_mode === 'tiered_expr' && model.billing_expr) {
+      return <PlainChip warning>{t('动态计费')}</PlainChip>;
+    }
     if (model.quota_type === 1) {
       return <PlainChip accent>{t('按次计费')}</PlainChip>;
     }
@@ -270,6 +273,20 @@ const PricingCardView = ({
       return <PlainChip accent>{t('按量计费')}</PlainChip>;
     }
     return <PlainChip>-</PlainChip>;
+  };
+
+  // 动态计费的辅助标识：档位数 / 时间条件 / 请求条件
+  const renderDynamicAuxChips = (model) => {
+    if (model.billing_mode !== 'tiered_expr' || !model.billing_expr) return null;
+    const exprBody = model.billing_expr.replace(/^v\d+:/, '');
+    const tierCount = (exprBody.match(/tier\(/g) || []).length;
+    const hasTimeCondition = /\b(?:hour|minute|weekday|month|day)\(/.test(exprBody);
+    const hasRequestCondition = /\b(?:param|header)\(/.test(exprBody);
+    const chips = [];
+    if (tierCount > 1) chips.push(`${tierCount}${t('档')}`);
+    if (hasTimeCondition) chips.push(t('含时间条件'));
+    if (hasRequestCondition) chips.push(t('含请求条件'));
+    return chips.map((label) => <PlainChip key={label}>{label}</PlainChip>);
   };
 
   // 标签行（计费类型 + 自定义标签合并到一行；自定义标签统一中性色）
@@ -283,6 +300,7 @@ const PricingCardView = ({
     return (
       <div className='flex items-center flex-wrap gap-1'>
         {renderBillingTag(model)}
+        {renderDynamicAuxChips(model)}
         {tagArr.length > 0 &&
           renderLimitedItems({
           items: customTags.map((tag, idx) => ({
@@ -574,7 +592,7 @@ const PricingCardView = ({
                         ))}
                       </div>
                     </div>
-                    {!isPerCall && !priceData.isDynamicPricing && (
+                    {!isPerCall && (
                       <>
                         <PriceLine
                           label={t('输入')}
@@ -617,7 +635,7 @@ const PricingCardView = ({
                         ))}
                       </div>
                     </div>
-                    {!isPerCall && !priceData.isDynamicPricing && (
+                    {!isPerCall && (
                       <>
                         <PriceLine
                           label={t('输出')}
@@ -682,23 +700,6 @@ const PricingCardView = ({
                       {' '}
                       / {t('次')}
                     </span>
-                  </div>
-                )}
-
-                {/* 阶梯计费摘要行 */}
-                {priceData.isDynamicPricing && (
-                  <div
-                    className='text-xs mb-3 px-2 py-1.5 rounded-md flex flex-col gap-1'
-                    style={{
-                      backgroundColor: 'var(--semi-color-fill-0)',
-                      color: 'var(--semi-color-text-1)',
-                    }}
-                  >
-                    {formatDynamicPriceSummary(
-                      priceData.billingExpr,
-                      t,
-                      priceData.usedGroupRatio,
-                    )}
                   </div>
                 )}
 
@@ -795,8 +796,19 @@ const PricingCardView = ({
 
 // 通用质朴 chip：与 GroupChip 视觉一致，但更中性。
 // - accent: 低饱和主题色底（用于计费类型这种"次重要但需要识别"的信息）
+// - warning: 低饱和警告色底（用于动态计费这类需要强提示的信息）
 // - 默认：填充中性灰底（用于自定义标签等装饰信息）
-const PlainChip = ({ children, accent }) => (
+const PlainChip = ({ children, accent, warning }) => {
+  let bg = 'var(--semi-color-fill-1)';
+  let fg = 'var(--semi-color-text-2)';
+  if (accent) {
+    bg = 'var(--semi-color-primary-light-default)';
+    fg = 'var(--semi-color-primary)';
+  } else if (warning) {
+    bg = 'var(--semi-color-warning-light-default)';
+    fg = 'var(--semi-color-warning)';
+  }
+  return (
   <span
     style={{
       display: 'inline-flex',
@@ -807,18 +819,15 @@ const PlainChip = ({ children, accent }) => (
       fontSize: 11,
       fontWeight: 500,
       lineHeight: 1,
-      backgroundColor: accent
-        ? 'var(--semi-color-primary-light-default)'
-        : 'var(--semi-color-fill-1)',
-      color: accent
-        ? 'var(--semi-color-primary)'
-        : 'var(--semi-color-text-2)',
+      backgroundColor: bg,
+      color: fg,
       whiteSpace: 'nowrap',
     }}
   >
     {children}
   </span>
-);
+  );
+};
 
 // 分组折扣 chip：可点击切换价格显示。统一用系统主题色（primary）。
 // - 激活态（priceData.usedGroup === group）：实色主题色背景 + 白字

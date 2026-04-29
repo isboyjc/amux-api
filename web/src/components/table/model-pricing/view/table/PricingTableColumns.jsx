@@ -26,7 +26,6 @@ import {
   calculateModelPrice,
   getModelPriceItems,
   getLobeHubIcon,
-  formatDynamicPriceSummary,
 } from '../../../../../helpers';
 import {
   renderLimitedItems,
@@ -237,19 +236,6 @@ export const getPricingTableColumns = ({
     dataIndex: 'model_price',
     render: (text, record, index) => {
       const priceData = getPriceData(record);
-
-      if (priceData.isDynamicPricing) {
-        return (
-          <div className='flex flex-col gap-1 text-xs text-gray-700'>
-            {formatDynamicPriceSummary(
-              priceData.billingExpr,
-              t,
-              priceData.usedGroupRatio,
-            )}
-          </div>
-        );
-      }
-
       const priceItems = getModelPriceItems(priceData, t, siteDisplayType);
       return (
         <div className='space-y-1'>
@@ -284,18 +270,6 @@ export const getPricingTableColumns = ({
         currency,
         quotaDisplayType: siteDisplayType,
       });
-
-      if (originalPriceData.isDynamicPricing) {
-        return (
-          <div className='flex flex-col gap-1 text-xs text-gray-400 line-through'>
-            {formatDynamicPriceSummary(
-              originalPriceData.billingExpr,
-              t,
-              1,
-            )}
-          </div>
-        );
-      }
 
       const priceItems = getModelPriceItems(originalPriceData, t, siteDisplayType);
 
