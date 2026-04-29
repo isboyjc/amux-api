@@ -25,20 +25,13 @@ import { BILLING_PRICING_VARS } from '../../../../../constants';
 import {
   splitBillingExprAndRequestRules,
   tryParseRequestRuleExpr,
-  SOURCE_TIME,
-  MATCH_RANGE,
-  MATCH_EQ,
-  MATCH_GTE,
-  MATCH_LT,
-  MATCH_CONTAINS,
-  MATCH_EXISTS,
+  describeRuleGroup,
 } from '../../../../../pages/Setting/Ratio/components/requestRuleExpr';
 
 const { Text } = Typography;
 
 const VAR_LABELS = { p: '输入', c: '输出' };
 const OP_LABELS = { '<': '<', '<=': '≤', '>': '>', '>=': '≥' };
-const TIME_FUNC_LABELS = { hour: '小时', minute: '分钟', weekday: '星期', month: '月份', day: '日期' };
 
 function formatTokenHint(value) {
   const n = Number(value);
@@ -60,30 +53,6 @@ function formatConditionSummary(conditions, t) {
     })
     .filter(Boolean)
     .join(' && ');
-}
-
-
-function describeCondition(cond, t) {
-  if (cond.source === SOURCE_TIME) {
-    const fn = t(TIME_FUNC_LABELS[cond.timeFunc] || cond.timeFunc);
-    const tz = cond.timezone || 'UTC';
-    if (cond.mode === MATCH_RANGE) {
-      return `${fn} ${cond.rangeStart}:00~${cond.rangeEnd}:00 (${tz})`;
-    }
-    const opMap = { [MATCH_EQ]: '=', [MATCH_GTE]: '≥', [MATCH_LT]: '<' };
-    return `${fn} ${opMap[cond.mode] || '='} ${cond.value} (${tz})`;
-  }
-  const src = cond.source === 'header' ? t('请求头') : t('请求参数');
-  const path = cond.path || '';
-  if (cond.mode === MATCH_EXISTS) return `${src} ${path} ${t('存在')}`;
-  if (cond.mode === MATCH_CONTAINS) return `${src} ${path} ${t('包含')} "${cond.value}"`;
-  const opMap = { eq: '=', gt: '>', gte: '≥', lt: '<', lte: '≤' };
-  return `${src} ${path} ${opMap[cond.mode] || '='} ${cond.value}`;
-}
-
-function describeGroup(group, t) {
-  const parts = (group.conditions || []).map((c) => describeCondition(c, t));
-  return parts.join(' && ');
 }
 
 export default function DynamicPricingBreakdown({ billingExpr, t }) {
@@ -194,7 +163,7 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
                 marginBottom: 4,
               }}
             >
-              <Text size='small'>{describeGroup(group, t)}</Text>
+              <Text size='small'>{describeRuleGroup(group, t)}</Text>
               <Tag color='orange' size='small' shape='circle'>{group.multiplier}x</Tag>
             </div>
           ))}

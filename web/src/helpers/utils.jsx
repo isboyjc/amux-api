@@ -23,6 +23,16 @@ import { toastConstants, BILLING_PRICING_VARS, BILLING_VAR_REGEX } from '../cons
 import React from 'react';
 import { toast } from 'react-toastify';
 import {
+  splitBillingExprAndRequestRules,
+  tryParseRequestRuleExpr,
+  describeRuleGroup,
+  SOURCE_TIME,
+  MATCH_RANGE,
+  MATCH_EQ,
+  MATCH_GTE,
+  MATCH_LT,
+} from '../pages/Setting/Ratio/components/requestRuleExpr';
+import {
   THINK_TAG_REGEX,
   MESSAGE_ROLES,
 } from '../constants/playground.constants';
@@ -645,6 +655,115 @@ export const selectFilter = (input, option) => {
 
 // -------------------------------
 // 模型定价计算工具函数
+// Evaluate the value of a time function (hour/minute/weekday/month/day) for
+// `now` in the given IANA timezone. Returns a number compatible with the
+// backend's Go `time.Weekday()` convention (Sunday=0..Saturday=6).
+function timeValueInZone(now, fn, timezone) {
+  const tz = timezone || 'UTC';
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = dtf.formatToParts(now);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  switch (fn) {
+    case 'hour': {
+      const h = Number(get('hour'));
+      return h === 24 ? 0 : h; // some impls emit "24" at midnight
+    }
+    case 'minute':
+      return Number(get('minute'));
+    case 'weekday': {
+      const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      return map[get('weekday')] ?? 0;
+    }
+    case 'month':
+      return Number(get('month'));
+    case 'day':
+      return Number(get('day'));
+    default:
+      return 0;
+  }
+}
+
+function evalRuleConditionAtTime(cond, now) {
+  // Non-time conditions (header/param) depend on the actual request — the
+  // pricing card has no request to evaluate against, so return null = unknown.
+  if (cond.source !== SOURCE_TIME) return null;
+  const v = timeValueInZone(now, cond.timeFunc, cond.timezone);
+  if (cond.mode === MATCH_RANGE) {
+    const a = Number(cond.rangeStart);
+    const b = Number(cond.rangeEnd);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    return a <= b ? v >= a && v <= b : v >= a || v <= b;
+  }
+  const target = Number(cond.value);
+  switch (cond.mode) {
+    case MATCH_EQ:
+      return v === target;
+    case MATCH_GTE:
+      return v >= target;
+    case MATCH_LT:
+      return v < target;
+    default:
+      return null;
+  }
+}
+
+// Evaluate request rules attached to a billing expression against the current
+// time (timezone-aware). Used by the model card to surface 命中 status and
+// fold time-based discounts into the displayed price. Request-param/header
+// rules are skipped (cannot be evaluated without an actual request).
+export function evaluateTieredTimeRules(billingExpr, now = new Date()) {
+  const empty = {
+    effectiveMultiplier: 1,
+    fired: [],
+    hasTime: false,
+    hasRequest: false,
+  };
+  if (!billingExpr) return empty;
+  const { requestRuleExpr } = splitBillingExprAndRequestRules(
+    billingExpr.replace(/^v\d+:/, ''),
+  );
+  if (!requestRuleExpr) return empty;
+  const groups = tryParseRequestRuleExpr(requestRuleExpr);
+  if (!groups || groups.length === 0) return empty;
+
+  const fired = [];
+  let hasTime = false;
+  let hasRequest = false;
+  let effectiveMultiplier = 1;
+  for (const g of groups) {
+    const conditions = g.conditions || [];
+    const isAllTime = conditions.every((c) => c.source === SOURCE_TIME);
+    if (isAllTime) hasTime = true;
+    else hasRequest = true;
+    if (!isAllTime) continue; // skip rules we can't evaluate
+
+    let allTrue = true;
+    for (const c of conditions) {
+      const r = evalRuleConditionAtTime(c, now);
+      if (r !== true) {
+        allTrue = false;
+        break;
+      }
+    }
+    if (allTrue) {
+      const m = Number(g.multiplier);
+      if (Number.isFinite(m)) {
+        effectiveMultiplier *= m;
+        fired.push({ multiplier: m, conditions });
+      }
+    }
+  }
+  return { effectiveMultiplier, fired, hasTime, hasRequest };
+}
+
 export const calculateModelPrice = ({
   record,
   selectedGroup,
@@ -654,6 +773,9 @@ export const calculateModelPrice = ({
   currency,
   quotaDisplayType = 'USD',
   precision = 4,
+  // When false, skip evaluating time/request rule multipliers — used by the
+  // "划线原价" comparison so it always reflects the unmodified upstream price.
+  applyRuleMultiplier = true,
 }) => {
   // 1. 选择实际使用的分组
   let usedGroup = selectedGroup;
@@ -703,6 +825,11 @@ export const calculateModelPrice = ({
       if (!(vm[1] in baseCoeffs)) baseCoeffs[vm[1]] = Number(vm[2]);
     }
 
+    const ruleEval = applyRuleMultiplier
+      ? evaluateTieredTimeRules(record.billing_expr)
+      : { effectiveMultiplier: 1, fired: [], hasTime: false, hasRequest: false };
+    const effectiveTimeMultiplier = ruleEval.effectiveMultiplier;
+
     const summary = {
       isDynamicPricing: true,
       billingExpr: record.billing_expr,
@@ -711,6 +838,12 @@ export const calculateModelPrice = ({
       hasRequestCondition,
       usedGroup,
       usedGroupRatio,
+      // Time/request rule evaluation snapshot at render time. The card uses
+      // `firedRules` to show 命中 chips and folds `effectiveTimeMultiplier`
+      // into the displayed price so users see the actual current price.
+      firedRules: ruleEval.fired,
+      effectiveTimeMultiplier,
+      hasUnevaluatedRequestRule: ruleEval.hasRequest,
     };
 
     if (isTokensDisplay || !('p' in baseCoeffs || 'c' in baseCoeffs)) {
@@ -732,7 +865,7 @@ export const calculateModelPrice = ({
 
     const fmtPrice = (coeff) => {
       if (!coeff || coeff <= 0) return null;
-      return `${symbol}${(coeff * usedGroupRatio * rate).toFixed(precision)}`;
+      return `${symbol}${(coeff * usedGroupRatio * effectiveTimeMultiplier * rate).toFixed(precision)}`;
     };
 
     return {

@@ -37,6 +37,7 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
   renderTaskBillingProcess,
+  renderTieredLogContent,
   renderTieredModelPrice,
 } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
@@ -429,7 +430,17 @@ export const useLogsData = () => {
         });
       }
       if (logs[i].type === 2) {
-        if (other?.model_ratio != null && other?.billing_mode !== 'tiered_expr') {
+        if (other?.billing_mode === 'tiered_expr' && other?.expr_b64) {
+          expandDataLocal.push({
+            key: t('日志详情'),
+            value: renderTieredLogContent({
+              ...other,
+              prompt_tokens: logs[i].prompt_tokens,
+              completion_tokens: logs[i].completion_tokens,
+              displayMode: billingDisplayMode,
+            }),
+          });
+        } else if (other?.model_ratio != null) {
           expandDataLocal.push({
             key: t('日志详情'),
             value: other?.claude

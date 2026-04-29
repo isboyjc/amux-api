@@ -278,7 +278,14 @@ func InjectTieredBillingInfo(other map[string]interface{}, relayInfo *relaycommo
 	}
 	other["billing_mode"] = "tiered_expr"
 	other["expr_b64"] = base64.StdEncoding.EncodeToString([]byte(snap.ExprString))
+	other["tiered_quota_per_unit"] = snap.QuotaPerUnit
 	if result != nil {
 		other["matched_tier"] = result.MatchedTier
+		// actual_quota_before_group is the post-rules cost converted to quota,
+		// before applying the group ratio. Frontend uses this to derive the
+		// effective rule multiplier (e.g. weekday discount) by comparing it
+		// against tier_base_cost computed from tier coefficients × actual tokens.
+		other["tiered_actual_quota_before_group"] = result.ActualQuotaBeforeGroup
+		other["tiered_actual_quota_after_group"] = result.ActualQuotaAfterGroup
 	}
 }

@@ -441,3 +441,41 @@ export function splitBillingExprAndRequestRules(expr) {
     requestRuleExpr: ruleParts.join(' * '),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Human-readable rule descriptions (shared by editor preview + log render)
+// ---------------------------------------------------------------------------
+
+export const RULE_VAR_LABELS = { p: '输入', c: '输出' };
+export const RULE_OP_LABELS = { '<': '<', '<=': '≤', '>': '>', '>=': '≥' };
+export const RULE_TIME_FUNC_LABELS = {
+  hour: '小时',
+  minute: '分钟',
+  weekday: '星期',
+  month: '月份',
+  day: '日期',
+};
+
+export function describeRuleCondition(cond, t) {
+  if (cond.source === SOURCE_TIME) {
+    const fn = t(RULE_TIME_FUNC_LABELS[cond.timeFunc] || cond.timeFunc);
+    const tz = cond.timezone || 'UTC';
+    if (cond.mode === MATCH_RANGE) {
+      return `${fn} ${cond.rangeStart}:00~${cond.rangeEnd}:00 (${tz})`;
+    }
+    const opMap = { [MATCH_EQ]: '=', [MATCH_GTE]: '≥', [MATCH_LT]: '<' };
+    return `${fn} ${opMap[cond.mode] || '='} ${cond.value} (${tz})`;
+  }
+  const src = cond.source === 'header' ? t('请求头') : t('请求参数');
+  const path = cond.path || '';
+  if (cond.mode === MATCH_EXISTS) return `${src} ${path} ${t('存在')}`;
+  if (cond.mode === MATCH_CONTAINS) return `${src} ${path} ${t('包含')} "${cond.value}"`;
+  const opMap = { eq: '=', gt: '>', gte: '≥', lt: '<', lte: '≤' };
+  return `${src} ${path} ${opMap[cond.mode] || '='} ${cond.value}`;
+}
+
+export function describeRuleGroup(group, t) {
+  return (group.conditions || [])
+    .map((c) => describeRuleCondition(c, t))
+    .join(' && ');
+}

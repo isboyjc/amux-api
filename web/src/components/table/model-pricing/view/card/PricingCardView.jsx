@@ -50,6 +50,7 @@ import {
   MODEL_INPUT_CAPABILITIES,
   MODEL_OUTPUT_CAPABILITIES,
 } from '../../../../../helpers';
+import { describeRuleGroup } from '../../../../../pages/Setting/Ratio/components/requestRuleExpr';
 import PricingCardSkeleton from './PricingCardSkeleton';
 import ModelHealthTimeline from '../common/ModelHealthTimeline';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
@@ -261,10 +262,10 @@ const PricingCardView = ({
   };
 
   // 计费类型标签：按次/按量统一为低饱和的主题色 chip，仅文本区分
-  // 动态计费用 warning 色和按次/按量区分；多档/时间条件/请求条件以中性 chip 补充
+  // 动态计费由 renderDynamicAuxChips 统一处理（含档位、特惠等组合），这里返回 null
   const renderBillingTag = (model) => {
     if (model.billing_mode === 'tiered_expr' && model.billing_expr) {
-      return <PlainChip warning>{t('动态计费')}</PlainChip>;
+      return null;
     }
     if (model.quota_type === 1) {
       return <PlainChip accent>{t('按次计费')}</PlainChip>;
@@ -275,22 +276,86 @@ const PricingCardView = ({
     return <PlainChip>-</PlainChip>;
   };
 
-  // 动态计费的辅助标识：档位数 / 时间条件 / 请求条件
-  const renderDynamicAuxChips = (model) => {
+  // 动态计费一栏 chip 顺序：
+  //   特惠命中 → 动态计费(N档) → 含请求条件 / 含时间条件
+  // - 特惠 chip：warning 色，文案「特惠进行中（限时/规则）」，hover tooltip 显示规则细节
+  //   命中时放在最前以最大程度吸引注意力
+  // - 动态计费 chip：中性 chip，多档时合并为「动态计费（N档）」一个标签
+  // - 含时间条件 / 含请求条件：未命中时的中性提示
+  const renderDynamicAuxChips = (model, priceData) => {
     if (model.billing_mode !== 'tiered_expr' || !model.billing_expr) return null;
     const exprBody = model.billing_expr.replace(/^v\d+:/, '');
     const tierCount = (exprBody.match(/tier\(/g) || []).length;
     const hasTimeCondition = /\b(?:hour|minute|weekday|month|day)\(/.test(exprBody);
     const hasRequestCondition = /\b(?:param|header)\(/.test(exprBody);
+    const firedRules = priceData?.firedRules || [];
     const chips = [];
-    if (tierCount > 1) chips.push(`${tierCount}${t('档')}`);
-    if (hasTimeCondition) chips.push(t('含时间条件'));
-    if (hasRequestCondition) chips.push(t('含请求条件'));
-    return chips.map((label) => <PlainChip key={label}>{label}</PlainChip>);
+
+    // 1) 特惠命中：放第一位
+    if (firedRules.length > 0) {
+      const allTime = firedRules.every((r) =>
+        (r.conditions || []).every((c) => c.source === 'time'),
+      );
+      const promoLabel = allTime
+        ? t('特惠进行中（限时）')
+        : t('特惠进行中（规则）');
+      const tooltipLines = firedRules.map((r) => {
+        const desc = describeRuleGroup(r, t);
+        const m = Number(r.multiplier).toFixed(4).replace(/\.?0+$/, '');
+        return `${desc} ×${m}`;
+      });
+      chips.push({
+        key: 'promo',
+        warning: true,
+        label: promoLabel,
+        tooltip: tooltipLines.join('\n'),
+      });
+    }
+
+    // 2) 动态计费（N档）— 与按次/按量计费保持同一种 accent 样式，档位数合并到文案
+    chips.push({
+      key: 'dyn',
+      accent: true,
+      label: tierCount > 1 ? t('动态计费（{{n}}档）', { n: tierCount }) : t('动态计费'),
+    });
+
+    // 3) 含 X 条件：仅在未命中对应类别时展示作为说明性提示
+    if (firedRules.length === 0) {
+      // 没有任何规则命中：两种条件都按配置显示
+      if (hasTimeCondition) chips.push({ key: 'has-time', label: t('含时间条件') });
+      if (hasRequestCondition) chips.push({ key: 'has-request', label: t('含请求条件') });
+    } else {
+      // 命中了部分规则：另一类如果配置了仍展示
+      const firedHasTime = firedRules.some((r) =>
+        (r.conditions || []).every((c) => c.source === 'time'),
+      );
+      const firedHasRequest = firedRules.some((r) =>
+        (r.conditions || []).some((c) => c.source !== 'time'),
+      );
+      if (hasTimeCondition && !firedHasTime) {
+        chips.push({ key: 'has-time', label: t('含时间条件') });
+      }
+      if (hasRequestCondition && !firedHasRequest) {
+        chips.push({ key: 'has-request', label: t('含请求条件') });
+      }
+    }
+
+    return chips.map((c) => {
+      const node = (
+        <PlainChip key={c.key} warning={c.warning} accent={c.accent}>
+          {c.label}
+        </PlainChip>
+      );
+      return c.tooltip ? (
+        <Tooltip key={c.key} content={c.tooltip} position='top' showArrow={false}>
+          {node}
+        </Tooltip>
+      ) : node;
+    });
   };
 
   // 标签行（计费类型 + 自定义标签合并到一行；自定义标签统一中性色）
-  const renderTagsRow = (model) => {
+  const renderTagsRow = (model, priceData) => {
     const tagArr = model.tags
       ? model.tags.split(',').filter(Boolean)
       : [];
@@ -300,7 +365,7 @@ const PricingCardView = ({
     return (
       <div className='flex items-center flex-wrap gap-1'>
         {renderBillingTag(model)}
-        {renderDynamicAuxChips(model)}
+        {renderDynamicAuxChips(model, priceData)}
         {tagArr.length > 0 &&
           renderLimitedItems({
           items: customTags.map((tag, idx) => ({
@@ -391,6 +456,8 @@ const PricingCardView = ({
           });
 
           // 原价（倍率 1）用于折扣对比展示
+          // applyRuleMultiplier=false：原价不应受时间/请求条件影响，否则
+          // 划线对比会失真（命中 0.1 时原价也被 ×0.1，没法看出真实折扣）
           const originalPriceData = calculateModelPrice({
             record: model,
             selectedGroup: 'all',
@@ -399,6 +466,7 @@ const PricingCardView = ({
             displayPrice,
             currency,
             quotaDisplayType: siteDisplayType,
+            applyRuleMultiplier: false,
           });
           const showPriceCompare =
             priceData.usedGroupRatio !== undefined &&
@@ -410,6 +478,12 @@ const PricingCardView = ({
           // 输入/输出能力集合（后端 ResolveCapabilities 已解析，前端只渲染）
           const inputCaps = new Set(model.input_modalities || []);
           const outputCaps = new Set(model.output_modalities || []);
+
+          // 时间/请求规则评估结果。当某条时间规则命中时，所有分组的折扣
+          // 都应叠加这个倍率（规则与分组无关，作用于整体价格）；用 promo
+          // 标记触发徽章。
+          const ruleMultiplier = priceData.effectiveTimeMultiplier ?? 1;
+          const hasPromo = Math.abs(ruleMultiplier - 1) > 1e-6;
 
           // 分组折扣（紧凑格式）
           const modelEnableGroups = Array.isArray(model.enable_groups)
@@ -436,12 +510,16 @@ const PricingCardView = ({
                   : isVipExclusive
                     ? vipRatio
                     : currentRatio;
-              const discount = formatGroupDiscount(useRatio, t);
+              // 折叠时间/请求规则倍率：分组折扣 × 规则倍率 = 当前最终折扣
+              const effectiveRatio = useRatio * ruleMultiplier;
+              const discount = formatGroupDiscount(effectiveRatio, t);
               if (!discount) return null;
               return {
                 group,
-                ratio: useRatio,
+                ratio: effectiveRatio,
+                baseRatio: useRatio,
                 discount,
+                promo: hasPromo,
               };
             })
             .filter(Boolean)
@@ -714,7 +792,7 @@ const PricingCardView = ({
                     {/* 左：标签顶部，分组底部对齐 */}
                     <div className='min-w-0 flex flex-col'>
                       {/* 标签行（计费类型 + 自定义标签） */}
-                      <div>{renderTagsRow(model)}</div>
+                      <div>{renderTagsRow(model, priceData)}</div>
 
                       {/* 可用分组 + 折扣 chip（贴底对齐；最多 4 个，自动换行） */}
                       {availableGroups.length > 0 && (
@@ -743,6 +821,7 @@ const PricingCardView = ({
                                         isActive={isActive}
                                         clickable={allowCardSwitch}
                                         unavailable={unavailable}
+                                        promo={d.promo}
                                         unavailableTooltip={t(
                                           '当前用户分组无法访问此渠道分组，点击查看升级方式',
                                         )}
@@ -840,6 +919,7 @@ const GroupChip = ({
   clickable,
   unavailable,
   unavailableTooltip,
+  promo,
   onClick,
 }) => {
   const [hover, setHover] = React.useState(false);
@@ -855,7 +935,9 @@ const GroupChip = ({
     fg = 'var(--semi-color-text-2)';
   } else if (isActive) {
     bg = 'var(--semi-color-primary)';
-    fg = '#fff';
+    // The fork inverts --semi-color-primary to white in dark mode, so we must
+    // use the matching foreground var (auto-contrasts) instead of a literal #fff.
+    fg = 'var(--semi-color-primary-foreground)';
   } else {
     bg =
       clickable && hover
@@ -891,8 +973,25 @@ const GroupChip = ({
         transition: 'background-color 0.15s ease, color 0.15s ease',
         whiteSpace: 'nowrap',
         textDecoration: unavailable ? 'line-through' : 'none',
+        position: 'relative',
       }}
     >
+      {/* 时间/规则特惠激活时叠加在分组 chip 右上角的圆点徽章 */}
+      {promo && !unavailable && (
+        <span
+          style={{
+            position: 'absolute',
+            top: -2,
+            right: -2,
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            backgroundColor: 'var(--semi-color-warning)',
+            border: '1px solid var(--semi-color-bg-0)',
+          }}
+          aria-hidden='true'
+        />
+      )}
       <span>{group}</span>
       <span style={{ opacity: 0.85 }}>{discountText}</span>
     </span>

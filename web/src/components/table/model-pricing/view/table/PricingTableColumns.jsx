@@ -269,6 +269,7 @@ export const getPricingTableColumns = ({
         displayPrice,
         currency,
         quotaDisplayType: siteDisplayType,
+        applyRuleMultiplier: false,
       });
 
       const priceItems = getModelPriceItems(originalPriceData, t, siteDisplayType);

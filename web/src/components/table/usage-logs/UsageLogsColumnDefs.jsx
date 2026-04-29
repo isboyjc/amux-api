@@ -467,7 +467,13 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   const summaryOpts = { ...other, displayMode: billingDisplayMode, outputMode: 'segments' };
 
   if (other?.billing_mode === 'tiered_expr') {
-    return { segments: renderTieredModelPriceSimple(summaryOpts) };
+    return {
+      segments: renderTieredModelPriceSimple({
+        ...summaryOpts,
+        prompt_tokens: record?.prompt_tokens,
+        completion_tokens: record?.completion_tokens,
+      }),
+    };
   }
 
   return {
