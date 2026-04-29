@@ -19,9 +19,19 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { Toast, Pagination } from '@douyinfe/semi-ui';
 import i18next from 'i18next';
-import { toastConstants } from '../constants';
+import { toastConstants, BILLING_PRICING_VARS, BILLING_VAR_REGEX } from '../constants';
 import React from 'react';
 import { toast } from 'react-toastify';
+import {
+  splitBillingExprAndRequestRules,
+  tryParseRequestRuleExpr,
+  describeRuleGroup,
+  SOURCE_TIME,
+  MATCH_RANGE,
+  MATCH_EQ,
+  MATCH_GTE,
+  MATCH_LT,
+} from '../pages/Setting/Ratio/components/requestRuleExpr';
 import {
   THINK_TAG_REGEX,
   MESSAGE_ROLES,
@@ -645,6 +655,115 @@ export const selectFilter = (input, option) => {
 
 // -------------------------------
 // 模型定价计算工具函数
+// Evaluate the value of a time function (hour/minute/weekday/month/day) for
+// `now` in the given IANA timezone. Returns a number compatible with the
+// backend's Go `time.Weekday()` convention (Sunday=0..Saturday=6).
+function timeValueInZone(now, fn, timezone) {
+  const tz = timezone || 'UTC';
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = dtf.formatToParts(now);
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+  switch (fn) {
+    case 'hour': {
+      const h = Number(get('hour'));
+      return h === 24 ? 0 : h; // some impls emit "24" at midnight
+    }
+    case 'minute':
+      return Number(get('minute'));
+    case 'weekday': {
+      const map = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+      return map[get('weekday')] ?? 0;
+    }
+    case 'month':
+      return Number(get('month'));
+    case 'day':
+      return Number(get('day'));
+    default:
+      return 0;
+  }
+}
+
+function evalRuleConditionAtTime(cond, now) {
+  // Non-time conditions (header/param) depend on the actual request — the
+  // pricing card has no request to evaluate against, so return null = unknown.
+  if (cond.source !== SOURCE_TIME) return null;
+  const v = timeValueInZone(now, cond.timeFunc, cond.timezone);
+  if (cond.mode === MATCH_RANGE) {
+    const a = Number(cond.rangeStart);
+    const b = Number(cond.rangeEnd);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    return a <= b ? v >= a && v <= b : v >= a || v <= b;
+  }
+  const target = Number(cond.value);
+  switch (cond.mode) {
+    case MATCH_EQ:
+      return v === target;
+    case MATCH_GTE:
+      return v >= target;
+    case MATCH_LT:
+      return v < target;
+    default:
+      return null;
+  }
+}
+
+// Evaluate request rules attached to a billing expression against the current
+// time (timezone-aware). Used by the model card to surface 命中 status and
+// fold time-based discounts into the displayed price. Request-param/header
+// rules are skipped (cannot be evaluated without an actual request).
+export function evaluateTieredTimeRules(billingExpr, now = new Date()) {
+  const empty = {
+    effectiveMultiplier: 1,
+    fired: [],
+    hasTime: false,
+    hasRequest: false,
+  };
+  if (!billingExpr) return empty;
+  const { requestRuleExpr } = splitBillingExprAndRequestRules(
+    billingExpr.replace(/^v\d+:/, ''),
+  );
+  if (!requestRuleExpr) return empty;
+  const groups = tryParseRequestRuleExpr(requestRuleExpr);
+  if (!groups || groups.length === 0) return empty;
+
+  const fired = [];
+  let hasTime = false;
+  let hasRequest = false;
+  let effectiveMultiplier = 1;
+  for (const g of groups) {
+    const conditions = g.conditions || [];
+    const isAllTime = conditions.every((c) => c.source === SOURCE_TIME);
+    if (isAllTime) hasTime = true;
+    else hasRequest = true;
+    if (!isAllTime) continue; // skip rules we can't evaluate
+
+    let allTrue = true;
+    for (const c of conditions) {
+      const r = evalRuleConditionAtTime(c, now);
+      if (r !== true) {
+        allTrue = false;
+        break;
+      }
+    }
+    if (allTrue) {
+      const m = Number(g.multiplier);
+      if (Number.isFinite(m)) {
+        effectiveMultiplier *= m;
+        fired.push({ multiplier: m, conditions });
+      }
+    }
+  }
+  return { effectiveMultiplier, fired, hasTime, hasRequest };
+}
+
 export const calculateModelPrice = ({
   record,
   selectedGroup,
@@ -654,6 +773,9 @@ export const calculateModelPrice = ({
   currency,
   quotaDisplayType = 'USD',
   precision = 4,
+  // When false, skip evaluating time/request rule multipliers — used by the
+  // "划线原价" comparison so it always reflects the unmodified upstream price.
+  applyRuleMultiplier = true,
 }) => {
   // 1. 选择实际使用的分组
   let usedGroup = selectedGroup;
@@ -682,7 +804,83 @@ export const calculateModelPrice = ({
     }
   }
 
-  // 2. 根据计费类型计算价格
+  // 2. 动态计费（tiered_expr）
+  // 提取首档系数填入 inputPrice/cachePrice/completionPrice/createCachePrice，
+  // 让卡片仍能复用 PriceLine 2 列网格展示（与普通按量计费视觉一致）；
+  // 时间条件 / 多档信息通过 tier 标签在底部计费类型行展示。
+  if (record.billing_mode === 'tiered_expr' && record.billing_expr) {
+    const isTokensDisplay = quotaDisplayType === 'TOKENS';
+    const exprBody = record.billing_expr.replace(/^v\d+:/, '');
+
+    // tier 数量：统计 tier( 出现次数；时间/请求条件：检测函数调用
+    const tierCount = (exprBody.match(/tier\(/g) || []).length;
+    const hasTimeCondition = /\b(?:hour|minute|weekday|month|day)\(/.test(exprBody);
+    const hasRequestCondition = /\b(?:param|header)\(/.test(exprBody);
+
+    // 提取首档系数：扫描 `var * coeff` 模式，取首次出现（即第一档）
+    const baseCoeffs = {};
+    const varRe = new RegExp(BILLING_VAR_REGEX.source, 'g');
+    let vm;
+    while ((vm = varRe.exec(exprBody)) !== null) {
+      if (!(vm[1] in baseCoeffs)) baseCoeffs[vm[1]] = Number(vm[2]);
+    }
+
+    const ruleEval = applyRuleMultiplier
+      ? evaluateTieredTimeRules(record.billing_expr)
+      : { effectiveMultiplier: 1, fired: [], hasTime: false, hasRequest: false };
+    const effectiveTimeMultiplier = ruleEval.effectiveMultiplier;
+
+    const summary = {
+      isDynamicPricing: true,
+      billingExpr: record.billing_expr,
+      tierCount,
+      hasTimeCondition,
+      hasRequestCondition,
+      usedGroup,
+      usedGroupRatio,
+      // Time/request rule evaluation snapshot at render time. The card uses
+      // `firedRules` to show 命中 chips and folds `effectiveTimeMultiplier`
+      // into the displayed price so users see the actual current price.
+      firedRules: ruleEval.fired,
+      effectiveTimeMultiplier,
+      hasUnevaluatedRequestRule: ruleEval.hasRequest,
+    };
+
+    if (isTokensDisplay || !('p' in baseCoeffs || 'c' in baseCoeffs)) {
+      return summary;
+    }
+
+    let symbol = '$';
+    let rate = 1;
+    try {
+      const status = JSON.parse(localStorage.getItem('status') || '{}');
+      if (quotaDisplayType === 'CNY') {
+        symbol = '¥';
+        rate = status?.usd_exchange_rate || 7;
+      } else if (quotaDisplayType === 'CUSTOM') {
+        symbol = status?.custom_currency_symbol || '¤';
+        rate = status?.custom_currency_exchange_rate || 1;
+      }
+    } catch {}
+
+    const fmtPrice = (coeff) => {
+      if (!coeff || coeff <= 0) return null;
+      return `${symbol}${(coeff * usedGroupRatio * effectiveTimeMultiplier * rate).toFixed(precision)}`;
+    };
+
+    return {
+      ...summary,
+      isPerToken: true,
+      isTokensDisplay: false,
+      unitLabel: 'M',
+      inputPrice: fmtPrice(baseCoeffs.p),
+      completionPrice: fmtPrice(baseCoeffs.c),
+      cachePrice: fmtPrice(baseCoeffs.cr),
+      createCachePrice: fmtPrice(baseCoeffs.cc),
+    };
+  }
+
+  // 3. 根据计费类型计算价格
   if (record.quota_type === 0) {
     // 按量计费
     const isTokensDisplay = quotaDisplayType === 'TOKENS';
@@ -817,6 +1015,19 @@ export const getModelPriceItems = (
   t,
   quotaDisplayType = 'USD',
 ) => {
+  // 动态计费且没有可展示的首档价格（例如倍率展示模式）时回退为单行 chip 文案
+  if (priceData.isDynamicPricing && !priceData.isPerToken) {
+    return [
+      {
+        key: 'dynamic',
+        label: t('动态计费'),
+        value: '',
+        suffix: '',
+        isDynamic: true,
+      },
+    ];
+  }
+
   if (priceData.isPerToken) {
     if (quotaDisplayType === 'TOKENS' || priceData.isTokensDisplay) {
       return [

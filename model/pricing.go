@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 )
@@ -37,6 +38,8 @@ type Pricing struct {
 	// 数组形式（已按官方顺序去重）。前端直接用作能力图标点亮依据，无需再做推断。
 	InputModalities  []string `json:"input_modalities"`
 	OutputModalities []string `json:"output_modalities"`
+	BillingMode      string   `json:"billing_mode,omitempty"`
+	BillingExpr      string   `json:"billing_expr,omitempty"`
 	PricingVersion   string   `json:"pricing_version,omitempty"`
 }
 
@@ -78,6 +81,16 @@ func GetPricing() []Pricing {
 	}
 	return pricingMap
 }
+
+func InvalidatePricingCache() {
+	updatePricingLock.Lock()
+	defer updatePricingLock.Unlock()
+
+	pricingMap = nil
+	vendorsList = nil
+	lastGetPricingTime = time.Time{}
+}
+
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
@@ -343,6 +356,12 @@ func updatePricing() {
 		if ratio_setting.ContainsAudioCompletionRatio(model) {
 			audioCompletionRatio := ratio_setting.GetAudioCompletionRatio(model)
 			pricing.AudioCompletionRatio = &audioCompletionRatio
+		}
+		if billingMode := billing_setting.GetBillingMode(model); billingMode == "tiered_expr" {
+			if expr, ok := billing_setting.GetBillingExpr(model); ok && expr != "" {
+				pricing.BillingMode = billingMode
+				pricing.BillingExpr = expr
+			}
 		}
 		pricingMap = append(pricingMap, pricing)
 	}

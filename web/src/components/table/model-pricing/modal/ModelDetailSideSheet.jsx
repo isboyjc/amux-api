@@ -28,6 +28,7 @@ import ModelPricingReference from './components/ModelPricingReference';
 import ModelHealthSection from './components/ModelHealthSection';
 import ModelEndpoints from './components/ModelEndpoints';
 import ModelPricingTable from './components/ModelPricingTable';
+import DynamicPricingBreakdown from './components/DynamicPricingBreakdown';
 
 const { Text } = Typography;
 
@@ -76,7 +77,7 @@ const ModelDetailSideSheet = ({
       }
       onCancel={onClose}
     >
-      <div className='p-2'>
+      <div className='p-2 flex flex-col gap-1'>
         {!modelData && (
           <div className='flex justify-center items-center py-10'>
             <Text type='secondary'>{t('加载中...')}</Text>
@@ -103,6 +104,12 @@ const ModelDetailSideSheet = ({
               endpointMap={endpointMap}
               t={t}
             />
+            {modelData.billing_mode === 'tiered_expr' && modelData.billing_expr && (
+              <DynamicPricingBreakdown
+                billingExpr={modelData.billing_expr}
+                t={t}
+              />
+            )}
             <ModelPricingTable
               modelData={modelData}
               groupRatio={groupRatio}

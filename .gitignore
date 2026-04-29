@@ -30,5 +30,7 @@ data/
 .gopath
 tmp/
 
+.test
 token_estimator_test.go
 .cursor
+skills-lock.json

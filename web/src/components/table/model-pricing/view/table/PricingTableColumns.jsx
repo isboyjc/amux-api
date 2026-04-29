@@ -237,7 +237,6 @@ export const getPricingTableColumns = ({
     render: (text, record, index) => {
       const priceData = getPriceData(record);
       const priceItems = getModelPriceItems(priceData, t, siteDisplayType);
-
       return (
         <div className='space-y-1'>
           {priceItems.map((item) => (
@@ -256,7 +255,7 @@ export const getPricingTableColumns = ({
     dataIndex: 'original_price',
     render: (text, record, index) => {
       const priceData = getPriceData(record);
-      
+
       // 只有当倍率不为1时才显示
       if (priceData.usedGroupRatio === 1 || priceData.usedGroupRatio === undefined) {
         return '-';
@@ -270,6 +269,7 @@ export const getPricingTableColumns = ({
         displayPrice,
         currency,
         quotaDisplayType: siteDisplayType,
+        applyRuleMultiplier: false,
       });
 
       const priceItems = getModelPriceItems(originalPriceData, t, siteDisplayType);

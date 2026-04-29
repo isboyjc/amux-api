@@ -25,6 +25,17 @@ import {
   getModalityShortLabel,
   MODALITY_COLOR,
 } from '../constants/modalityLabels';
+import {
+  BILLING_PRICING_VARS,
+  BILLING_VAR_KEY_TO_FIELD,
+  BILLING_VAR_REGEX,
+} from '../constants';
+import {
+  splitBillingExprAndRequestRules,
+  tryParseRequestRuleExpr,
+  describeRuleGroup,
+  SOURCE_TIME,
+} from '../pages/Setting/Ratio/components/requestRuleExpr';
 import { visit } from 'unist-util-visit';
 import * as LobeIcons from '@lobehub/icons';
 import {
@@ -1711,37 +1722,39 @@ export function renderTaskBillingProcess(other, content) {
   ]);
 }
 
-export function renderModelPrice(
-  inputTokens,
-  completionTokens,
-  modelRatio,
-  modelPrice = -1,
-  completionRatio,
-  groupRatio,
-  user_group_ratio,
-  cacheTokens = 0,
-  cacheRatio = 1.0,
-  image = false,
-  imageRatio = 1.0,
-  imageOutputTokens = 0,
-  webSearch = false,
-  webSearchCallCount = 0,
-  webSearchPrice = 0,
-  fileSearch = false,
-  fileSearchCallCount = 0,
-  fileSearchPrice = 0,
-  audioInputSeperatePrice = false,
-  audioInputTokens = 0,
-  audioInputPrice = 0,
-  imageGenerationCall = false,
-  imageGenerationCallPrice = 0,
-  displayMode = 'price',
-) {
+export function renderModelPrice(opts) {
+  const {
+    prompt_tokens: inputTokens = 0,
+    completion_tokens: completionTokens = 0,
+    model_ratio: modelRatio = 0,
+    model_price: modelPrice = -1,
+    completion_ratio: _completionRatio,
+    group_ratio: _groupRatio,
+    user_group_ratio,
+    cache_tokens: cacheTokens = 0,
+    cache_ratio: cacheRatio = 1.0,
+    image = false,
+    image_ratio: imageRatio = 1.0,
+    image_output: imageOutputTokens = 0,
+    web_search: webSearch = false,
+    web_search_call_count: webSearchCallCount = 0,
+    web_search_price: webSearchPrice = 0,
+    file_search: fileSearch = false,
+    file_search_call_count: fileSearchCallCount = 0,
+    file_search_price: fileSearchPrice = 0,
+    audio_input_seperate_price: audioInputSeperatePrice = false,
+    audio_input_token_count: audioInputTokens = 0,
+    audio_input_price: audioInputPrice = 0,
+    image_generation_call: imageGenerationCall = false,
+    image_generation_call_price: imageGenerationCallPrice = 0,
+    displayMode = 'price',
+  } = opts;
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
-    groupRatio,
+    _groupRatio,
     user_group_ratio,
   );
-  groupRatio = effectiveGroupRatio;
+  let groupRatio = effectiveGroupRatio;
+  const completionRatio = _completionRatio ?? 0;
 
   const { symbol, rate } = getCurrencyConfig();
 
@@ -1768,9 +1781,6 @@ export function renderModelPrice(
       ]);
     }
 
-    if (completionRatio === undefined) {
-      completionRatio = 0;
-    }
     const inputRatioPrice = modelRatio * 2.0;
     const completionRatioPrice = modelRatio * 2.0 * completionRatio;
     const cacheRatioPrice = modelRatio * 2.0 * cacheRatio;
@@ -1981,10 +1991,6 @@ export function renderModelPrice(
     );
   }
 
-  if (completionRatio === undefined) {
-    completionRatio = 0;
-  }
-
   const modelRatioValue = formatRatioValue(modelRatio);
   const completionRatioValue = formatRatioValue(completionRatio);
   const cacheRatioValue = formatRatioValue(cacheRatio);
@@ -2169,21 +2175,22 @@ export function renderModelPrice(
   ]);
 }
 
-export function renderLogContent(
-  modelRatio,
-  completionRatio,
-  modelPrice = -1,
-  groupRatio,
-  user_group_ratio,
-  cacheRatio = 1.0,
-  image = false,
-  imageRatio = 1.0,
-  webSearch = false,
-  webSearchCallCount = 0,
-  fileSearch = false,
-  fileSearchCallCount = 0,
-  displayMode = 'price',
-) {
+export function renderLogContent(opts) {
+  const {
+    model_ratio: modelRatio,
+    completion_ratio: completionRatio,
+    model_price: modelPrice = -1,
+    group_ratio: groupRatio,
+    user_group_ratio,
+    cache_ratio: cacheRatio = 1.0,
+    image = false,
+    image_ratio: imageRatio = 1.0,
+    web_search: webSearch = false,
+    web_search_call_count: webSearchCallCount = 0,
+    file_search: fileSearch = false,
+    file_search_call_count: fileSearchCallCount = 0,
+    displayMode = 'price',
+  } = opts;
   const {
     ratio,
     label: ratioLabel,
@@ -2299,26 +2306,464 @@ export function renderLogContent(
   }
 }
 
-export function renderModelPriceSimple(
-  modelRatio,
-  modelPrice = -1,
-  groupRatio,
-  user_group_ratio,
-  cacheTokens = 0,
-  cacheRatio = 1.0,
-  cacheCreationTokens = 0,
-  cacheCreationRatio = 1.0,
-  cacheCreationTokens5m = 0,
-  cacheCreationRatio5m = 1.0,
-  cacheCreationTokens1h = 0,
-  cacheCreationRatio1h = 1.0,
-  image = false,
-  imageRatio = 1.0,
-  isSystemPromptOverride = false,
-  provider = 'openai',
-  displayMode = 'price',
-  outputMode = 'text',
-) {
+export function stripExprVersion(exprStr) {
+  if (!exprStr) return { version: 1, body: '' };
+  const m = exprStr.match(/^v(\d+):([\s\S]*)$/);
+  if (m) return { version: Number(m[1]), body: m[2] };
+  return { version: 1, body: exprStr };
+}
+
+function parseTierBody(bodyStr) {
+  const coeffs = {};
+  const re = new RegExp(BILLING_VAR_REGEX.source, 'g');
+  let m;
+  while ((m = re.exec(bodyStr)) !== null) {
+    if (!(m[1] in coeffs)) coeffs[m[1]] = Number(m[2]);
+  }
+  const tier = {};
+  for (const [varName, field] of Object.entries(BILLING_VAR_KEY_TO_FIELD)) {
+    tier[field] = coeffs[varName] || 0;
+  }
+  return tier;
+}
+
+export function parseTiersFromExpr(exprStr) {
+  if (!exprStr) return [];
+  try {
+    const { body } = stripExprVersion(exprStr);
+    const condGroup = `((?:(?:p|c|len)\\s*(?:<|<=|>|>=)\\s*[\\d.eE+]+)(?:\\s*&&\\s*(?:p|c|len)\\s*(?:<|<=|>|>=)\\s*[\\d.eE+]+)*)`;
+    const tierRe = new RegExp(`(?:${condGroup}\\s*\\?\\s*)?tier\\("([^"]*)",\\s*([^)]+)\\)`, 'g');
+    const tiers = [];
+    let m;
+    while ((m = tierRe.exec(body)) !== null) {
+      const condStr = m[1] || '';
+      const conditions = [];
+      if (condStr) {
+        for (const cp of condStr.split(/\s*&&\s*/)) {
+          const cm = cp.trim().match(/^(p|c|len)\s*(<|<=|>|>=)\s*([\d.eE+]+)$/);
+          if (cm) conditions.push({ var: cm[1], op: cm[2], value: Number(cm[3]) });
+        }
+      }
+      const tier = parseTierBody(m[3]);
+      tier.label = m[2];
+      tier.conditions = conditions;
+      tiers.push(tier);
+    }
+    return tiers;
+  } catch {
+    return [];
+  }
+}
+
+// Each branch below uses an inline string literal so the i18next-cli
+// extractor can statically discover every translation key. Indexing into
+// an object map would be runtime-equivalent but invisible to the extractor.
+
+function tieredPriceLine(varKey, vars) {
+  switch (varKey) {
+    case 'p': return i18next.t('输入价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'c': return i18next.t('输出价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'cr': return i18next.t('缓存读取价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc': return i18next.t('缓存创建价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc1h': return i18next.t('1h缓存创建价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'img': return i18next.t('图片输入价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'img_o': return i18next.t('图片输出价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'ai': return i18next.t('音频输入价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'ao': return i18next.t('音频输出价格 {{symbol}}{{price}} / 1M tokens', vars);
+    default: return '';
+  }
+}
+
+function tieredPriceLineColon(varKey, vars) {
+  switch (varKey) {
+    case 'p': return i18next.t('输入价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'c': return i18next.t('输出价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'cr': return i18next.t('缓存读取价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc': return i18next.t('缓存创建价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc1h': return i18next.t('1h缓存创建价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'img': return i18next.t('图片输入价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'img_o': return i18next.t('图片输出价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'ai': return i18next.t('音频输入价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'ao': return i18next.t('音频输出价格：{{symbol}}{{price}} / 1M tokens', vars);
+    default: return '';
+  }
+}
+
+function tieredFormulaTerm(varKey, vars) {
+  switch (varKey) {
+    case 'p': return i18next.t('输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'c': return i18next.t('输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'cr': return i18next.t('缓存读取 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'cc': return i18next.t('缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'cc1h': return i18next.t('1h缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'img': return i18next.t('图片输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'img_o': return i18next.t('图片输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'ai': return i18next.t('音频输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    case 'ao': return i18next.t('音频输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
+    default: return '';
+  }
+}
+
+// Identify which rule (or combination) fired by matching the effective
+// multiplier against parsed rule groups. Returns:
+//   { kind: 'time' | 'request', desc, multiplier }   — exactly one rule fired
+//   { kind: 'multi', multiplier }                     — multiple rules fired
+//   null                                              — no rules / multiplier is 1
+function describeFiringRules(exprStr, effectiveMultiplier) {
+  if (!exprStr || Math.abs(effectiveMultiplier - 1) <= 1e-4) return null;
+
+  const { requestRuleExpr } = splitBillingExprAndRequestRules(exprStr);
+  if (!requestRuleExpr) return null;
+
+  const groups = tryParseRequestRuleExpr(requestRuleExpr);
+  if (!groups || groups.length === 0) return null;
+
+  const firingT = (key) => i18next.t(key);
+  const matched = groups.find(
+    (g) => Math.abs(Number(g.multiplier) - effectiveMultiplier) < 1e-4,
+  );
+  if (matched) {
+    const firstCond = (matched.conditions || [])[0];
+    const isTime = firstCond?.source === SOURCE_TIME;
+    return {
+      kind: isTime ? 'time' : 'request',
+      desc: describeRuleGroup(matched, firingT),
+      multiplier: Number(matched.multiplier),
+    };
+  }
+  return { kind: 'multi', multiplier: effectiveMultiplier };
+}
+
+function tieredRuleKindLabel(kind) {
+  return kind === 'time' ? i18next.t('时间条件') : i18next.t('请求条件');
+}
+
+function formatRuleMultiplierFactor(firing, effectiveMultiplier) {
+  if (!firing) return null;
+  if (firing.kind === 'multi') {
+    return i18next.t('请求规则倍率 {{ratio}}', {
+      ratio: Number(effectiveMultiplier.toFixed(4)),
+    });
+  }
+  return `${tieredRuleKindLabel(firing.kind)}(${firing.desc}) ${Number(firing.multiplier.toFixed(4))}`;
+}
+
+export function renderTieredModelPrice(opts) {
+  const {
+    prompt_tokens: inputTokens = 0,
+    completion_tokens: completionTokens = 0,
+    expr_b64: exprB64,
+    matched_tier: matchedTier,
+    group_ratio: groupRatio,
+    user_group_ratio,
+    cache_tokens: cacheTokens = 0,
+    cache_creation_tokens: cacheCreationTokens = 0,
+    cache_creation_tokens_5m: cacheCreationTokens5m = 0,
+    cache_creation_tokens_1h: cacheCreationTokens1h = 0,
+    tiered_actual_quota_before_group: actualQuotaBeforeGroup,
+    tiered_quota_per_unit: tieredQuotaPerUnit,
+  } = opts;
+  let exprStr = '';
+  try { exprStr = atob(exprB64); } catch { /* ignore */ }
+  const tiers = parseTiersFromExpr(exprStr);
+  if (tiers.length === 0) {
+    return i18next.t('阶梯计费（表达式解析失败）');
+  }
+
+  const tier = tiers.find((t) => t.label === matchedTier) || tiers[0];
+  const { symbol, rate } = getCurrencyConfig();
+  const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
+    groupRatio,
+    user_group_ratio,
+  );
+  const gr = effectiveGroupRatio ?? 1;
+  const quotaPerUnit = tieredQuotaPerUnit || getQuotaPerUnit() || 500000;
+
+  // Map each expression variable to the request's actual token count.
+  // For Claude (split 5m/1h) prefer the split values; for non-Claude use the generic cc.
+  const tokensByVar = {
+    p: inputTokens,
+    c: completionTokens,
+    cr: cacheTokens,
+    cc: cacheCreationTokens5m || cacheCreationTokens || 0,
+    cc1h: cacheCreationTokens1h || 0,
+  };
+
+  // Variables actually consumed in this request (contribute to the formula).
+  const activeVars = BILLING_PRICING_VARS.filter(
+    (v) => (tier[v.field] || 0) > 0 && (tokensByVar[v.key] || 0) > 0,
+  );
+  // Unit-price lines: always show base (输入/输出) when priced; show extras
+  // (cache/image/audio) only when they were actually used in this request.
+  const pricedVars = BILLING_PRICING_VARS.filter(
+    (v) =>
+      (tier[v.field] || 0) > 0 &&
+      (v.isBase || (tokensByVar[v.key] || 0) > 0),
+  );
+
+  let tierBaseUsd = 0;
+  const additiveParts = activeVars.map((v) => {
+    const coeff = tier[v.field];
+    const tk = tokensByVar[v.key];
+    tierBaseUsd += (coeff * tk) / 1_000_000;
+    return tieredFormulaTerm(v.key, {
+      tokens: tk,
+      symbol,
+      price: formatBillingDisplayPrice(coeff, rate),
+    });
+  });
+
+  // Derive the effective rule multiplier (e.g. weekday discount) from the
+  // actual quota the backend reports vs the tier base × QuotaPerUnit.
+  let ruleMultiplier = 1;
+  if (typeof actualQuotaBeforeGroup === 'number' && tierBaseUsd > 0) {
+    const tierBaseQuota = tierBaseUsd * quotaPerUnit;
+    if (tierBaseQuota > 0) {
+      ruleMultiplier = actualQuotaBeforeGroup / tierBaseQuota;
+    }
+  }
+
+  const finalUsd = tierBaseUsd * ruleMultiplier * gr;
+
+  const firing = describeFiringRules(exprStr, ruleMultiplier);
+  const multiplierParts = [];
+  const ruleFactor = formatRuleMultiplierFactor(firing, ruleMultiplier);
+  if (ruleFactor) {
+    multiplierParts.push(ruleFactor);
+  }
+  if (Math.abs(gr - 1) > 1e-6) {
+    multiplierParts.push(`${ratioLabel} ${gr}`);
+  }
+  const multiplierSuffix =
+    multiplierParts.length > 0 ? ` * ${multiplierParts.join(' * ')}` : '';
+
+  const lines = [
+    // 命中档位 only adds noise for single-tier expressions; show it when there's a real choice.
+    tiers.length > 1
+      ? buildBillingText('命中档位：{{tier}}', {
+          tier: matchedTier || tier.label,
+        })
+      : null,
+    ...pricedVars.map((v) =>
+      tieredPriceLineColon(v.key, {
+        symbol,
+        price: formatBillingDisplayPrice(tier[v.field], rate),
+      }),
+    ),
+    additiveParts.length > 0
+      ? `(${additiveParts.join(' + ')})${multiplierSuffix} = ${symbol}${formatBillingDisplayPrice(finalUsd, rate)}`
+      : null,
+  ];
+
+  return renderBillingArticle(lines);
+}
+
+// renderTieredLogContent powers the "日志详情" column for tiered_expr logs —
+// a one-line comma-joined summary mirroring renderLogContent for ratio mode.
+export function renderTieredLogContent(opts) {
+  const {
+    prompt_tokens: inputTokens = 0,
+    completion_tokens: completionTokens = 0,
+    expr_b64: exprB64,
+    matched_tier: matchedTier,
+    group_ratio: groupRatio,
+    user_group_ratio,
+    cache_tokens: cacheTokens = 0,
+    cache_creation_tokens: cacheCreationTokens = 0,
+    cache_creation_tokens_5m: cacheCreationTokens5m = 0,
+    cache_creation_tokens_1h: cacheCreationTokens1h = 0,
+    tiered_actual_quota_before_group: actualQuotaBeforeGroup,
+    tiered_quota_per_unit: tieredQuotaPerUnit,
+  } = opts;
+  let exprStr = '';
+  try { exprStr = atob(exprB64); } catch { /* ignore */ }
+  const tiers = parseTiersFromExpr(exprStr);
+  if (tiers.length === 0) {
+    return i18next.t('阶梯计费（表达式解析失败）');
+  }
+
+  const tier = tiers.find((t) => t.label === matchedTier) || tiers[0];
+  const { symbol, rate } = getCurrencyConfig();
+  const tokensByVar = {
+    p: inputTokens,
+    c: completionTokens,
+    cr: cacheTokens,
+    cc: cacheCreationTokens5m || cacheCreationTokens || 0,
+    cc1h: cacheCreationTokens1h || 0,
+  };
+  const pricedVars = BILLING_PRICING_VARS.filter(
+    (v) =>
+      (tier[v.field] || 0) > 0 &&
+      (v.isBase || (tokensByVar[v.key] || 0) > 0),
+  );
+
+  // Reconstruct the tier base USD to derive the effective rule multiplier.
+  let tierBaseUsd = 0;
+  BILLING_PRICING_VARS.forEach((v) => {
+    const coeff = tier[v.field] || 0;
+    const tk = tokensByVar[v.key] || 0;
+    if (coeff > 0 && tk > 0) tierBaseUsd += (coeff * tk) / 1_000_000;
+  });
+  const quotaPerUnit = tieredQuotaPerUnit || getQuotaPerUnit() || 500000;
+  let ruleMultiplier = 1;
+  if (typeof actualQuotaBeforeGroup === 'number' && tierBaseUsd > 0) {
+    const tierBaseQuota = tierBaseUsd * quotaPerUnit;
+    if (tierBaseQuota > 0) {
+      ruleMultiplier = actualQuotaBeforeGroup / tierBaseQuota;
+    }
+  }
+
+  const parts = [];
+  if (tiers.length > 1) {
+    parts.push(
+      i18next.t('阶梯计费 {{tier}} 档位', {
+        tier: matchedTier || tier.label,
+      }),
+    );
+  } else {
+    parts.push(i18next.t('阶梯计费'));
+  }
+  pricedVars.forEach((v) => {
+    parts.push(
+      tieredPriceLine(v.key, {
+        symbol,
+        price: formatBillingDisplayPrice(tier[v.field], rate),
+      }),
+    );
+  });
+  const firing = describeFiringRules(exprStr, ruleMultiplier);
+  if (firing) {
+    if (firing.kind === 'multi') {
+      parts.push(
+        i18next.t('请求规则倍率 {{ratio}}x', {
+          ratio: Number(ruleMultiplier.toFixed(4)),
+        }),
+      );
+    } else {
+      parts.push(
+        `${tieredRuleKindLabel(firing.kind)}(${firing.desc}) ${Number(firing.multiplier.toFixed(4))}x`,
+      );
+    }
+  }
+  parts.push(getGroupRatioText(groupRatio, user_group_ratio));
+  return joinBillingSummary(parts);
+}
+
+export function renderTieredModelPriceSimple(opts) {
+  const {
+    prompt_tokens: inputTokens = 0,
+    completion_tokens: completionTokens = 0,
+    expr_b64: exprB64,
+    matched_tier: matchedTier,
+    group_ratio: groupRatio,
+    user_group_ratio,
+    cache_tokens: cacheTokens = 0,
+    cache_creation_tokens_5m: cacheCreationTokens5m = 0,
+    cache_creation_tokens_1h: cacheCreationTokens1h = 0,
+    cache_creation_tokens: cacheCreationTokens = 0,
+    tiered_actual_quota_before_group: actualQuotaBeforeGroup,
+    tiered_quota_per_unit: tieredQuotaPerUnit,
+    displayMode = 'price',
+    outputMode = 'segments',
+  } = opts;
+  let exprStr = '';
+  try { exprStr = atob(exprB64); } catch { /* ignore */ }
+  const tiers = parseTiersFromExpr(exprStr);
+  const tier = tiers.find((t) => t.label === matchedTier) || tiers[0];
+
+  if (outputMode === 'segments') {
+    const segments = [
+      {
+        tone: 'primary',
+        text: getGroupRatioText(groupRatio, user_group_ratio),
+      },
+    ];
+
+    // Derive the effective rule multiplier from backend-reported quota and
+    // tier coefficients × actual tokens, then surface it as a primary segment
+    // so the collapsed log row mirrors what the expanded breakdown shows.
+    if (tier) {
+      const tokensByVar = {
+        p: inputTokens,
+        c: completionTokens,
+        cr: cacheTokens,
+        cc: cacheCreationTokens5m || cacheCreationTokens || 0,
+        cc1h: cacheCreationTokens1h || 0,
+      };
+      let tierBaseUsd = 0;
+      BILLING_PRICING_VARS.forEach((v) => {
+        const coeff = tier[v.field] || 0;
+        const tk = tokensByVar[v.key] || 0;
+        if (coeff > 0 && tk > 0) tierBaseUsd += (coeff * tk) / 1_000_000;
+      });
+      const quotaPerUnit = tieredQuotaPerUnit || getQuotaPerUnit() || 500000;
+      let ruleMultiplier = 1;
+      if (typeof actualQuotaBeforeGroup === 'number' && tierBaseUsd > 0) {
+        const tierBaseQuota = tierBaseUsd * quotaPerUnit;
+        if (tierBaseQuota > 0) {
+          ruleMultiplier = actualQuotaBeforeGroup / tierBaseQuota;
+        }
+      }
+      const firing = describeFiringRules(exprStr, ruleMultiplier);
+      if (firing) {
+        let text;
+        if (firing.kind === 'multi') {
+          text = i18next.t('请求规则倍率 {{ratio}}x', {
+            ratio: Number(ruleMultiplier.toFixed(4)),
+          });
+        } else {
+          text = `${tieredRuleKindLabel(firing.kind)} ${Number(firing.multiplier.toFixed(4))}x`;
+        }
+        segments.push({ tone: 'primary', text });
+      }
+    }
+
+    if (tier && isPriceDisplayMode(displayMode)) {
+      const hasAnyCacheTokens = cacheTokens > 0 || cacheCreationTokens > 0
+        || cacheCreationTokens5m > 0 || cacheCreationTokens1h > 0;
+      const priceSegments = BILLING_PRICING_VARS
+        .filter((v) => v.group !== 'cache' || hasAnyCacheTokens)
+        .map((v) => [v.field, v.shortLabel]);
+      for (const [field, label] of priceSegments) {
+        if (tier[field] > 0) {
+          segments.push({
+            tone: 'secondary',
+            text: i18next.t('{{label}} {{price}} / 1M tokens', {
+              label: i18next.t(label),
+              price: formatCompactDisplayPrice(tier[field]),
+            }),
+          });
+        }
+      }
+    }
+
+    return segments;
+  }
+
+  return [];
+}
+
+export function renderModelPriceSimple(opts) {
+  const {
+    model_ratio: modelRatio,
+    model_price: modelPrice = -1,
+    group_ratio: groupRatio,
+    user_group_ratio,
+    cache_tokens: cacheTokens = 0,
+    cache_ratio: cacheRatio = 1.0,
+    cache_creation_tokens: cacheCreationTokens = 0,
+    cache_creation_ratio: cacheCreationRatio = 1.0,
+    cache_creation_tokens_5m: cacheCreationTokens5m = 0,
+    cache_creation_ratio_5m: cacheCreationRatio5m = 1.0,
+    cache_creation_tokens_1h: cacheCreationTokens1h = 0,
+    cache_creation_ratio_1h: cacheCreationRatio1h = 1.0,
+    image = false,
+    image_ratio: imageRatio = 1.0,
+    is_system_prompt_overwritten: isSystemPromptOverride = false,
+    provider = 'openai',
+    displayMode = 'price',
+    outputMode = 'text',
+  } = opts;
   return renderPriceSimpleCore({
     modelRatio,
     modelPrice,
@@ -2340,27 +2785,31 @@ export function renderModelPriceSimple(
   });
 }
 
-export function renderAudioModelPrice(
-  inputTokens,
-  completionTokens,
-  modelRatio,
-  modelPrice = -1,
-  completionRatio,
-  audioInputTokens,
-  audioCompletionTokens,
-  audioRatio,
-  audioCompletionRatio,
-  groupRatio,
-  user_group_ratio,
-  cacheTokens = 0,
-  cacheRatio = 1.0,
-  displayMode = 'price',
-) {
+export function renderAudioModelPrice(opts) {
+  const {
+    prompt_tokens: inputTokens = 0,
+    completion_tokens: completionTokens = 0,
+    model_ratio: modelRatio = 0,
+    model_price: modelPrice = -1,
+    completion_ratio: _completionRatio,
+    audio_input: audioInputTokens = 0,
+    audio_output: audioCompletionTokens = 0,
+    audio_ratio: _audioRatio,
+    audio_completion_ratio: _audioCompletionRatio,
+    group_ratio: _groupRatio,
+    user_group_ratio,
+    cache_tokens: cacheTokens = 0,
+    cache_ratio: cacheRatio = 1.0,
+    displayMode = 'price',
+  } = opts;
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
-    groupRatio,
+    _groupRatio,
     user_group_ratio,
   );
-  groupRatio = effectiveGroupRatio;
+  let groupRatio = effectiveGroupRatio;
+  const completionRatio = _completionRatio ?? 0;
+  const audioRatio = parseFloat(_audioRatio ?? 0).toFixed(6);
+  const audioCompletionRatio = _audioCompletionRatio ?? 0;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -2387,10 +2836,6 @@ export function renderAudioModelPrice(
       ]);
     }
 
-    if (completionRatio === undefined) {
-      completionRatio = 0;
-    }
-    audioRatio = parseFloat(audioRatio).toFixed(6);
     const inputRatioPrice = modelRatio * 2.0;
     const completionRatioPrice = modelRatio * 2.0 * completionRatio;
     const textPrice =
@@ -2476,10 +2921,6 @@ export function renderAudioModelPrice(
         ratioType: ratioLabel,
       },
     );
-  }
-
-  if (completionRatio === undefined) {
-    completionRatio = 0;
   }
 
   const modelRatioValue = formatRatioValue(modelRatio);
@@ -2626,29 +3067,31 @@ export function renderQuotaWithPrompt(quota, digits) {
   return '';
 }
 
-export function renderClaudeModelPrice(
-  inputTokens,
-  completionTokens,
-  modelRatio,
-  modelPrice = -1,
-  completionRatio,
-  groupRatio,
-  user_group_ratio,
-  cacheTokens = 0,
-  cacheRatio = 1.0,
-  cacheCreationTokens = 0,
-  cacheCreationRatio = 1.0,
-  cacheCreationTokens5m = 0,
-  cacheCreationRatio5m = 1.0,
-  cacheCreationTokens1h = 0,
-  cacheCreationRatio1h = 1.0,
-  displayMode = 'price',
-) {
+export function renderClaudeModelPrice(opts) {
+  const {
+    prompt_tokens: inputTokens = 0,
+    completion_tokens: completionTokens = 0,
+    model_ratio: modelRatio = 0,
+    model_price: modelPrice = -1,
+    completion_ratio: _completionRatio,
+    group_ratio: _groupRatio,
+    user_group_ratio,
+    cache_tokens: cacheTokens = 0,
+    cache_ratio: cacheRatio = 1.0,
+    cache_creation_tokens: cacheCreationTokens = 0,
+    cache_creation_ratio: cacheCreationRatio = 1.0,
+    cache_creation_tokens_5m: cacheCreationTokens5m = 0,
+    cache_creation_ratio_5m: cacheCreationRatio5m = 1.0,
+    cache_creation_tokens_1h: cacheCreationTokens1h = 0,
+    cache_creation_ratio_1h: cacheCreationRatio1h = 1.0,
+    displayMode = 'price',
+  } = opts;
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
-    groupRatio,
+    _groupRatio,
     user_group_ratio,
   );
-  groupRatio = effectiveGroupRatio;
+  let groupRatio = effectiveGroupRatio;
+  const completionRatio = _completionRatio ?? 0;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -2673,10 +3116,6 @@ export function renderClaudeModelPrice(
           },
         ),
       ]);
-    }
-
-    if (completionRatio === undefined) {
-      completionRatio = 0;
     }
 
     const inputRatioPrice = modelRatio * 2.0;
@@ -2862,10 +3301,6 @@ export function renderClaudeModelPrice(
     );
   }
 
-  if (completionRatio === undefined) {
-    completionRatio = 0;
-  }
-
   const modelRatioValue = formatRatioValue(modelRatio);
   const completionRatioValue = formatRatioValue(completionRatio);
   const cacheRatioValue = formatRatioValue(cacheRatio);
@@ -3035,25 +3470,26 @@ export function renderClaudeModelPrice(
   ]);
 }
 
-export function renderClaudeLogContent(
-  modelRatio,
-  completionRatio,
-  modelPrice = -1,
-  groupRatio,
-  user_group_ratio,
-  cacheRatio = 1.0,
-  cacheCreationRatio = 1.0,
-  cacheCreationTokens5m = 0,
-  cacheCreationRatio5m = 1.0,
-  cacheCreationTokens1h = 0,
-  cacheCreationRatio1h = 1.0,
-  displayMode = 'price',
-) {
+export function renderClaudeLogContent(opts) {
+  const {
+    model_ratio: modelRatio,
+    completion_ratio: completionRatio,
+    model_price: modelPrice = -1,
+    group_ratio: _groupRatio,
+    user_group_ratio,
+    cache_ratio: cacheRatio = 1.0,
+    cache_creation_ratio: cacheCreationRatio = 1.0,
+    cache_creation_tokens_5m: cacheCreationTokens5m = 0,
+    cache_creation_ratio_5m: cacheCreationRatio5m = 1.0,
+    cache_creation_tokens_1h: cacheCreationTokens1h = 0,
+    cache_creation_ratio_1h: cacheCreationRatio1h = 1.0,
+    displayMode = 'price',
+  } = opts;
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
-    groupRatio,
+    _groupRatio,
     user_group_ratio,
   );
-  groupRatio = effectiveGroupRatio;
+  let groupRatio = effectiveGroupRatio;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
