@@ -993,47 +993,52 @@ export const formatDynamicPriceSummary = (billingExpr, t, groupRatio = 1) => {
 
   return (
     <>
-      {hasCoeffs && (
-        <>
-          {varLabels.map(([key, label]) =>
-            key in varCoeffs ? (
-              <span key={key} style={lineStyle}>
-                {`${t(label)} ${symbol}${(varCoeffs[key] * gr * rate).toFixed(4)}${unitSuffix}`}
+      {hasCoeffs &&
+        varLabels.map(([key, label]) =>
+          key in varCoeffs ? (
+            <span key={key} style={{ ...lineStyle, display: 'block' }}>
+              <span style={{ color: 'var(--semi-color-text-2)' }}>
+                {`${t(label)}:`}
+              </span>{' '}
+              <span className='font-medium'>
+                {`${symbol}${(varCoeffs[key] * gr * rate).toFixed(4)}`}
               </span>
-            ) : null,
-          )}
-        </>
-      )}
+              <span style={{ color: 'var(--semi-color-text-2)' }}>
+                {unitSuffix}
+              </span>
+            </span>
+          ) : null,
+        )}
       {(tierCount > 1 || hasTimeCondition || hasRequestCondition) && (
-      <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-        <span
-          style={{
-            display: 'inline-block',
-            padding: '1px 6px',
-            borderRadius: 4,
-            fontSize: 11,
-            background: 'var(--semi-color-warning-light-default)',
-            color: 'var(--semi-color-warning)',
-          }}
-        >
-          {t('动态计费')}
-        </span>
-        {tags.map((tag) => (
+        <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: hasCoeffs ? 2 : 0 }}>
           <span
-            key={tag}
             style={{
               display: 'inline-block',
               padding: '1px 6px',
               borderRadius: 4,
               fontSize: 11,
-              background: 'var(--semi-color-fill-1)',
-              color: 'var(--semi-color-text-2)',
+              background: 'var(--semi-color-warning-light-default)',
+              color: 'var(--semi-color-warning)',
             }}
           >
-            {tag}
+            {t('动态计费')}
           </span>
-        ))}
-      </span>
+          {tags.map((tag) => (
+            <span
+              key={tag}
+              style={{
+                display: 'inline-block',
+                padding: '1px 6px',
+                borderRadius: 4,
+                fontSize: 11,
+                background: 'var(--semi-color-fill-1)',
+                color: 'var(--semi-color-text-2)',
+              }}
+            >
+              {tag}
+            </span>
+          ))}
+        </span>
       )}
     </>
   );

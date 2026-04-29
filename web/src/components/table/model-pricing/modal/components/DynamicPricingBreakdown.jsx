@@ -99,7 +99,7 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
 
   if (!hasTiers && !hasRules) {
     return (
-      <Card className='!rounded-2xl shadow-sm border-0'>
+      <Card className='!rounded-2xl shadow-sm border-0 mb-6'>
         <div className='flex items-center mb-3'>
           <Avatar size='small' color='amber' className='mr-2 shadow-md'>
             <IconPriceTag size={16} />
@@ -121,7 +121,7 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
       dataIndex: 'label',
       render: (text, record) => (
         <div>
-          <Tag color='blue' size='small'>{text || t('默认')}</Tag>
+          <Tag color='blue' size='small' shape='circle'>{text || t('默认')}</Tag>
           {record.condSummary && (
             <div className='text-xs text-gray-500 mt-1'>{record.condSummary}</div>
           )}
@@ -147,7 +147,7 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
     : [];
 
   return (
-    <Card className='!rounded-2xl shadow-sm border-0'>
+    <Card className='!rounded-2xl shadow-sm border-0 mb-6'>
       <div className='flex items-center mb-4'>
         <Avatar size='small' color='amber' className='mr-2 shadow-md'>
           <IconPriceTag size={16} />
@@ -195,7 +195,7 @@ export default function DynamicPricingBreakdown({ billingExpr, t }) {
               }}
             >
               <Text size='small'>{describeGroup(group, t)}</Text>
-              <Tag color='orange' size='small'>{group.multiplier}x</Tag>
+              <Tag color='orange' size='small' shape='circle'>{group.multiplier}x</Tag>
             </div>
           ))}
         </div>

@@ -484,11 +484,6 @@ const PricingCardView = ({
                           {model.vendor_name}
                         </div>
                       )}
-                      {priceData.isDynamicPricing && (
-                        <div className='flex flex-col gap-1 text-xs mt-1'>
-                          {formatDynamicPriceSummary(priceData.billingExpr, t, priceData.usedGroupRatio)}
-                        </div>
-                      )}
                     </div>
                   </div>
                   {/* 右上：悬停展示 Chat 跳转按钮（在 Playground 中聊天） */}
@@ -579,7 +574,7 @@ const PricingCardView = ({
                         ))}
                       </div>
                     </div>
-                    {!isPerCall && (
+                    {!isPerCall && !priceData.isDynamicPricing && (
                       <>
                         <PriceLine
                           label={t('输入')}
@@ -622,7 +617,7 @@ const PricingCardView = ({
                         ))}
                       </div>
                     </div>
-                    {!isPerCall && (
+                    {!isPerCall && !priceData.isDynamicPricing && (
                       <>
                         <PriceLine
                           label={t('输出')}
@@ -687,6 +682,23 @@ const PricingCardView = ({
                       {' '}
                       / {t('次')}
                     </span>
+                  </div>
+                )}
+
+                {/* 阶梯计费摘要行 */}
+                {priceData.isDynamicPricing && (
+                  <div
+                    className='text-xs mb-3 px-2 py-1.5 rounded-md flex flex-col gap-1'
+                    style={{
+                      backgroundColor: 'var(--semi-color-fill-0)',
+                      color: 'var(--semi-color-text-1)',
+                    }}
+                  >
+                    {formatDynamicPriceSummary(
+                      priceData.billingExpr,
+                      t,
+                      priceData.usedGroupRatio,
+                    )}
                   </div>
                 )}
 
