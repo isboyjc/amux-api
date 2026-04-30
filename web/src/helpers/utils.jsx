@@ -1184,10 +1184,13 @@ export const formatGroupDiscount = (ratio, t) => {
     return { type: 'surcharge', text: `+${Math.round((r - 1) * 100)}%` };
   }
   // r < 1：折扣
+  // 折叠时间/规则倍率后，分组折扣可能出现两位以上小数（例如 0.65 × 0.5 = 0.325 → 3.25 折）。
+  // 旧实现用 toFixed(1) 会四舍五入（3.25 → 3.3 折）丢失第二位有效信息，
+  // 这里保留两位小数并去掉无意义的尾零（3.50 → 3.5、3.00 → 3）。
   const tenths = r * 10;
   const tenthsText = Number.isInteger(tenths)
     ? `${tenths}`
-    : tenths.toFixed(1);
+    : tenths.toFixed(2).replace(/\.?0+$/, '');
   const percent = Math.round((1 - r) * 100);
   const text = t
     ? t('{{tenths}}折', { tenths: tenthsText, percent })
