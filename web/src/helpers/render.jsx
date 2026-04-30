@@ -2355,6 +2355,41 @@ export function parseTiersFromExpr(exprStr) {
   }
 }
 
+// Mirrors backend service.BuildTieredTokenParams: in OpenAI semantics
+// (non-anthropic) the upstream-reported prompt_tokens / completion_tokens
+// already include all sub-categories (cache read, cache create, image, audio).
+// When the expression prices a sub-category separately we must subtract it
+// from p / c so it isn't double-counted. Anthropic semantics already exclude
+// these from input/output, so no subtraction.
+function getTieredEffectiveTokens(opts, exprStr) {
+  const isClaudeSemantic = opts.usage_semantic === 'anthropic';
+  const usedVars = {};
+  if (exprStr) {
+    const re = new RegExp(BILLING_VAR_REGEX.source, 'g');
+    let m;
+    while ((m = re.exec(exprStr)) !== null) {
+      usedVars[m[1]] = true;
+    }
+  }
+  let p = Number(opts.prompt_tokens) || 0;
+  let c = Number(opts.completion_tokens) || 0;
+  const cr = Number(opts.cache_tokens) || 0;
+  const cc5m = Number(opts.cache_creation_tokens_5m) || 0;
+  const cc1h = Number(opts.cache_creation_tokens_1h) || 0;
+  const ccGeneric = Number(opts.cache_creation_tokens) || 0;
+  // Claude reports explicit 5m/1h splits; non-Claude reports a single generic
+  // cache_creation_tokens (with optional 5m alias). Prefer the more specific.
+  const cc = isClaudeSemantic ? cc5m : (cc5m || ccGeneric);
+  if (!isClaudeSemantic) {
+    if (usedVars.cr) p -= cr;
+    if (usedVars.cc) p -= cc;
+    if (usedVars.cc1h) p -= cc1h;
+  }
+  if (p < 0) p = 0;
+  if (c < 0) c = 0;
+  return { p, c, cr, cc, cc1h };
+}
+
 // Each branch below uses an inline string literal so the i18next-cli
 // extractor can statically discover every translation key. Indexing into
 // an object map would be runtime-equivalent but invisible to the extractor.
@@ -2479,15 +2514,11 @@ export function renderTieredModelPrice(opts) {
   const gr = effectiveGroupRatio ?? 1;
   const quotaPerUnit = tieredQuotaPerUnit || getQuotaPerUnit() || 500000;
 
-  // Map each expression variable to the request's actual token count.
-  // For Claude (split 5m/1h) prefer the split values; for non-Claude use the generic cc.
-  const tokensByVar = {
-    p: inputTokens,
-    c: completionTokens,
-    cr: cacheTokens,
-    cc: cacheCreationTokens5m || cacheCreationTokens || 0,
-    cc1h: cacheCreationTokens1h || 0,
-  };
+  // Effective tokens after backend's BuildTieredTokenParams subtraction rules.
+  // Using raw prompt_tokens here would inflate tierBaseUsd whenever the
+  // expression prices cache-class tokens separately, breaking the rule
+  // multiplier reverse-derivation downstream.
+  const tokensByVar = getTieredEffectiveTokens(opts, exprStr);
 
   // Variables actually consumed in this request (contribute to the formula).
   const activeVars = BILLING_PRICING_VARS.filter(
@@ -2584,13 +2615,7 @@ export function renderTieredLogContent(opts) {
 
   const tier = tiers.find((t) => t.label === matchedTier) || tiers[0];
   const { symbol, rate } = getCurrencyConfig();
-  const tokensByVar = {
-    p: inputTokens,
-    c: completionTokens,
-    cr: cacheTokens,
-    cc: cacheCreationTokens5m || cacheCreationTokens || 0,
-    cc1h: cacheCreationTokens1h || 0,
-  };
+  const tokensByVar = getTieredEffectiveTokens(opts, exprStr);
   const pricedVars = BILLING_PRICING_VARS.filter(
     (v) =>
       (tier[v.field] || 0) > 0 &&
@@ -2683,13 +2708,7 @@ export function renderTieredModelPriceSimple(opts) {
     // tier coefficients × actual tokens, then surface it as a primary segment
     // so the collapsed log row mirrors what the expanded breakdown shows.
     if (tier) {
-      const tokensByVar = {
-        p: inputTokens,
-        c: completionTokens,
-        cr: cacheTokens,
-        cc: cacheCreationTokens5m || cacheCreationTokens || 0,
-        cc1h: cacheCreationTokens1h || 0,
-      };
+      const tokensByVar = getTieredEffectiveTokens(opts, exprStr);
       let tierBaseUsd = 0;
       BILLING_PRICING_VARS.forEach((v) => {
         const coeff = tier[v.field] || 0;
