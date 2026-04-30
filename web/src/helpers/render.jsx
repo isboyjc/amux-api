@@ -116,7 +116,15 @@ import {
   SiTwitch,
   SiWechat,
   SiX,
+  SiXiaomi,
 } from 'react-icons/si';
+
+// @lobehub/icons 没有收录的厂商品牌图标兜底表。优先使用 lobe-icons，
+// 查不到再 fallback 到这里；最后才落到首字母 Avatar。
+// 新增一个未被 lobe-icons 覆盖的厂商时，在这里追加一行即可。
+const CUSTOM_BRAND_ICONS = {
+  Xiaomi: SiXiaomi,
+};
 
 // 获取侧边栏Lucide图标组件
 export function getLucideIcon(key, selected = false) {
@@ -461,13 +469,20 @@ export function getLobeHubIcon(iconName, size = 14) {
     propStartIndex = 1;
   }
 
-  // 失败兜底
+  // 失败兜底：先查自定义品牌图标表（覆盖 lobe-icons 没收录的厂商，如 Xiaomi），
+  // 再落到首字母 Avatar。
   if (
     !IconComponent ||
     (typeof IconComponent !== 'function' && typeof IconComponent !== 'object')
   ) {
-    const firstLetter = String(iconName).charAt(0).toUpperCase();
-    return <Avatar size='extra-extra-small'>{firstLetter}</Avatar>;
+    const customIcon = CUSTOM_BRAND_ICONS[baseKey];
+    if (customIcon) {
+      IconComponent = customIcon;
+      propStartIndex = 1;
+    } else {
+      const firstLetter = String(iconName).charAt(0).toUpperCase();
+      return <Avatar size='extra-extra-small'>{firstLetter}</Avatar>;
+    }
   }
 
   // 解析点号链式属性，形如：key={...}、key='...'、key="..."、key=123、key、key=true/false

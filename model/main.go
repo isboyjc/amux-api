@@ -298,6 +298,9 @@ func migrateDB() error {
 		}
 	}
 	
+	// 历史默认表用中文「字节跳动」，统一为英文 "ByteDance"。
+	// 必须在 EnsureCommonVendors 之前跑，否则 EnsureCommonVendors 会再建一条新行。
+	RenameBytedanceVendor()
 	// 确保常见的供应商在数据库中存在
 	EnsureCommonVendors()
 	// 一次性迁移：修复历史模型的 vendor_id

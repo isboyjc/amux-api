@@ -35,10 +35,12 @@ var defaultVendorRules = map[string]string{
 	"mistral":  "Mistral",
 	"grok":     "xAI",
 	"llama":    "Meta",
-	"doubao":   "字节跳动",
+	"doubao":   "ByteDance",
 	"kling":    "快手",
 	"jimeng":   "即梦",
 	"vidu":     "Vidu",
+	"mimo":     "Xiaomi",
+	"xiaomi":   "Xiaomi",
 }
 
 // 供应商默认图标映射
@@ -62,13 +64,14 @@ var defaultVendorIcons = map[string]string{
 	"Mistral":    "Mistral.Color",
 	"xAI":        "XAI",
 	"Meta":       "Ollama",
-	"字节跳动":       "Doubao.Color",
+	"ByteDance":  "Doubao.Color",
 	"快手":         "Kling.Color",
 	"即梦":         "Jimeng.Color",
 	"Vidu":       "Vidu",
 	"微软":         "AzureAI",
 	"Microsoft":  "AzureAI",
 	"Azure":      "AzureAI",
+	"Xiaomi":     "Xiaomi",
 }
 
 // initDefaultVendorMapping 简化的默认供应商映射
@@ -138,7 +141,7 @@ func EnsureCommonVendors() {
 		"OpenAI", "Anthropic", "Google", "Moonshot", "智谱", "阿里巴巴",
 		"DeepSeek", "MiniMax", "百度", "讯飞", "腾讯", "Cohere",
 		"Cloudflare", "360", "零一万物", "Jina", "Mistral", "xAI",
-		"Meta", "字节跳动", "快手", "即梦", "Vidu", "微软",
+		"Meta", "ByteDance", "快手", "即梦", "Vidu", "微软", "Xiaomi",
 	}
 
 	for _, vendorName := range commonVendors {
@@ -206,8 +209,37 @@ func MigrateModelVendorIDs() {
 
 	// 标记迁移已完成
 	_ = UpdateOption(migrationKey, "done")
-	
+
 	if updateCount > 0 {
 		common.SysLog(fmt.Sprintf("migrated vendor_id for %d models", updateCount))
 	}
+}
+
+// RenameBytedanceVendor 历史默认表里写的是中文「字节跳动」，统一改为英文 "ByteDance"
+// 与其它默认厂商命名风格对齐。直接重命名旧行（保留 ID），避免 EnsureCommonVendors
+// 重新建一条新行造成重复 + 模型脱链。无 Option 标记，幂等：旧行不存在直接跳过。
+func RenameBytedanceVendor() {
+	const oldName = "字节跳动"
+	const newName = "ByteDance"
+
+	var oldVendor Vendor
+	if err := DB.Where("name = ?", oldName).First(&oldVendor).Error; err != nil {
+		return // 旧行不存在（新装或已迁移），无事可做
+	}
+
+	var newVendor Vendor
+	if err := DB.Where("name = ?", newName).First(&newVendor).Error; err == nil {
+		common.SysLog("both 字节跳动 and ByteDance vendor rows exist; skipping rename, please reconcile manually")
+		return
+	}
+
+	oldVendor.Name = newName
+	if oldVendor.Icon == "" {
+		oldVendor.Icon = "Doubao.Color"
+	}
+	if err := oldVendor.Update(); err != nil {
+		common.SysLog("rename vendor 字节跳动 -> ByteDance failed: " + err.Error())
+		return
+	}
+	common.SysLog("renamed vendor 字节跳动 -> ByteDance")
 }

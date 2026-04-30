@@ -53,7 +53,7 @@ const VENDOR_RULES = [
   ['ministral', 'Mistral', 'Mistral.Color'],
   ['grok', 'xAI', 'XAI'],
   ['llama', 'Meta', 'Ollama'],
-  ['doubao', '字节跳动', 'Doubao.Color'],
+  ['doubao', 'ByteDance', 'Doubao.Color'],
   ['kling', '快手', 'Kling.Color'],
   ['jimeng', '即梦', 'Jimeng.Color'],
   ['vidu', 'Vidu', 'Vidu'],
@@ -64,6 +64,9 @@ const VENDOR_RULES = [
   ['mj-', 'Midjourney', 'Midjourney'],
   ['runway', 'Runway', 'Runway'],
   ['suno', 'Suno', 'Suno'],
+  // lobe-icons 未收录的小米品牌图标，由前端 CUSTOM_BRAND_ICONS 提供 fallback
+  ['mimo', 'Xiaomi', 'Xiaomi'],
+  ['xiaomi', 'Xiaomi', 'Xiaomi'],
 ];
 
 const FALLBACK = { name: 'Other', iconKey: 'Layers' };
