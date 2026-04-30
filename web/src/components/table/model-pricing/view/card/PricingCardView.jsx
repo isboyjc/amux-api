@@ -468,9 +468,12 @@ const PricingCardView = ({
             quotaDisplayType: siteDisplayType,
             applyRuleMultiplier: false,
           });
-          const showPriceCompare =
-            priceData.usedGroupRatio !== undefined &&
-            priceData.usedGroupRatio !== 1;
+          // 不再用外部门控决定是否展示划线原价：
+          // 旧实现只看 usedGroupRatio !== 1，遇到时间/请求规则触发的折扣
+          // （effectiveTimeMultiplier !== 1 而分组倍率仍为 1）就漏掉了，
+          // 表现是未登录或默认分组用户看打折模型只显示折后价没原价。
+          // PriceLine 与按次价格行内部都有 value !== originalValue 自检，
+          // 这里始终把 originalPriceData 传下去，由它们决定是否渲染划线即可。
 
           const isPerCall = model.quota_type === 1;
           const priceSuffix = getPriceSuffix(priceData);
@@ -675,21 +678,19 @@ const PricingCardView = ({
                         <PriceLine
                           label={t('输入')}
                           value={getPerTokenDisplay(priceData, 'input')}
-                          originalValue={
-                            showPriceCompare
-                              ? getPerTokenDisplay(originalPriceData, 'input')
-                              : null
-                          }
+                          originalValue={getPerTokenDisplay(
+                            originalPriceData,
+                            'input',
+                          )}
                           suffix={priceSuffix}
                         />
                         <PriceLine
                           label={t('缓存读取')}
                           value={getPerTokenDisplay(priceData, 'cache')}
-                          originalValue={
-                            showPriceCompare
-                              ? getPerTokenDisplay(originalPriceData, 'cache')
-                              : null
-                          }
+                          originalValue={getPerTokenDisplay(
+                            originalPriceData,
+                            'cache',
+                          )}
                           suffix={priceSuffix}
                         />
                       </>
@@ -718,27 +719,19 @@ const PricingCardView = ({
                         <PriceLine
                           label={t('输出')}
                           value={getPerTokenDisplay(priceData, 'completion')}
-                          originalValue={
-                            showPriceCompare
-                              ? getPerTokenDisplay(
-                                  originalPriceData,
-                                  'completion',
-                                )
-                              : null
-                          }
+                          originalValue={getPerTokenDisplay(
+                            originalPriceData,
+                            'completion',
+                          )}
                           suffix={priceSuffix}
                         />
                         <PriceLine
                           label={t('缓存写入')}
                           value={getPerTokenDisplay(priceData, 'createCache')}
-                          originalValue={
-                            showPriceCompare
-                              ? getPerTokenDisplay(
-                                  originalPriceData,
-                                  'createCache',
-                                )
-                              : null
-                          }
+                          originalValue={getPerTokenDisplay(
+                            originalPriceData,
+                            'createCache',
+                          )}
                           suffix={priceSuffix}
                         />
                       </>
@@ -761,8 +754,7 @@ const PricingCardView = ({
                     <span className='font-semibold'>
                       {priceData.price ?? '-'}
                     </span>
-                    {showPriceCompare &&
-                      originalPriceData.price &&
+                    {originalPriceData.price &&
                       originalPriceData.price !== priceData.price && (
                         <span
                           className='line-through ml-1'

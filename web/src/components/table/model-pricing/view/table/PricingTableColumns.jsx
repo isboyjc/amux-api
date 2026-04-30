@@ -256,8 +256,16 @@ export const getPricingTableColumns = ({
     render: (text, record, index) => {
       const priceData = getPriceData(record);
 
-      // 只有当倍率不为1时才显示
-      if (priceData.usedGroupRatio === 1 || priceData.usedGroupRatio === undefined) {
+      // 只有当存在任意来源的折扣时才显示官方价格列：
+      // 1. 分组倍率 ≠ 1，或
+      // 2. 时间/请求规则触发的倍率 ≠ 1（之前漏判，导致只受规则折扣的模型不显示原价）
+      const hasGroupDiscount =
+        priceData.usedGroupRatio !== undefined &&
+        priceData.usedGroupRatio !== 1;
+      const hasRuleDiscount =
+        priceData.effectiveTimeMultiplier !== undefined &&
+        Math.abs(priceData.effectiveTimeMultiplier - 1) > 1e-6;
+      if (!hasGroupDiscount && !hasRuleDiscount) {
         return '-';
       }
 
