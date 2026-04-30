@@ -84,6 +84,15 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 		// Update Redis cache asynchronously on successful DB read
 		if shouldUpdateRedis(fromDB, err) && user != nil {
 			gopool.Go(func() {
+				// 竞态防御：异步回填可能在 gopool 队列里被延迟执行，期间
+				// 其它路径（例如 CheckAndUpgradeUserGroup 触发的 User.Update）
+				// 可能已把更新后的值写入缓存。若直接覆盖会把刚写入的新值
+				// 还原成本次 DB 读时的旧快照（典型表现：升级后 vip 用户被
+				// 视为 default，进而拿不到 premium 分组），所以只在缓存仍为
+				// 空时才回填。
+				if existing, hitErr := cacheGetUserBase(user.Id); hitErr == nil && existing != nil {
+					return
+				}
 				if err := updateUserCache(*user); err != nil {
 					common.SysLog("failed to update user status cache: " + err.Error())
 				}
