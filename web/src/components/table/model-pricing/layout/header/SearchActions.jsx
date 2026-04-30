@@ -128,13 +128,17 @@ const SearchActions = memo(
                     {pageSize} {t('条/页')}
                   </Button>
                 </Dropdown>
-                <Pagination
-                  currentPage={currentPage}
-                  pageSize={pageSize}
-                  total={total}
-                  showSizeChanger={false}
-                  onPageChange={setCurrentPage}
-                />
+                {/* 单页放得下时不显示翻页器，避免一个孤零零的"1"按钮占视觉空间。
+                    页大小选择器保留，用户调小后会自动重现翻页器。 */}
+                {total > pageSize && (
+                  <Pagination
+                    currentPage={currentPage}
+                    pageSize={pageSize}
+                    total={total}
+                    showSizeChanger={false}
+                    onPageChange={setCurrentPage}
+                  />
+                )}
               </div>
             )}
           </>
