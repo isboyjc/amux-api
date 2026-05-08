@@ -149,8 +149,18 @@ func authHelper(c *gin.Context, minRole int) {
 	c.Set("username", username)
 	c.Set("role", role)
 	c.Set("id", id)
-	c.Set("group", session.Get("group"))
-	c.Set("user_group", session.Get("group"))
+	// session 里的 group 是登录时刻的快照，用户后续被升级（充值自动升级、订阅、
+	// 管理员调整）后不会刷新，会导致 /pg/* 等基于 session 鉴权的路径用旧分组
+	// 做权限校验（典型表现：vip 用户在操练场被当成 default 拒绝访问 premium）。
+	// 这里实时读用户缓存，命中失败时回退到 session 值。
+	userGroup := session.Get("group")
+	if uid, ok := id.(int); ok && uid > 0 {
+		if userCache, err := model.GetUserCache(uid); err == nil && userCache != nil && userCache.Group != "" {
+			userGroup = userCache.Group
+		}
+	}
+	c.Set("group", userGroup)
+	c.Set("user_group", userGroup)
 	c.Set("use_access_token", useAccessToken)
 
 	c.Next()
