@@ -41,13 +41,14 @@ type Log struct {
 
 // don't use iota, avoid change log type value
 const (
-	LogTypeUnknown = 0
-	LogTypeTopup   = 1
-	LogTypeConsume = 2
-	LogTypeManage  = 3
-	LogTypeSystem  = 4
-	LogTypeError   = 5
-	LogTypeRefund  = 6
+	LogTypeUnknown    = 0
+	LogTypeTopup      = 1
+	LogTypeConsume    = 2
+	LogTypeManage     = 3
+	LogTypeSystem     = 4
+	LogTypeError      = 5
+	LogTypeRefund     = 6
+	LogTypeSignupGift = 7 // 注册赠送（含新用户、邀请码、邀请人三种），结构化记录 quota
 )
 
 func formatUserLogs(logs []*Log, startIdx int) {
@@ -88,6 +89,28 @@ func RecordLog(userId int, logType int, content string) {
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		common.SysLog("failed to record log: " + err.Error())
+	}
+}
+
+// RecordQuotaLog 同 RecordLog，但把 quota delta 写入结构化字段。
+// 用于管理员手动调整额度等需要后续按金额聚合的场景（运营统计面板会用）。
+// quotaDelta 带方向：正=增加，负=减少。
+func RecordQuotaLog(userId int, logType int, quotaDelta int, content string) {
+	if logType == LogTypeConsume && !common.LogConsumeEnabled {
+		return
+	}
+	username, _ := GetUsernameById(userId, false)
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      logType,
+		Content:   content,
+		Quota:     quotaDelta,
+	}
+	err := LOG_DB.Create(log).Error
+	if err != nil {
+		common.SysLog("failed to record quota log: " + err.Error())
 	}
 }
 

@@ -948,7 +948,8 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
-			model.RecordLog(user.Id, model.LogTypeManage,
+			// 写入结构化 quota delta，便于运营统计按金额聚合（线下充值通常走这里）
+			model.RecordQuotaLog(user.Id, model.LogTypeManage, req.Value,
 				fmt.Sprintf("管理员(%s)增加用户额度 %s", adminName, logger.LogQuota(req.Value)))
 		case "subtract":
 			if req.Value <= 0 {
@@ -959,7 +960,7 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
-			model.RecordLog(user.Id, model.LogTypeManage,
+			model.RecordQuotaLog(user.Id, model.LogTypeManage, -req.Value,
 				fmt.Sprintf("管理员(%s)减少用户额度 %s", adminName, logger.LogQuota(req.Value)))
 		case "override":
 			oldQuota := user.Quota
@@ -967,7 +968,8 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
-			model.RecordLog(user.Id, model.LogTypeManage,
+			// override 的 delta 可正可负，按差值记录
+			model.RecordQuotaLog(user.Id, model.LogTypeManage, req.Value-oldQuota,
 				fmt.Sprintf("管理员(%s)覆盖用户额度从 %s 为 %s", adminName, logger.LogQuota(oldQuota), logger.LogQuota(req.Value)))
 		default:
 			common.ApiErrorI18n(c, i18n.MsgInvalidParams)

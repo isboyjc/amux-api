@@ -44,6 +44,7 @@ import Pricing from './pages/Pricing';
 import Task from './pages/Task';
 import ModelPage from './pages/Model';
 import ModelDeploymentPage from './pages/ModelDeployment';
+import OperationsPage from './pages/Operations';
 import Playground from './pages/Playground';
 import Subscription from './pages/Subscription';
 import OAuth2Callback from './components/auth/OAuth2Callback';
@@ -187,6 +188,14 @@ function App() {
           element={
             <AdminRoute>
               <Billing />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/operations'
+          element={
+            <AdminRoute>
+              <OperationsPage />
             </AdminRoute>
           }
         />

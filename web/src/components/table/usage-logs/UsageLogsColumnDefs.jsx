@@ -133,6 +133,12 @@ function renderType(type, t) {
           {t('退款')}
         </Tag>
       );
+    case 7:
+      return (
+        <Tag color='violet' shape='circle'>
+          {t('注册赠送')}
+        </Tag>
+      );
     default:
       return (
         <Tag color='grey' shape='circle'>

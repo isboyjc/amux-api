@@ -51,6 +51,7 @@ const routerMap = {
   deployment: '/console/deployment',
   playground: '/console/playground',
   personal: '/console/personal',
+  operations: '/console/operations',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -149,6 +150,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
   const adminItems = useMemo(() => {
     const items = [
+      {
+        text: t('运营统计'),
+        itemKey: 'operations',
+        to: '/operations',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
       {
         text: t('渠道管理'),
         itemKey: 'channel',
