@@ -54,8 +54,12 @@ func Distribute() func(c *gin.Context) {
 		} else {
 			// Select a channel for the user
 			// check token model mapping
+			// 仅在需要根据 model 挑渠道时才校验 token 白名单。task_id 查询类
+			// 请求（视频/midjourney/suno/doubao 的 fetch 端点）shouldSelectChannel=false
+			// 且 modelRequest.Model 为空，跑这段会因为空 model 命中不到白名单而误报
+			// "该令牌无权访问模型 "（model 名为空），即使原始创建任务的请求是被允许的。
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
+			if modelLimitEnable && shouldSelectChannel {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
