@@ -2,7 +2,6 @@ import React, { useState, useCallback, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 
 const HEALTH_COLORS = {
-  noData: 'var(--semi-color-fill-1)',
   healthy: '#22C55E',
   lightGreen: '#86EFAC',
   yellow: '#EAB308',
@@ -13,7 +12,7 @@ const HEALTH_COLORS = {
 
 const getHealthColor = (successCount, errorCount) => {
   const total = successCount + errorCount;
-  if (total === 0) return HEALTH_COLORS.noData;
+  if (total === 0) return HEALTH_COLORS.healthy;
   if (total < 3 && errorCount > 0) return HEALTH_COLORS.orange;
   const errorRate = errorCount / total;
   if (errorRate === 0) return HEALTH_COLORS.healthy;
@@ -149,7 +148,7 @@ const TimelineBar = ({ cells, bucketSize, cellHeight, t }) => {
               height: cellHeight,
               backgroundColor: cell
                 ? getHealthColor(cell.s, cell.e)
-                : HEALTH_COLORS.noData,
+                : HEALTH_COLORS.healthy,
               borderRadius: 2,
               opacity: hoverIdx === idx ? 0.7 : 1,
               transition: 'opacity 0.1s',
@@ -169,7 +168,6 @@ const TimelineBar = ({ cells, bucketSize, cellHeight, t }) => {
 
 const Legend = ({ t }) => {
   const items = [
-    { color: HEALTH_COLORS.noData, label: t('无调用数据') },
     { color: HEALTH_COLORS.healthy, label: t('运行正常') },
     { color: HEALTH_COLORS.lightGreen, label: '< 2%' },
     { color: HEALTH_COLORS.yellow, label: '2~10%' },
