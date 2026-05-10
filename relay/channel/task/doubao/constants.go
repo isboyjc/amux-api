@@ -1,5 +1,7 @@
 package doubao
 
+import "strings"
+
 // ModelList 是渠道新建时在前端"可选模型"中出现的默认清单。除了火山引擎
 // 内部的 `xxx-260128` 端点名外，管理员更常见的命名是 `seedance-2.0` /
 // `seedance-2.0-api` / `seedance-2.0-fast` 等别名，这里把它们一起列出来，
@@ -25,8 +27,8 @@ var ChannelName = "doubao-video"
 // 上游请求时会把 body.Model 套一次这个映射，保证：
 //   - 管理员即便没配 channel 的 model_mapping，用 "seedance-2.0-api" 这类
 //     友好名也能直达上游；
-//   - videoInputRatioMap 的查表键恒为官方端点名，别名调用也能吃到同款
-//     计费策略。
+//   - 计费档位查表（seedancePricingMap）的查表键恒为官方端点名，别名调用
+//     也能吃到同款计费策略。
 var seedanceAliasMap = map[string]string{
 	// pro
 	"doubao-seedance-2-0-260128": "doubao-seedance-2-0-260128",
@@ -50,25 +52,73 @@ func CanonicalSeedanceName(modelName string) (string, bool) {
 	return canonical, true
 }
 
-// videoInputRatioMap 视频输入折扣比率（含视频单价 / 不含视频单价）。
+// seedancePricingMap 按 (model, resolution, hasVideoInput) 三维查表的相对
+// 倍率。所有比率均相对于 admin 后台配的 ModelRatio——约定管理员按
+// 「不含视频 + 720p」基准价配置，其它组合在此表里相对该基准做乘数。
 //
-// 背景：火山引擎对同一模型存在两档上游单价——纯文本/图片输入（贵）和
-// 含视频输入（便宜）。我们只能在后台给模型配一个 ModelRatio，因此约定
-// 管理员按"不含视频"的较高费率配置；当请求里检测到视频输入时，自动乘以
-// 此比值把结算拉回"便宜那档"，对齐上游真实定价。
+// 数据来源：火山方舟官方价目表（"输出视频分辨率" + "输入是否含视频"两列分档）：
 //
-// 这不是给用户的运营优惠，而是"同模型两档价"的适配；想取消自动折扣、
-// 改为完全由单一 ModelRatio + 分组倍率结算，只需让 GetVideoInputRatio
-// 恒返回 (0, false)（或把本表置空）。
-var videoInputRatioMap = map[string]float64{
-	"doubao-seedance-2-0-260128":      28.0 / 46.0, // ~0.6087
-	"doubao-seedance-2-0-fast-260128": 22.0 / 37.0, // ~0.5946
+//	doubao-seedance-2-0:
+//	  720p / 480p：不含视频 46 / 含视频 28（元/百万 token）
+//	  1080p：    不含视频 51 / 含视频 31
+//	doubao-seedance-2-0-fast:
+//	  仅支持 720p：不含视频 37 / 含视频 22（无 1080p 档）
+//
+// 比率表保留分子分母不预先化简，方便排错时一眼对照官方价格。
+//
+// 背景说明：火山对同一模型存在多档上游单价（同时按"分辨率 × 是否含视频"
+// 分档），但我们只能给模型配一个 ModelRatio。这张表是"同模型多档价"的
+// 适配——不是对用户的运营优惠，运营层走分组倍率（group_ratio）独立计算。
+//
+// 想取消自动档位调整、回到单一 ModelRatio + 分组倍率结算，只需让
+// GetSeedancePricingRatio 恒返回 (0, false) 或清空本表。
+var seedancePricingMap = map[string]map[string]map[bool]float64{
+	"doubao-seedance-2-0-260128": {
+		// 480p 与 720p 同价；统一归到 "720p" 档查表
+		"720p":  {false: 1.0, true: 28.0 / 46.0},
+		"1080p": {false: 51.0 / 46.0, true: 31.0 / 46.0},
+	},
+	"doubao-seedance-2-0-fast-260128": {
+		// fast 不支持 1080p；客户端即使传 "1080p" 上游会拒/降级，仍按 720p 档计费
+		"720p": {false: 1.0, true: 22.0 / 37.0},
+	},
 }
 
-// GetVideoInputRatio 查表前先做别名归一，保证 "seedance-2.0-api" /
-// "doubao-seedance-2-0-pro" 等常见写法都能命中官方端点的折扣系数。
-func GetVideoInputRatio(modelName string) (float64, bool) {
+// normalizeSeedanceResolution 将客户端传入的分辨率字符串归一为查表键。
+// 严格识别 "1080p"（不区分大小写、容忍空白），其它都按 "720p" 档处理：
+//   - "" / "auto" / "480p" / "720p" / 未知值 → "720p"
+//   - "1080p" / "1080P" → "1080p"
+func normalizeSeedanceResolution(s string) string {
+	if strings.EqualFold(strings.TrimSpace(s), "1080p") {
+		return "1080p"
+	}
+	return "720p"
+}
+
+// GetSeedancePricingRatio 按 (modelName, resolution, hasVideoInput) 查档位
+// 倍率。查表前先做别名归一，保证 "seedance-2.0-api" 等友好名也能命中。
+//
+// 返回：
+//   - (ratio, true)：命中（即使 ratio == 1.0 也返回 true，调用方据此区分
+//     "命中但默认档"与"未配置该模型"）
+//   - (0, false)：模型不在 seedance 计费表里——按单一 ModelRatio 结算
+//
+// fast 系列查 1080p 时落不到表里，按"先按归一后的分辨率查 → 缺则回落到
+// 720p 档"的策略兜底，避免运营改 schema / 客户端乱传时崩到 0 倍率。
+func GetSeedancePricingRatio(modelName, resolution string, hasVideo bool) (float64, bool) {
 	canonical, _ := CanonicalSeedanceName(modelName)
-	r, ok := videoInputRatioMap[canonical]
-	return r, ok
+	byRes, ok := seedancePricingMap[canonical]
+	if !ok {
+		return 0, false
+	}
+	res := normalizeSeedanceResolution(resolution)
+	cell, ok := byRes[res]
+	if !ok {
+		// 该模型没有这档分辨率的价（如 fast 收到 1080p）→ 兜回 720p 档
+		cell, ok = byRes["720p"]
+		if !ok {
+			return 0, false
+		}
+	}
+	return cell[hasVideo], true
 }

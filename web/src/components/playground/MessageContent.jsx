@@ -306,17 +306,26 @@ const MessageContent = ({
             const imageContents = message.content.filter(
               (item) => item.type === 'image_url',
             );
+            const videoContents = message.content.filter(
+              (item) => item?.type === 'video_url' && item.video_url?.url,
+            );
+            const audioContents = message.content.filter(
+              (item) => item?.type === 'audio_url' && item.audio_url?.url,
+            );
             const hasText =
               textContent &&
               textContent.text &&
               typeof textContent.text === 'string' &&
               textContent.text.trim() !== '';
             const hasImages = imageContents.length > 0;
-            // 用户消息 + 含图：把图"浮"到气泡上方，气泡底色让位给图片本身；
-            // 文字部分用 inline-block 的 pill 复刻原气泡样式。
-            // 只有图没有文字时，整条消息就只剩图片网格，不再有空气泡。
-            // 助手消息（modality 文本）和不带图的用户消息保持原行为。
-            const userImagesAbove = message.role === 'user' && hasImages;
+            const hasVideos = videoContents.length > 0;
+            const hasAudios = audioContents.length > 0;
+            const hasMedia = hasImages || hasVideos || hasAudios;
+            // 用户消息 + 含媒体附件：把附件"浮"到气泡上方，气泡底色让位给附件
+            // 本身；文字部分用 inline-block 的 pill 复刻原气泡样式。
+            // 只有附件没有文字时，整条消息就只剩附件，不再有空气泡。
+            // 助手消息（modality 文本）和不带附件的用户消息保持原行为。
+            const userMediaAbove = message.role === 'user' && hasMedia;
 
             const imageGrid = hasImages ? (
               <RefImageGrid
@@ -327,11 +336,55 @@ const MessageContent = ({
               />
             ) : null;
 
+            // 视频/音频原生 controls 元素：用户消息的附件预览，可以播放。
+            // 视频用紧凑尺寸（最大 280×160），多个并排横向滚动，体感和参考
+            // 图网格一致；音频用 32px 高的滚动条占位
+            const videoBlock = hasVideos ? (
+              <div
+                className='flex items-center gap-2 overflow-x-auto'
+                style={{ maxWidth: '100%' }}
+              >
+                {videoContents.map((c, i) => (
+                  <video
+                    key={`v-${i}-${c.video_url.url}`}
+                    src={c.video_url.url}
+                    controls
+                    preload='metadata'
+                    style={{
+                      maxWidth: 280,
+                      maxHeight: 160,
+                      borderRadius: 8,
+                      background: 'var(--semi-color-fill-0)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {t('浏览器不支持播放视频')}
+                  </video>
+                ))}
+              </div>
+            ) : null;
+
+            const audioBlock = hasAudios ? (
+              <div className='flex flex-col gap-1'>
+                {audioContents.map((c, i) => (
+                  <audio
+                    key={`a-${i}-${c.audio_url.url}`}
+                    src={c.audio_url.url}
+                    controls
+                    preload='metadata'
+                    style={{ width: '100%', maxWidth: 320, height: 32 }}
+                  >
+                    {t('浏览器不支持播放音频')}
+                  </audio>
+                ))}
+              </div>
+            ) : null;
+
             const textBlock = hasText ? (
               <div
                 className={`prose prose-xs sm:prose-sm prose-gray max-w-none overflow-x-auto text-xs sm:text-sm ${
                   message.role === 'user' ? 'user-message' : ''
-                }${userImagesAbove ? ' playground-user-msg-text-pill' : ''}`}
+                }${userMediaAbove ? ' playground-user-msg-text-pill' : ''}`}
               >
                 <MarkdownRenderer
                   content={textContent.text}
@@ -344,14 +397,26 @@ const MessageContent = ({
               </div>
             ) : null;
 
-            if (userImagesAbove) {
+            if (userMediaAbove) {
               // 给外层气泡 surface 加 marker；CSS 用 :has() 把它的背景/
-              // padding/圆角全部清掉，留个透明容器装图 + pill
+              // padding/圆角全部清掉，留个透明容器装附件 + pill
               return (
                 <div className='playground-user-msg-images-out'>
-                  <div className='playground-user-msg-images-row'>
-                    {imageGrid}
-                  </div>
+                  {imageGrid && (
+                    <div className='playground-user-msg-images-row'>
+                      {imageGrid}
+                    </div>
+                  )}
+                  {videoBlock && (
+                    <div className='playground-user-msg-images-row'>
+                      {videoBlock}
+                    </div>
+                  )}
+                  {audioBlock && (
+                    <div className='playground-user-msg-images-row'>
+                      {audioBlock}
+                    </div>
+                  )}
                   {textBlock}
                 </div>
               );
@@ -360,6 +425,8 @@ const MessageContent = ({
             return (
               <div>
                 {imageGrid && <div className='mb-2'>{imageGrid}</div>}
+                {videoBlock && <div className='mb-2'>{videoBlock}</div>}
+                {audioBlock && <div className='mb-2'>{audioBlock}</div>}
                 {textBlock}
               </div>
             );

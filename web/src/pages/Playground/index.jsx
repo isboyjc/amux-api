@@ -63,6 +63,7 @@ import {
   parsePlaygroundDeepLink,
   coerceParam,
   TEXT_PARAM_SCHEMA,
+  probeDuration,
 } from '../../helpers';
 
 // Components
@@ -129,6 +130,33 @@ const getEntryName = (v) => {
   if (isFileEntry(v)) return v.name || '';
   if (isUrlEntry(v)) return v.name || '';
   return '';
+};
+
+// 推断 entry 的媒体类型：'image' | 'video' | 'audio' | null。
+// File：看 file.type 前缀；URL entry：优先 entry.mediaType，缺省按后缀名兜底
+const getEntryMediaType = (entry) => {
+  if (isFileEntry(entry)) {
+    const tp = (entry.type || '').toLowerCase();
+    if (tp.startsWith('image/')) return 'image';
+    if (tp.startsWith('video/')) return 'video';
+    if (tp.startsWith('audio/')) return 'audio';
+    return null;
+  }
+  if (isUrlEntry(entry)) {
+    if (
+      entry.mediaType === 'image' ||
+      entry.mediaType === 'video' ||
+      entry.mediaType === 'audio'
+    ) {
+      return entry.mediaType;
+    }
+    const u = (entry.url || '').toLowerCase().split('?')[0];
+    if (/\.(png|jpe?g|webp|gif|bmp|avif|heic|heif)$/.test(u)) return 'image';
+    if (/\.(mp4|mov|webm|mkv|avi|m4v)$/.test(u)) return 'video';
+    if (/\.(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(u)) return 'audio';
+    return null;
+  }
+  return null;
 };
 
 const Playground = () => {
@@ -271,9 +299,9 @@ const Playground = () => {
   const imageParamSchema = imageSchemaSplit.paramsSchema;
   const imageInputsSchema = imageSchemaSplit.inputsSchema;
 
-  // 把 inputsSchema 里的图像槽按 `x-content-role` 分组。返回
-  //   { reference, firstFrame, lastFrame }，每个 slot 形如
-  //   { key, isArray, maxItems, contentRole }。
+  // 把 inputsSchema 里的媒体槽按 `x-content-role` 分组。返回
+  //   { reference, firstFrame, lastFrame, video, audio }，每个 slot 形如
+  //   { key, isArray, maxItems, contentRole, mediaType }。
   //
   // 设计点：
   //  - schema-driven：identifier 是 schema 字段的 `x-content-role`，不依赖
@@ -285,33 +313,69 @@ const Playground = () => {
   //  - first_frame / last_frame：单值（string + format:image），最多 1 张
   //  - reference_image：通常是 array + items.format=image，maxItems 由 schema
   //    决定（doubao-seedance 是 9）
+  //  - reference_video：array + items.format=video，maxItems 默认 3（seedance）
+  //  - reference_audio：array + items.format=audio，maxItems 默认 3（seedance）
   const imageInputSlots = React.useMemo(() => {
     const props = imageInputsSchema?.properties || {};
     let firstFrame = null;
     let lastFrame = null;
     let reference = null;
+    let video = null;
+    let audio = null;
 
-    // 1) 优先用 x-content-role 标记的字段
+    // 1) 优先用 x-content-role 标记的字段。视频/音频 slot 还会捕获 schema
+    //    上的 x-* 限制扩展键（参考 doubao-seedance-2.0 的官方约束）：
+    //      - x-max-mb-per-item（array slot）/ x-max-mb（标量 slot）：单文件
+    //        大小上限（MB）。沿用 schema 里 reference_images 的命名风格
+    //      - x-min-duration-seconds / x-max-duration-seconds：单文件时长 [min,max]
+    //      - x-max-total-duration-seconds：所有文件总时长上限
+    //    缺省值都是 undefined，缺则不强制——Veo / Kling 等其它视频模型只要
+    //    在 schema 里声明对应字段就自动生效，不在 schema 声明则前端不拦
+    const numOrUndef = (v) => (typeof v === 'number' && v > 0 ? v : undefined);
+    const mbToBytes = (v) =>
+      typeof v === 'number' && v > 0 ? Math.floor(v * 1024 * 1024) : undefined;
     Object.entries(props).forEach(([key, def]) => {
       if (!def) return;
       const isArr = def.type === 'array';
-      const isImg = def.format === 'image' || (isArr && def.items?.format === 'image');
-      if (!isImg) return;
+      const itemFmt = isArr ? def.items?.format : def.format;
+      const mediaType =
+        itemFmt === 'image'
+          ? 'image'
+          : itemFmt === 'video'
+            ? 'video'
+            : itemFmt === 'audio'
+              ? 'audio'
+              : null;
+      if (!mediaType) return;
       const role = def['x-content-role'];
+      // 大小限制 MB 风格优先：array 用 x-max-mb-per-item，标量用 x-max-mb；
+      // 都缺时再 fallback 到 x-max-bytes（旧字段，可选保留）
+      const maxBytes =
+        mbToBytes(isArr ? def['x-max-mb-per-item'] : def['x-max-mb']) ??
+        numOrUndef(def['x-max-bytes']);
       const slot = {
         key,
         isArray: isArr,
         maxItems: isArr ? def.maxItems || 9 : 1,
         contentRole: role || null,
+        mediaType,
+        maxBytes,
+        minDurationSeconds: numOrUndef(def['x-min-duration-seconds']),
+        maxDurationSeconds: numOrUndef(def['x-max-duration-seconds']),
+        maxTotalDurationSeconds: numOrUndef(
+          def['x-max-total-duration-seconds'],
+        ),
       };
-      if (role === 'first_frame') firstFrame = slot;
-      else if (role === 'last_frame') lastFrame = slot;
-      else if (role === 'reference_image') reference = slot;
+      if (role === 'first_frame' && mediaType === 'image') firstFrame = slot;
+      else if (role === 'last_frame' && mediaType === 'image') lastFrame = slot;
+      else if (role === 'reference_image' && mediaType === 'image') reference = slot;
+      else if (role === 'reference_video' && mediaType === 'video') video = slot;
+      else if (role === 'reference_audio' && mediaType === 'audio') audio = slot;
     });
 
     // 2) 兜底：schema 没声明任何 role → 老 image gen schema，按字段名优先级
     //    + 第一个 image 字段当 reference 槽
-    if (!firstFrame && !lastFrame && !reference) {
+    if (!firstFrame && !lastFrame && !reference && !video && !audio) {
       const pickKey = ['image', 'reference_image', 'images'].find(
         (k) => k in props,
       );
@@ -332,11 +396,12 @@ const Playground = () => {
           isArray: isArr,
           maxItems: isArr ? def?.maxItems || 9 : 1,
           contentRole: 'reference_image',
+          mediaType: 'image',
         };
       }
     }
 
-    return { firstFrame, lastFrame, reference };
+    return { firstFrame, lastFrame, reference, video, audio };
   }, [imageInputsSchema]);
 
   // 「视频模型同时支持首尾帧 + 全能参考」时，UI 给一个模式切换按钮。
@@ -381,6 +446,31 @@ const Playground = () => {
   //   - 发送：resolveUploadedUrl(file) await Promise，已完成的直接返回 url
   const [uploadStatus, setUploadStatus] = React.useState(() => new Map());
   const uploadPromisesRef = React.useRef(new Map());
+
+  // 视频/音频时长探测缓存：File → Promise<number|null>。
+  // 在 add-time 跑一次探测做单文件 [min,max] 校验；submit-time 再 await
+  // 拿到的 number 算总时长。Promise 维度是 File 实例——同一 File 多次
+  // 读永远拿到同一个 promise，避免重复构造 <video> 元素
+  const durationProbesRef = React.useRef(new Map());
+
+  // 探测时长。已在缓存里直接复用；缺失则启动新一轮 probe 并缓存。
+  // 仅服务于视频/音频 File entry——URL entry 没有本地字节，不在这里
+  // 处理（提交时 URL 时长按 0 计入，让上游自己兜约束）
+  const ensureDurationProbe = React.useCallback((file) => {
+    if (!(file instanceof File)) return Promise.resolve(null);
+    if (durationProbesRef.current.has(file)) {
+      return durationProbesRef.current.get(file);
+    }
+    const p = probeDuration(file);
+    durationProbesRef.current.set(file, p);
+    return p;
+  }, []);
+
+  // File 被移除时，把对应缓存条目也丢掉，避免 File 引用泄漏
+  const forgetDuration = React.useCallback((file) => {
+    if (!(file instanceof File)) return;
+    durationProbesRef.current.delete(file);
+  }, []);
 
   const startUpload = React.useCallback((file, scope) => {
     if (!(file instanceof File)) return;
@@ -432,17 +522,22 @@ const Playground = () => {
 
   // 用户移除一张图：把该 File 对应的上传跟踪也清掉。这样既释放 File 引用
   // （让浏览器 GC 回收 base64 内容），也保证 hash key 重复使用同一个 File
-  // 时不会拿到陈旧的 done/failed 状态。
-  const forgetUpload = React.useCallback((file) => {
-    if (!(file instanceof File)) return;
-    uploadPromisesRef.current.delete(file);
-    setUploadStatus((prev) => {
-      if (!prev.has(file)) return prev;
-      const next = new Map(prev);
-      next.delete(file);
-      return next;
-    });
-  }, []);
+  // 时不会拿到陈旧的 done/failed 状态。视频/音频时长缓存一起清，避免缓存
+  // 表无限增长
+  const forgetUpload = React.useCallback(
+    (file) => {
+      if (!(file instanceof File)) return;
+      uploadPromisesRef.current.delete(file);
+      setUploadStatus((prev) => {
+        if (!prev.has(file)) return prev;
+        const next = new Map(prev);
+        next.delete(file);
+        return next;
+      });
+      forgetDuration(file);
+    },
+    [forgetDuration],
+  );
 
   // 重试上传：缩略图 hover 出红色失败提示时点击该按钮，把当前文件重置为
   // pending 重新跑一次。先 forget 再 startUpload，避免命中"已存在 promise"
@@ -594,6 +689,10 @@ const Playground = () => {
   ]);
 
   // 视频模式切换：清空对侧 slot 值，避免触发 mutex
+  // - 切到 first_last：清空 reference_image（图）+ reference_video（视频）+
+  //   reference_audio（音频）。首尾帧模式仅保留两个图片单值槽。
+  // - 切到 omni：清空 first_frame / last_frame。视频/音频附件保留——它们
+  //   不和 first/last 互斥，但通常切模式后用户会重新选附件，保留也无副作用
   const handleVideoInputModeChange = useCallback(
     (nextMode) => {
       if (nextMode === videoInputMode) return;
@@ -602,6 +701,12 @@ const Playground = () => {
         if (nextMode === 'first_last') {
           if (imageInputSlots.reference) {
             delete next[imageInputSlots.reference.key];
+          }
+          if (imageInputSlots.video) {
+            delete next[imageInputSlots.video.key];
+          }
+          if (imageInputSlots.audio) {
+            delete next[imageInputSlots.audio.key];
           }
         } else {
           if (imageInputSlots.firstFrame) {
@@ -948,17 +1053,20 @@ const Playground = () => {
       const usedModel = modelOverride || inputs.model;
       const usedGroup = groupOverride || inputs.group;
 
-      // 把图片附件嵌进 user 消息的 content（与 image gen 对齐），让用户气泡
-      // 视觉上能直接看到自己上传了哪些图，不只是依赖 attachments badge。
-      // 没有文本时不塞空 text block，避免气泡里出现空段落
-      const imgParts = content.filter((c) => c?.type === 'image_url');
+      // 把图片/视频/音频附件都嵌进 user 消息的 content（与 image gen 对齐），
+      // 让用户气泡视觉上能直接看到自己上传了哪些素材，不只是依赖 attachments
+      // badge。没有文本时不塞空 text block，避免气泡里出现空段落
+      const mediaParts = content.filter(
+        (c) =>
+          c?.type === 'image_url' ||
+          c?.type === 'video_url' ||
+          c?.type === 'audio_url',
+      );
       const textParts = trimmedPrompt
         ? [{ type: 'text', text: prompt }]
         : [];
       const userContent =
-        imgParts.length > 0
-          ? [...textParts, ...imgParts]
-          : prompt;
+        mediaParts.length > 0 ? [...textParts, ...mediaParts] : prompt;
 
       // user 消息也把 attachments（带 role）一并持久化，方便渲染成 badge，
       // 同时给 resend 路径留下还原参考图的种子。params 也存在 user 消息上，
@@ -1365,24 +1473,31 @@ const Playground = () => {
     }
     if (currentModality === MODALITY.VIDEO) {
       // 把当前 imageInputsValues 按 schema slot 的 x-content-role 拍平成
-      // content 数组：[{type:'image_url', image_url:{url}, role}]
+      // content 数组：图 → {type:'image_url', image_url:{url}, role}
+      //               视频 → {type:'video_url', video_url:{url}, role}
+      //               音频 → {type:'audio_url', audio_url:{url}, role}
       // 上游 doubao adapter 会把这串透传给 Volcengine。
       //
-      // 上传策略：图片在 paste/drag 时已通过 startUpload(...) 启动 R2 即时
+      // 上传策略：媒体在 paste/drag 时已通过 startUpload(...) 启动 R2 即时
       // 上传——这里只 await 已经在 in-flight 的 promise 拿到 URL，发送几乎
       // 不再阻塞。极端情况下（如用户敲 ⌘+Enter 在浏览器还没启动 upload 前）
       // resolveUploadedUrl 内部会兜底重启上传并 await，行为退化为旧的同步
       // 上传，仍然能完成请求。
       (async () => {
         const items = [];
+        // 遍历顺序：图片（first/last_frame → reference） → 视频 → 音频。
+        // 上游 doubao 不依赖顺序，但保持稳定排列方便调试 / 日志阅读。
         const slotsToWalk = [
-          imageInputSlots.firstFrame,
-          imageInputSlots.lastFrame,
-          imageInputSlots.reference,
-        ].filter(Boolean);
-        for (const slot of slotsToWalk) {
+          { slot: imageInputSlots.firstFrame, scope: 'playground-video-image', contentType: 'image_url', defaultRole: 'first_frame' },
+          { slot: imageInputSlots.lastFrame, scope: 'playground-video-image', contentType: 'image_url', defaultRole: 'last_frame' },
+          { slot: imageInputSlots.reference, scope: 'playground-video-image', contentType: 'image_url', defaultRole: 'reference_image' },
+          { slot: imageInputSlots.video, scope: 'playground-video-video', contentType: 'video_url', defaultRole: 'reference_video' },
+          { slot: imageInputSlots.audio, scope: 'playground-video-audio', contentType: 'audio_url', defaultRole: 'reference_audio' },
+        ].filter((s) => s.slot);
+
+        for (const { slot, scope, contentType, defaultRole } of slotsToWalk) {
           const v = imageInputsValues?.[slot.key];
-          // 同时容纳 File（待上传）和 { url, name? }（已经在 R2 的图）
+          // 同时容纳 File（待上传）和 { url, name? }（已经在 R2 的资源）
           const entries = Array.isArray(v)
             ? v.filter(isSlotEntry)
             : isSlotEntry(v)
@@ -1395,25 +1510,95 @@ const Playground = () => {
             if (isUrlEntry(entry)) {
               url = entry.url;
             } else {
-              url = await resolveUploadedUrl(
-                entry,
-                'playground-video-image',
-              );
+              url = await resolveUploadedUrl(entry, scope);
             }
             if (!url) {
               // resolveUploadedUrl 失败时返回 null（已在 startUpload 的
               // catch 把状态写到 uploadStatus，缩略图上会显示红角标）；
               // 这里再补一条 toast，避免用户漏看角标
-              showError(t('上传图片失败：') + getEntryName(entry));
+              const label =
+                contentType === 'video_url'
+                  ? t('上传视频失败：')
+                  : contentType === 'audio_url'
+                    ? t('上传音频失败：')
+                    : t('上传图片失败：');
+              showError(label + getEntryName(entry));
               continue;
             }
-            items.push({
-              type: 'image_url',
-              image_url: { url },
-              role: slot.contentRole || 'reference_image',
-            });
+            const role = slot.contentRole || defaultRole;
+            if (contentType === 'image_url') {
+              items.push({ type: 'image_url', image_url: { url }, role });
+            } else if (contentType === 'video_url') {
+              items.push({ type: 'video_url', video_url: { url }, role });
+            } else {
+              items.push({ type: 'audio_url', audio_url: { url }, role });
+            }
           }
         }
+
+        // 提交前最后一道校验：
+        // 1) 音频必须配图或视频（火山硬约束）
+        // 2) 视频/音频总时长 ≤ schema 声明的 x-max-total-duration-seconds。
+        //    同 slot 的 entry 累加时长——File entry 用 add 时缓存的探测结果，
+        //    URL entry 没探测过按 0 计入（让上游兜约束，避免误拦）
+        const imgCount = items.filter((x) => x.type === 'image_url').length;
+        const vidCount = items.filter((x) => x.type === 'video_url').length;
+        const audCount = items.filter((x) => x.type === 'audio_url').length;
+        if (audCount > 0 && imgCount === 0 && vidCount === 0) {
+          showError(t('音频不能单独输入，请配合图片或视频一起上传'));
+          return;
+        }
+
+        // 总时长校验（仅当 schema 声明了 x-max-total-duration-seconds 才跑）
+        const sumDurationFor = async (slot) => {
+          if (!slot) return { total: 0, hasUnknown: false };
+          const v = imageInputsValues?.[slot.key];
+          const entries = Array.isArray(v)
+            ? v.filter(isSlotEntry)
+            : isSlotEntry(v)
+              ? [v]
+              : [];
+          let total = 0;
+          let hasUnknown = false;
+          for (const e of entries) {
+            if (isFileEntry(e)) {
+              const d = await ensureDurationProbe(e);
+              if (d == null) hasUnknown = true;
+              else total += d;
+            } else {
+              hasUnknown = true; // URL entry 拿不到时长，标记一下
+            }
+          }
+          return { total, hasUnknown };
+        };
+
+        const vSlot = imageInputSlots.video;
+        if (vSlot?.maxTotalDurationSeconds) {
+          const { total } = await sumDurationFor(vSlot);
+          if (total > vSlot.maxTotalDurationSeconds) {
+            showError(
+              t('视频总时长不能超过 {{n}} 秒，当前 {{cur}} 秒', {
+                n: vSlot.maxTotalDurationSeconds,
+                cur: total.toFixed(1),
+              }),
+            );
+            return;
+          }
+        }
+        const aSlot = imageInputSlots.audio;
+        if (aSlot?.maxTotalDurationSeconds) {
+          const { total } = await sumDurationFor(aSlot);
+          if (total > aSlot.maxTotalDurationSeconds) {
+            showError(
+              t('音频总时长不能超过 {{n}} 秒，当前 {{cur}} 秒', {
+                n: aSlot.maxTotalDurationSeconds,
+                cur: total.toFixed(1),
+              }),
+            );
+            return;
+          }
+        }
+
         handleGenerateVideo({ prompt: content, attachments: items });
         // 发完清空 slot 值（与图片模型对称）；videoInputMode 保持，下条
         // 消息让用户继续在同一模式里。uploadStatus 中对应条目随 File 引用
@@ -1859,31 +2044,38 @@ const Playground = () => {
     });
   }, [imageInputSlots, forgetUpload]);
 
-  // 添加参考图：根据 modality + 当前 video 模式路由
-  //   - multimodal：走 imageUrls（base64 字符串），统一上限 9 张
-  //   - image / video-omni：写 reference slot，上限按 schema
-  //   - video-first_last：依次填 first_frame → last_frame；都满 toast 已满
+  // 添加参考素材：根据 modality + 当前 video 模式 + entry 的 MIME 类型路由
+  //   - multimodal：走 imageUrls（base64 字符串），统一上限 9 张，仅图
+  //   - image：写 reference slot，上限按 schema，仅图
+  //   - video-omni：图 → reference_image，视频 → reference_video，
+  //                 音频 → reference_audio。三类槽分别按 schema 限额
+  //   - video-first_last：依次填 first_frame → last_frame；非图直接 toast 拒
   //   - 其它（text / audio / embedding / rerank）：toast 提示不支持
   //
   // 入参 entry 现在可以是两种形态：
-  //   - File：本地选 / 粘贴 / 拖拽得来——视频模型会触发 R2 即时上传
-  //   - { url, name? }：「以此图继续编辑」点已经在 R2 的图——直接持有 URL，
-  //     不上传、不下载
-  // multimodal 路径只接受 File（要 FileReader 转 base64），URL entry 在
-  // 入口提示后丢弃；image / video 槽位两种 entry 都能塞
+  //   - File：本地选 / 粘贴 / 拖拽得来——视频/图片/音频走对应 R2 scope 上传
+  //   - { url, name?, mediaType? }：来自历史复用 / 用户粘贴的现成 URL，
+  //     直接持有 URL，不上传、不下载。mediaType 显式标注 'image'|'video'|'audio'，
+  //     缺省时按 image 处理（向后兼容旧调用）
+  // multimodal 路径只接受图片 File（要 FileReader 转 base64），其它形态
+  // 在入口提示后丢弃
   //
   // 第二参 opts.targetRole：可选，仅 video-first_last 模式生效，强制把
   // entry 写入指定 slot（'first_frame' | 'last_frame'）
   const MULTIMODAL_MAX = 9;
+
   const handleAddReferenceImage = React.useCallback(
-    (entry, opts = {}) => {
+    async (entry, opts = {}) => {
       if (!isSlotEntry(entry)) return;
       const targetRole = opts?.targetRole;
+      const mediaType = getEntryMediaType(entry) || 'image';
 
-      const hasAnySlot =
+      const hasAnyImageSlot =
         !!imageInputSlots.reference ||
         !!imageInputSlots.firstFrame ||
         !!imageInputSlots.lastFrame;
+      const hasVideoSlot = !!imageInputSlots.video;
+      const hasAudioSlot = !!imageInputSlots.audio;
 
       // text / 其它类型：明确告知不支持
       if (
@@ -1891,7 +2083,7 @@ const Playground = () => {
         !(
           (currentModality === MODALITY.IMAGE ||
             currentModality === MODALITY.VIDEO) &&
-          hasAnySlot
+          (hasAnyImageSlot || hasVideoSlot || hasAudioSlot)
         )
       ) {
         Toast.warning({
@@ -1901,8 +2093,15 @@ const Playground = () => {
         return;
       }
 
-      // multimodal：cap 9 张，走 chat 多模态 imageUrls 通道
+      // multimodal：cap 9 张，走 chat 多模态 imageUrls 通道——仅图片
       if (currentModality === MODALITY.MULTIMODAL) {
+        if (mediaType !== 'image') {
+          Toast.warning({
+            content: t('多模态对话仅支持图片附件'),
+            duration: 2,
+          });
+          return;
+        }
         const cur = (inputs.imageUrls || []).filter(
           (u) => u && u.trim() !== '',
         );
@@ -1936,11 +2135,24 @@ const Playground = () => {
         return;
       }
 
-      // 视频「首尾帧」模式：单值 slot，按"先 first 后 last"顺序填
+      // 视频「首尾帧」模式：纯图双 slot。视频/音频在此模式禁用，给明确
+      // 引导让用户切到全能参考再上传
       if (
         currentModality === MODALITY.VIDEO &&
         videoInputMode === 'first_last'
       ) {
+        if (mediaType !== 'image') {
+          Toast.warning({
+            content:
+              mediaType === 'video'
+                ? t('首尾帧模式仅支持图片，可切到"全能参考"上传视频')
+                : mediaType === 'audio'
+                  ? t('首尾帧模式仅支持图片，可切到"全能参考"上传音频')
+                  : t('首尾帧模式仅支持图片'),
+            duration: 2.5,
+          });
+          return;
+        }
         const ff = imageInputSlots.firstFrame;
         const lf = imageInputSlots.lastFrame;
 
@@ -1981,16 +2193,142 @@ const Playground = () => {
         return;
       }
 
-      // image / video-omni：写 reference slot（多张数组 / 单张兼容）
+      // 视频全能模式：根据 mediaType 路由到 reference / video / audio 槽
+      if (currentModality === MODALITY.VIDEO) {
+        // image gen modality 不应进到这里——它没有视频/音频 slot
+        const targetSlot =
+          mediaType === 'video'
+            ? imageInputSlots.video
+            : mediaType === 'audio'
+              ? imageInputSlots.audio
+              : imageInputSlots.reference;
+        if (!targetSlot) {
+          Toast.warning({
+            content:
+              mediaType === 'video'
+                ? t('当前模型不支持视频参考')
+                : mediaType === 'audio'
+                  ? t('当前模型不支持音频参考')
+                  : t('当前模型不支持图片参考'),
+            duration: 2.5,
+          });
+          return;
+        }
+        const slotMax = targetSlot.isArray ? targetSlot.maxItems : 1;
+        const curForCount = imageInputsValues?.[targetSlot.key];
+        const curArrForCount = targetSlot.isArray
+          ? Array.isArray(curForCount)
+            ? curForCount.filter(isSlotEntry)
+            : []
+          : isSlotEntry(curForCount)
+            ? [curForCount]
+            : [];
+        if (curArrForCount.length >= slotMax) {
+          const overMsg =
+            mediaType === 'video'
+              ? t('视频数量已达上限 {{n}}', { n: slotMax })
+              : mediaType === 'audio'
+                ? t('音频数量已达上限 {{n}}', { n: slotMax })
+                : t('该模型最多上传 {{n}} 张参考图', { n: slotMax });
+          Toast.warning({ content: overMsg, duration: 2 });
+          return;
+        }
+
+        // 视频/音频 File entry：add 前做客户端 [大小 / 时长] 校验。校验失败
+        // 直接 toast + return，不入 slot 也不上传；避免"先出现再消失"的闪烁。
+        // 图片 entry 不做时长校验（无意义），大小限制由 R2 scope 兜（30MB）
+        if ((mediaType === 'video' || mediaType === 'audio') && isFileEntry(entry)) {
+          if (targetSlot.maxBytes && entry.size > targetSlot.maxBytes) {
+            const mb = Math.round(targetSlot.maxBytes / (1024 * 1024));
+            Toast.warning({
+              content:
+                mediaType === 'video'
+                  ? t('单个视频不能超过 {{n}} MB', { n: mb })
+                  : t('单个音频不能超过 {{n}} MB', { n: mb }),
+              duration: 2.5,
+            });
+            return;
+          }
+          const minD = targetSlot.minDurationSeconds;
+          const maxD = targetSlot.maxDurationSeconds;
+          if (minD || maxD) {
+            // 探测有缓存：同一 File 多次 add 共用一份 promise
+            const dur = await ensureDurationProbe(entry);
+            if (dur != null) {
+              const tooShort = minD && dur < minD;
+              const tooLong = maxD && dur > maxD;
+              if (tooShort || tooLong) {
+                Toast.warning({
+                  content:
+                    mediaType === 'video'
+                      ? t('单个视频时长需在 {{min}}-{{max}} 秒之间，当前 {{cur}} 秒', {
+                          min: minD || 0,
+                          max: maxD || '∞',
+                          cur: dur.toFixed(1),
+                        })
+                      : t('单个音频时长需在 {{min}}-{{max}} 秒之间，当前 {{cur}} 秒', {
+                          min: minD || 0,
+                          max: maxD || '∞',
+                          cur: dur.toFixed(1),
+                        }),
+                  duration: 3,
+                });
+                forgetDuration(entry);
+                return;
+              }
+            }
+            // dur === null：浏览器读不出（编码不识别 / 探测超时）。这里
+            // 不阻断——让它入 slot，提交时上游会兜约束；总时长按 0 计入
+            // 也避免错误拦截
+          }
+        }
+
+        // 走到这里说明数量 / 大小 / 时长都过了。用 functional updater 而非
+        // 闭包里的 imageInputsValues：当用户拖多个文件时各 promise 并行完
+        // 成，依赖闭包快照会丢失中间项；functional updater 始终读最新 state
+        setImageInputsValues((prev) => {
+          const cur = prev?.[targetSlot.key];
+          const curArr = targetSlot.isArray
+            ? Array.isArray(cur)
+              ? cur.filter(isSlotEntry)
+              : []
+            : isSlotEntry(cur)
+              ? [cur]
+              : [];
+          // 二次防越界：promise 串行排队时前面几条可能已把 slot 撑满
+          if (curArr.length >= slotMax) return prev;
+          if (targetSlot.isArray) {
+            return { ...prev, [targetSlot.key]: [...curArr, entry] };
+          }
+          return { ...prev, [targetSlot.key]: entry };
+        });
+
+        // File entry 走 R2 即时上传：scope 按 mediaType 选；URL entry
+        // 已经持有远程 URL，无需上传
+        if (isFileEntry(entry)) {
+          const scope =
+            mediaType === 'video'
+              ? 'playground-video-video'
+              : mediaType === 'audio'
+                ? 'playground-video-audio'
+                : 'playground-video-image';
+          startUpload(entry, scope);
+        }
+        return;
+      }
+
+      // image gen modality：仅图片，写 reference slot
       const refSlot = imageInputSlots.reference;
-      if (
-        (currentModality === MODALITY.IMAGE ||
-          currentModality === MODALITY.VIDEO) &&
-        refSlot
-      ) {
+      if (currentModality === MODALITY.IMAGE && refSlot) {
+        if (mediaType !== 'image') {
+          Toast.warning({
+            content: t('图片生成仅支持图片参考'),
+            duration: 2,
+          });
+          return;
+        }
         const slotMax = refSlot.isArray ? refSlot.maxItems : 1;
         const cur = imageInputsValues?.[refSlot.key];
-        // entry 数组同时计 File / URL，确保限额对两类都生效
         const curArr = refSlot.isArray
           ? Array.isArray(cur)
             ? cur.filter(isSlotEntry)
@@ -2016,13 +2354,8 @@ const Playground = () => {
             [refSlot.key]: entry,
           });
         }
-        // 仅视频模型 + File entry 走 R2 即时上传：
-        //   - URL entry 已经持有远程 URL，无需上传
-        //   - image gen 走 multipart edits（useImageGeneration 直接吃 File），
-        //     不需要预先 R2
-        if (currentModality === MODALITY.VIDEO && isFileEntry(entry)) {
-          startUpload(entry, 'playground-video-image');
-        }
+        // image gen 走 multipart edits（useImageGeneration 直接吃 File），
+        // 不需要预先 R2 上传
       }
     },
     [
@@ -2033,8 +2366,138 @@ const Playground = () => {
       imageInputSlots,
       handleInputChange,
       startUpload,
+      ensureDurationProbe,
+      forgetDuration,
       t,
     ],
+  );
+
+  // 视频参考素材展示数据：仅 video-omni 模式下 + 该模型 schema 声明了
+  // reference_video 槽时返回数组，否则为 []。结构和 referenceImages 类似，
+  // 但缩略图字段（dataUrl）含义降级为"用于显示的链接"——视频/音频在 chip
+  // 区只展示文件名 + 类型图标，不渲染媒体预览，所以 dataUrl 主要给 tooltip。
+  // previewUrl 是给输入栏 chip 点击预览用的：File entry 拿 ObjectURL（与
+  // 图片缩略图共用 fileToUrl 缓存，组件卸载时统一 revoke）；URL entry 直接
+  // 用现成的远程 URL。R2 上传完成后 entry 仍是同一个 File，previewUrl 不
+  // 失效——播放是本地解码 ObjectURL，跟上传链路独立
+  const referenceVideos = React.useMemo(() => {
+    if (currentModality !== MODALITY.VIDEO) return [];
+    if (videoInputMode !== 'omni') return [];
+    const slot = imageInputSlots.video;
+    if (!slot) return [];
+    const v = imageInputsValues?.[slot.key];
+    const arr = Array.isArray(v) ? v : isSlotEntry(v) ? [v] : [];
+    return arr.filter(isSlotEntry).map((entry, i) => {
+      if (isUrlEntry(entry)) {
+        return {
+          key: `vid-url-${i}-${entry.url}`,
+          url: entry.url,
+          previewUrl: entry.url,
+          name: entry.name || '',
+          idx: i,
+          entry,
+          uploading: false,
+          failed: false,
+        };
+      }
+      return {
+        key: `vid-${i}-${entry.name}-${entry.size}`,
+        url: '',
+        previewUrl: fileToUrl(entry),
+        name: entry.name,
+        idx: i,
+        file: entry,
+        entry,
+        ...fileUploadFlags(entry),
+      };
+    });
+  }, [
+    currentModality,
+    videoInputMode,
+    imageInputSlots,
+    imageInputsValues,
+    fileToUrl,
+    fileUploadFlags,
+  ]);
+
+  const referenceAudios = React.useMemo(() => {
+    if (currentModality !== MODALITY.VIDEO) return [];
+    if (videoInputMode !== 'omni') return [];
+    const slot = imageInputSlots.audio;
+    if (!slot) return [];
+    const v = imageInputsValues?.[slot.key];
+    const arr = Array.isArray(v) ? v : isSlotEntry(v) ? [v] : [];
+    return arr.filter(isSlotEntry).map((entry, i) => {
+      if (isUrlEntry(entry)) {
+        return {
+          key: `aud-url-${i}-${entry.url}`,
+          url: entry.url,
+          previewUrl: entry.url,
+          name: entry.name || '',
+          idx: i,
+          entry,
+          uploading: false,
+          failed: false,
+        };
+      }
+      return {
+        key: `aud-${i}-${entry.name}-${entry.size}`,
+        url: '',
+        previewUrl: fileToUrl(entry),
+        name: entry.name,
+        idx: i,
+        file: entry,
+        entry,
+        ...fileUploadFlags(entry),
+      };
+    });
+  }, [
+    currentModality,
+    videoInputMode,
+    imageInputSlots,
+    imageInputsValues,
+    fileToUrl,
+    fileUploadFlags,
+  ]);
+
+  // 删除视频/音频参考：与 handleRemoveReferenceImage 同构，按 mediaType 分发
+  const removeMediaReferenceByKey = React.useCallback(
+    (key, mediaType) => {
+      const list = mediaType === 'video' ? referenceVideos : referenceAudios;
+      const slot = mediaType === 'video' ? imageInputSlots.video : imageInputSlots.audio;
+      const target = list.find((x) => x.key === key);
+      if (!target || !slot) return;
+      const cur = imageInputsValues?.[slot.key];
+      if (slot.isArray) {
+        const arr = Array.isArray(cur) ? cur.filter(isSlotEntry) : [];
+        const removed = arr[target.idx];
+        const next = arr.slice();
+        next.splice(target.idx, 1);
+        setImageInputsValues({ ...imageInputsValues, [slot.key]: next });
+        forgetUpload(isFileEntry(removed) ? removed : null);
+      } else {
+        const removed = cur;
+        const { [slot.key]: _, ...rest } = imageInputsValues || {};
+        setImageInputsValues(rest);
+        forgetUpload(isFileEntry(removed) ? removed : null);
+      }
+    },
+    [
+      referenceVideos,
+      referenceAudios,
+      imageInputSlots,
+      imageInputsValues,
+      forgetUpload,
+    ],
+  );
+
+  const handleRemoveReferenceVideo = React.useCallback(
+    (key) => removeMediaReferenceByKey(key, 'video'),
+    [removeMediaReferenceByKey],
+  );
+  const handleRemoveReferenceAudio = React.useCallback(
+    (key) => removeMediaReferenceByKey(key, 'audio'),
+    [removeMediaReferenceByKey],
   );
 
   // 删除参考图：按 key 找到 idx，从对应 state 里 splice 出去
@@ -2262,6 +2725,10 @@ const Playground = () => {
                   onSwapFirstLastFrame={handleSwapFirstLastFrame}
                   onRemoveFirstFrame={handleRemoveFirstFrame}
                   onRemoveLastFrame={handleRemoveLastFrame}
+                  referenceVideos={referenceVideos}
+                  referenceAudios={referenceAudios}
+                  onRemoveReferenceVideo={handleRemoveReferenceVideo}
+                  onRemoveReferenceAudio={handleRemoveReferenceAudio}
                   pendingText={pendingDeepLinkText}
                   onPendingTextConsumed={() => setPendingDeepLinkText(null)}
                 />

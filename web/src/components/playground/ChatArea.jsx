@@ -81,6 +81,11 @@ const ChatArea = ({
   onSwapFirstLastFrame,
   onRemoveFirstFrame,
   onRemoveLastFrame,
+  // 视频模型 omni 模式下的视频/音频参考素材（schema 声明对应 slot 时启用）
+  referenceVideos,
+  referenceAudios,
+  onRemoveReferenceVideo,
+  onRemoveReferenceAudio,
   // 深链预填文案
   pendingText,
   onPendingTextConsumed,
@@ -120,12 +125,66 @@ const ChatArea = ({
     e.preventDefault();
     dragDepthRef.current = 0;
     setAreaDragOver(false);
+    // 输入栏的 onDrop 先跑（DOM 事件向上冒泡先到内层），它会在 nativeEvent
+    // 上打 __playgroundInputHandled 标记。命中标记 = files 已经在输入栏分发
+    // 过一遍，这里只清状态、不再二次派发，避免重复上传
+    if (e.nativeEvent?.__playgroundInputHandled) return;
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
+    // 拖拽到聊天面板时按 MIME 路由：图片 / 视频 / 音频任一都进
+    // onAddReferenceImage（父层会按 modality + 视频模式决定接受 / toast 拒绝）
     Array.from(files).forEach((file) => {
-      if (!file?.type?.startsWith('image/')) return;
+      const tp = file?.type || '';
+      if (
+        !tp.startsWith('image/') &&
+        !tp.startsWith('video/') &&
+        !tp.startsWith('audio/')
+      ) {
+        return;
+      }
       onAddReferenceImage?.(file);
     });
+  };
+
+  // Semi UI 的 <Chat> 组件在 container 级别挂了自己的 onDragOver / onDrop，
+  // 内部都会调 stopPropagation——drop 到消息区时事件永远到不了上面的 Card.onDrop，
+  // files 会被 Semi 内部的 manualUpload 吞掉（我们 renderInputArea=null 用不到）。
+  //
+  // 修法：在 Chat 外层 wrapper 上用 React 的「捕获阶段」（onDropCapture /
+  // onDragOverCapture）抢在 Semi 的 bubble handler 之前处理。捕获阶段顺序
+  // 是 outer → inner，所以这里能拿到 raw event。
+  //
+  // 不挂在 Card 根上（避免 input bar 的 drop 也被它抢走，造成重复上传）；
+  // 仅作用于消息区 wrapper，input bar 是它的兄弟节点，capture 不会触发
+  const handleMessageAreaDropCapture = (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    // preventDefault：不让浏览器走"在新标签打开文件"的默认行为。
+    // 不调 stopPropagation：让 Semi 的 bubble handler 也跑一次（无副作用，
+    // 它的 manualUpload 落在 Semi 自己 state 上我们没用）
+    e.preventDefault();
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    // 高亮状态归位（Card.onDrop 不会跑了，得在这里清）
+    dragDepthRef.current = 0;
+    setAreaDragOver(false);
+    Array.from(files).forEach((file) => {
+      const tp = file?.type || '';
+      if (
+        !tp.startsWith('image/') &&
+        !tp.startsWith('video/') &&
+        !tp.startsWith('audio/')
+      ) {
+        return;
+      }
+      onAddReferenceImage?.(file);
+    });
+  };
+  const handleMessageAreaDragOverCapture = (e) => {
+    // 同样在捕获阶段就 preventDefault：浏览器要求 dragover 上有 preventDefault
+    // 才会触发后续 drop 事件。Semi 内层会再调一次，无副作用
+    if (e.dataTransfer?.types?.includes('Files')) {
+      e.preventDefault();
+    }
   };
 
   // assistant 消息按 modality 分发到 ImageBubble / VideoBubble / 文本气泡
@@ -275,8 +334,17 @@ const ChatArea = ({
 
       {/* 消息流：居中容器控制最大宽度。横向 padding 必须和输入栏
           UnifiedInputBar 一致（px-3 sm:px-4），否则气泡可触区会比输入框
-          可见区域更宽，hover 高亮越界看着突兀。 */}
-      <div className='flex-1 overflow-hidden flex flex-col items-stretch'>
+          可见区域更宽，hover 高亮越界看着突兀。
+
+          捕获阶段 drop / dragover：在 Semi <Chat> 的 stopPropagation 触发前
+          抢到事件，让"拖到消息区上传"真正生效（详见上面 handleMessageArea*
+          注释）。挂在外层这一层 wrapper 而不是 Card 根上——避免和输入栏
+          自己的 onDrop 路径打架 */}
+      <div
+        className='flex-1 overflow-hidden flex flex-col items-stretch'
+        onDragOverCapture={handleMessageAreaDragOverCapture}
+        onDropCapture={handleMessageAreaDropCapture}
+      >
         <div
           className='flex-1 min-h-0 w-full mx-auto relative px-3 sm:px-4'
           style={{ maxWidth: 860 }}
@@ -364,6 +432,10 @@ const ChatArea = ({
         onSwapFirstLastFrame={onSwapFirstLastFrame}
         onRemoveFirstFrame={onRemoveFirstFrame}
         onRemoveLastFrame={onRemoveLastFrame}
+        referenceVideos={referenceVideos}
+        referenceAudios={referenceAudios}
+        onRemoveReferenceVideo={onRemoveReferenceVideo}
+        onRemoveReferenceAudio={onRemoveReferenceAudio}
         pendingText={pendingText}
         onPendingTextConsumed={onPendingTextConsumed}
         styleState={styleState}

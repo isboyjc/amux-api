@@ -24,6 +24,8 @@ import {
   ImagePreview,
   Input,
   InputNumber,
+  Popover,
+  Spin,
   Tag,
   Toast,
   Typography,
@@ -1644,6 +1646,209 @@ const FrameSlot = ({ image, onClick, onRemove, onRetryUpload, label, t }) => {
 const FRAME_SWAP_DISTANCE = SLOT_SIZE + SLOT_GAP * 2 + SWAP_WIDTH;
 const FRAME_SWAP_DURATION_MS = 320;
 
+// 视频/音频参考素材的紧凑 chip 行：仅在 video-omni 模式下父层传入非空数组
+// 时渲染。视频/音频不需要预览缩略图，只展示 类型图标 + 文件名 + 上传中
+// spinner / 失败角标 + 移除按钮，水平滚动布局。点击 chip 弹 Popover 内嵌
+// <video controls> / <audio controls> 直接播放预览：File entry 用 ObjectURL，
+// URL entry 用现成的远程 URL，统一字段 previewUrl 由父层派发时算好。
+const MediaChip = ({ item, mediaType, onRemove, t }) => {
+  const Icon = mediaType === 'video' ? VideoIcon : Mic;
+  const label = item.name || item.url || (mediaType === 'video' ? t('视频') : t('音频'));
+  const canPreview = !!item.previewUrl && !item.failed;
+
+  // 预览弹层的内容：视频用紧凑 320×180，音频用 320 宽的原生条
+  const previewBody = (
+    <div
+      style={{
+        padding: 8,
+        background: 'var(--semi-color-bg-2)',
+        borderRadius: 8,
+        maxWidth: 360,
+      }}
+    >
+      <div
+        style={{
+          fontSize: 12,
+          color: 'var(--semi-color-text-2)',
+          marginBottom: 6,
+          maxWidth: 320,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+        title={label}
+      >
+        {label}
+      </div>
+      {mediaType === 'video' ? (
+        <video
+          src={item.previewUrl}
+          controls
+          autoPlay={false}
+          preload='metadata'
+          style={{
+            display: 'block',
+            width: 320,
+            maxWidth: '100%',
+            maxHeight: 200,
+            borderRadius: 6,
+            background: '#000',
+          }}
+        >
+          {t('浏览器不支持播放视频')}
+        </video>
+      ) : (
+        <audio
+          src={item.previewUrl}
+          controls
+          autoPlay={false}
+          preload='metadata'
+          style={{ display: 'block', width: 320, height: 36 }}
+        >
+          {t('浏览器不支持播放音频')}
+        </audio>
+      )}
+    </div>
+  );
+
+  const chipBody = (
+    <div
+      role={canPreview ? 'button' : undefined}
+      tabIndex={canPreview ? 0 : undefined}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 6px 4px 8px',
+        borderRadius: 12,
+        background: item.failed
+          ? 'var(--semi-color-danger-light-default)'
+          : 'var(--semi-color-fill-1)',
+        maxWidth: 200,
+        flexShrink: 0,
+        cursor: canPreview ? 'pointer' : 'default',
+      }}
+      title={
+        item.failed
+          ? `${label}\n${t('上传失败')}${item.uploadError ? `: ${item.uploadError}` : ''}`
+          : item.uploading
+            ? `${label}\n${t('上传中…')}`
+            : canPreview
+              ? `${label}\n${t('点击预览')}`
+              : label
+      }
+    >
+      <Icon
+        size={13}
+        style={{
+          color: item.failed
+            ? 'var(--semi-color-danger)'
+            : 'var(--semi-color-text-1)',
+          flexShrink: 0,
+        }}
+      />
+      <span
+        style={{
+          fontSize: 12,
+          color: 'var(--semi-color-text-0)',
+          maxWidth: 140,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {label}
+      </span>
+      {item.uploading && (
+        <Spin
+          size='small'
+          style={{ display: 'inline-flex', flexShrink: 0 }}
+          aria-label={t('上传中…')}
+        />
+      )}
+      <button
+        type='button'
+        // 阻止冒泡到 chip 容器，避免删除时同时触发预览 Popover
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove?.(item.key);
+        }}
+        aria-label={t('移除')}
+        style={{
+          width: 16,
+          height: 16,
+          borderRadius: 8,
+          border: 'none',
+          background: 'transparent',
+          color: 'var(--semi-color-text-2)',
+          cursor: 'pointer',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          flexShrink: 0,
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = 'var(--semi-color-fill-2)';
+          e.currentTarget.style.color = 'var(--semi-color-text-0)';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent';
+          e.currentTarget.style.color = 'var(--semi-color-text-2)';
+        }}
+      >
+        <X size={11} />
+      </button>
+    </div>
+  );
+
+  if (!canPreview) return chipBody;
+  return (
+    <Popover
+      trigger='click'
+      position='top'
+      content={previewBody}
+      showArrow
+    >
+      {chipBody}
+    </Popover>
+  );
+};
+
+const MediaChipRow = ({ videos, audios, onRemoveVideo, onRemoveAudio, t }) => {
+  if ((!videos || videos.length === 0) && (!audios || audios.length === 0)) {
+    return null;
+  }
+  return (
+    <div
+      className='flex items-center gap-1 overflow-x-auto'
+      style={{
+        padding: '6px 12px 0',
+        scrollbarWidth: 'thin',
+      }}
+    >
+      {videos?.map((v) => (
+        <MediaChip
+          key={v.key}
+          item={v}
+          mediaType='video'
+          onRemove={onRemoveVideo}
+          t={t}
+        />
+      ))}
+      {audios?.map((a) => (
+        <MediaChip
+          key={a.key}
+          item={a}
+          mediaType='audio'
+          onRemove={onRemoveAudio}
+          t={t}
+        />
+      ))}
+    </div>
+  );
+};
+
 const FirstLastFrameUpload = ({
   images,
   onClickFirst,
@@ -1830,6 +2035,13 @@ const UnifiedInputBar = ({
   onSwapFirstLastFrame,
   onRemoveFirstFrame,
   onRemoveLastFrame,
+  // 视频模型 omni 模式下的视频/音频参考素材：[{ key, name, url?, uploading,
+  // failed, uploadError? }]，由父层按 schema slot 派生。schema 没声明对应
+  // 槽时为 []
+  referenceVideos = [],
+  referenceAudios = [],
+  onRemoveReferenceVideo,
+  onRemoveReferenceAudio,
 
   // 外部注入的预填文案：深链 ?prompt= 用。父层 set 一次后立即 reset 到 null,
   // 子内部 useEffect 监听非 null 时把本地 text 同步过去；之后父层不再干涉
@@ -1863,11 +2075,45 @@ const UnifiedInputBar = ({
   const textareaRef = useRef(null);
   const fileInputRef = useRef(null);
   const mentionPopupRef = useRef(null);
-  // @-mention 仅在视频「全能参考」+ 已上传至少一张参考图时启用
+
+  // @-mention 候选合集：图片 + 视频 + 音频 三类合一拍平。每条带 type 和
+  // 类型内 1-based index——选中时按 type 决定插入 @图片N / @视频N / @音频N。
+  // 顺序固定 image → video → audio，跟视觉栈对应（图片在右上角堆叠区，
+  // 视频/音频在 chip 行）；用户键盘 ↑↓ 在统一列表里走得直观
+  const mentionCandidates = useMemo(() => {
+    const list = [];
+    referenceImages.forEach((img, i) => {
+      list.push({
+        type: 'image',
+        idx: i + 1, // 类型内 1-based 编号，与 token 对应
+        item: img,
+        key: `m-img-${img.key}`,
+      });
+    });
+    referenceVideos.forEach((v, i) => {
+      list.push({
+        type: 'video',
+        idx: i + 1,
+        item: v,
+        key: `m-vid-${v.key}`,
+      });
+    });
+    referenceAudios.forEach((a, i) => {
+      list.push({
+        type: 'audio',
+        idx: i + 1,
+        item: a,
+        key: `m-aud-${a.key}`,
+      });
+    });
+    return list;
+  }, [referenceImages, referenceVideos, referenceAudios]);
+
+  // @-mention 仅在视频「全能参考」+ 至少一条任意类素材时启用
   const mentionEnabled =
     currentModality === MODALITY.VIDEO &&
     videoInputMode === 'omni' &&
-    referenceImages.length > 0;
+    mentionCandidates.length > 0;
 
   const filteredModelEntries = useMemo(() => {
     if (selectedMode === 'smart') return modelEntries;
@@ -1939,7 +2185,7 @@ const UnifiedInputBar = ({
         // 保留原来的 selectedIdx；首次打开时从 0 开始
         selectedIdx:
           prev && prev.atIdx === m.atIdx
-            ? Math.min(prev.selectedIdx, referenceImages.length - 1)
+            ? Math.min(prev.selectedIdx, mentionCandidates.length - 1)
             : 0,
       }));
     } else if (mentionState) {
@@ -1947,10 +2193,10 @@ const UnifiedInputBar = ({
     }
   };
 
-  // 切模态/切模式/参考图数量变化时关闭弹层，避免引用过期 idx
+  // 切模态/切模式/候选数量变化时关闭弹层，避免引用过期 idx
   useEffect(() => {
     setMentionState(null);
-  }, [currentModality, videoInputMode, referenceImages.length]);
+  }, [currentModality, videoInputMode, mentionCandidates.length]);
 
   // 点击 textarea / popup 外部 → 关闭
   useEffect(() => {
@@ -1964,14 +2210,22 @@ const UnifiedInputBar = ({
     return () => document.removeEventListener('mousedown', handler);
   }, [mentionState]);
 
-  // 选中候选 → 把 @<filter> 整段替换成 @image{N}（N 从 1 起）
-  const insertMention = (n) => {
-    if (!mentionState) return;
+  // 选中候选 → 把 @<filter> 整段替换成 @图片{N} / @视频{N} / @音频{N}（N 从 1 起，
+  // 类型独立计数）。中文 token 与 placeholder 文案保持一致：
+  //   "@图片1 模仿 @视频1 的动作，音色参考 @音频1"
+  const insertMentionFor = (candidate) => {
+    if (!mentionState || !candidate) return;
     const before = text.slice(0, mentionState.atIdx);
     const after = text.slice(
       mentionState.atIdx + 1 + mentionState.filter.length,
     );
-    const inserted = `@image${n} `;
+    const tokenName =
+      candidate.type === 'video'
+        ? '视频'
+        : candidate.type === 'audio'
+          ? '音频'
+          : '图片';
+    const inserted = `@${tokenName}${candidate.idx} `;
     const newText = before + inserted + after;
     setText(newText);
     setMentionState(null);
@@ -2003,10 +2257,25 @@ const UnifiedInputBar = ({
   // 顺序。
   const pendingTargetRoleRef = useRef(null);
 
+  // 视频模型 omni 模式 + schema 声明视频/音频槽 时允许扩展类型；其它路径
+  // 退化为图片专属（image gen / multimodal / 视频 first_last / 文本）
+  const allowVideoUpload =
+    currentModality === MODALITY.VIDEO &&
+    videoInputMode === 'omni' &&
+    Array.isArray(referenceVideos);
+  const allowAudioUpload =
+    currentModality === MODALITY.VIDEO &&
+    videoInputMode === 'omni' &&
+    Array.isArray(referenceAudios);
+
   const ingestFile = (file) => {
     if (!file) return;
-    if (!file.type || !file.type.startsWith('image/')) {
-      Toast.warning({ content: t('仅支持图片格式'), duration: 2 });
+    const tp = (file.type || '').toLowerCase();
+    const isImage = tp.startsWith('image/');
+    const isVideo = tp.startsWith('video/');
+    const isAudio = tp.startsWith('audio/');
+    if (!isImage && !isVideo && !isAudio) {
+      Toast.warning({ content: t('仅支持图片 / 视频 / 音频文件'), duration: 2 });
       return;
     }
     // 由父层决定接受还是 toast 拒绝（按当前 modality 决策）。这里不再
@@ -2022,7 +2291,12 @@ const UnifiedInputBar = ({
     if (!items) return;
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
-      if (item.type.indexOf('image') !== -1) {
+      const tp = (item.type || '').toLowerCase();
+      const accept =
+        tp.startsWith('image/') ||
+        (allowVideoUpload && tp.startsWith('video/')) ||
+        (allowAudioUpload && tp.startsWith('audio/'));
+      if (accept) {
         e.preventDefault();
         const file = item.getAsFile();
         if (file) ingestFile(file);
@@ -2045,6 +2319,11 @@ const UnifiedInputBar = ({
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
     e.preventDefault();
+    // 在 event 上打个标记，让 ChatArea 的外层 onDrop 能识别"已被输入栏处理"，
+    // 跳过 files 派发但仍然把它自己的 drag 高亮 / depth 计数复位掉。
+    // 不能用 stopPropagation——那会同时拦掉外层的 drag 状态清理逻辑，
+    // 外层就一直停在"高亮中"
+    e.nativeEvent.__playgroundInputHandled = true;
     Array.from(files).forEach(ingestFile);
   };
 
@@ -2088,8 +2367,11 @@ const UnifiedInputBar = ({
           '首帧图和尾帧图，尽量保持同样的图片比例，尽量都包含同样的主体，并用文字描述两张图之间如何过渡。',
         );
       }
-      // omni（默认）：暗示用户可以用 @ 快捷引用上传过的参考图
-      return t('使用 @ 快速调用参考内容');
+      // omni（默认）：暗示用户可以同时上传图/视频/音频，并用 @ 在 prompt
+      // 里精确引用某条参考素材
+      return t(
+        '上传参考素材、输入文字，自由组合图、文、音、视频多元素，定义精彩互动。例如：@图片1 模仿 @视频1 的动作，音色参考 @音频1。',
+      );
     }
     switch (currentModality) {
       case MODALITY.IMAGE:
@@ -2122,20 +2404,21 @@ const UnifiedInputBar = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {/* @-mention 弹层：仅视频全能参考 + 至少 1 张参考图时由
+        {/* @-mention 弹层：仅视频全能参考 + 任一类素材非空时由
             handleTextareaChange 唤出。绝对定位贴在输入框正上方，候选条目
-            是 referenceImages 里的图缩略图 + 「图片 N」。键盘 ↑↓/Enter/Tab
-            导航；点候选或回车把 @<filter> 整段替换为 @image{N}。 */}
-        {mentionState && referenceImages.length > 0 && (
+            混排图片 / 视频 / 音频，每条左侧带类型图标 / 缩略图，右侧带 @ token。
+            键盘 ↑↓/Enter/Tab 导航；点候选或回车把 @<filter> 整段替换为
+            @图片N / @视频N / @音频N（中文 token，与 placeholder 例子一致） */}
+        {mentionState && mentionCandidates.length > 0 && (
           <div
             ref={mentionPopupRef}
             style={{
               position: 'absolute',
               left: 12,
               bottom: 'calc(100% + 6px)',
-              minWidth: 200,
-              maxWidth: 280,
-              maxHeight: 240,
+              minWidth: 220,
+              maxWidth: 320,
+              maxHeight: 280,
               overflowY: 'auto',
               zIndex: 20,
               background: 'var(--semi-color-bg-overlay)',
@@ -2154,15 +2437,29 @@ const UnifiedInputBar = ({
                 color: 'var(--semi-color-text-2)',
               }}
             >
-              {t('选择参考图')}
+              {t('选择参考素材')}
             </div>
-            {referenceImages.map((img, i) => {
+            {mentionCandidates.map((cand, i) => {
               const selected = i === mentionState.selectedIdx;
+              // 插入的 token 是中文硬编码（@图片N / @视频N / @音频N），与
+              // seedance 的解析口径对齐；标签 labelText 走 i18n，跟随 UI 语种
+              const tokenName =
+                cand.type === 'video'
+                  ? '视频'
+                  : cand.type === 'audio'
+                    ? '音频'
+                    : '图片';
+              const labelText =
+                cand.type === 'video'
+                  ? t('视频{{n}}', { n: cand.idx })
+                  : cand.type === 'audio'
+                    ? t('音频{{n}}', { n: cand.idx })
+                    : t('图片{{n}}', { n: cand.idx });
               return (
                 <button
-                  key={img.key}
+                  key={cand.key}
                   type='button'
-                  onClick={() => insertMention(i + 1)}
+                  onClick={() => insertMentionFor(cand)}
                   onMouseEnter={() =>
                     setMentionState((s) =>
                       s ? { ...s, selectedIdx: i } : s,
@@ -2187,22 +2484,67 @@ const UnifiedInputBar = ({
                     textAlign: 'left',
                   }}
                 >
-                  <img
-                    src={optimizeImageUrl(img.dataUrl, {
-                      width: pixelWidth(28),
-                    })}
-                    alt=''
-                    draggable={false}
+                  {/* 类型图标 / 缩略图：图片 = 实际缩略图（与堆叠区一致），
+                      视频 / 音频 = 类型图标占位（音频本就没有视觉缩略图，
+                      视频缩略图代价高，先按图标走，后续可以再加首帧抓取） */}
+                  {cand.type === 'image' ? (
+                    <img
+                      src={optimizeImageUrl(cand.item.dataUrl, {
+                        width: pixelWidth(28),
+                      })}
+                      alt=''
+                      draggable={false}
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 4,
+                        objectFit: 'cover',
+                        flexShrink: 0,
+                      }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: 4,
+                        background: 'var(--semi-color-fill-1)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                        color: 'var(--semi-color-text-1)',
+                      }}
+                    >
+                      {cand.type === 'video' ? (
+                        <VideoIcon size={14} />
+                      ) : (
+                        <Mic size={14} />
+                      )}
+                    </span>
+                  )}
+                  <span
                     style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: 4,
-                      objectFit: 'cover',
-                      flexShrink: 0,
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
-                  />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    {t('图片{{n}}', { n: i + 1 })}
+                    title={cand.item.name || ''}
+                  >
+                    {labelText}
+                    {cand.item.name ? (
+                      <span
+                        style={{
+                          marginLeft: 6,
+                          fontSize: 11,
+                          color: 'var(--semi-color-text-2)',
+                        }}
+                      >
+                        {cand.item.name}
+                      </span>
+                    ) : null}
                   </span>
                   <span
                     style={{
@@ -2212,13 +2554,27 @@ const UnifiedInputBar = ({
                         'ui-monospace, SFMono-Regular, Menlo, monospace',
                     }}
                   >
-                    @image{i + 1}
+                    @{tokenName}{cand.idx}
                   </span>
                 </button>
               );
             })}
           </div>
         )}
+
+        {/* 视频/音频参考素材 chip 行：仅 video-omni + 父层有内容时渲染。
+            紧贴 textarea 顶端，水平滚动；图片仍走右上角的 ReferenceImageStack
+            堆叠预览，不混进 chip 行 */}
+        {currentModality === MODALITY.VIDEO &&
+          videoInputMode === 'omni' && (
+            <MediaChipRow
+              videos={referenceVideos}
+              audios={referenceAudios}
+              onRemoveVideo={onRemoveReferenceVideo}
+              onRemoveAudio={onRemoveReferenceAudio}
+              t={t}
+            />
+          )}
 
         {/* 文本区：默认 4 行；右侧给参考图堆叠 / 首尾帧双上传预留空间 */}
         <textarea
@@ -2231,7 +2587,7 @@ const UnifiedInputBar = ({
           onKeyDown={(e) => {
             // mention 弹层打开时优先拦截方向键 / 选择键，否则 Enter 会
             // 触发提交、Tab 会跳焦
-            if (mentionState && referenceImages.length > 0) {
+            if (mentionState && mentionCandidates.length > 0) {
               if (e.key === 'ArrowDown') {
                 e.preventDefault();
                 setMentionState((s) =>
@@ -2240,7 +2596,7 @@ const UnifiedInputBar = ({
                         ...s,
                         selectedIdx: Math.min(
                           s.selectedIdx + 1,
-                          referenceImages.length - 1,
+                          mentionCandidates.length - 1,
                         ),
                       }
                     : s,
@@ -2258,7 +2614,7 @@ const UnifiedInputBar = ({
               }
               if (e.key === 'Enter' || e.key === 'Tab') {
                 e.preventDefault();
-                insertMention(mentionState.selectedIdx + 1);
+                insertMentionFor(mentionCandidates[mentionState.selectedIdx]);
                 return;
               }
               if (e.key === 'Escape') {
@@ -2332,11 +2688,24 @@ const UnifiedInputBar = ({
           />
         )}
 
-        {/* 隐藏文件选择器：「+ 上传参考图」点击触发 */}
+        {/* 隐藏文件选择器：「+ 上传参考素材」点击触发。
+            accept 跟当前能接受的媒体类型对齐——视频模型 omni 模式下扩展到
+            视频/音频，其它场景仅图片。点空首/末帧 slot 时强制锁回 image/*，
+            避免用户选了视频还得二次提示 */}
         <input
           ref={fileInputRef}
           type='file'
-          accept='image/*'
+          accept={
+            videoInputMode === 'first_last'
+              ? 'image/*'
+              : [
+                  'image/*',
+                  allowVideoUpload ? 'video/*' : '',
+                  allowAudioUpload ? 'audio/*' : '',
+                ]
+                  .filter(Boolean)
+                  .join(',')
+          }
           multiple
           hidden
           onChange={handleFilePick}

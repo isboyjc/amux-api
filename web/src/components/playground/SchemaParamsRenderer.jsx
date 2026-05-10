@@ -67,12 +67,36 @@ export const isImageInput = (def) => {
   return false;
 };
 
+// isVideoInput / isAudioInput：与 isImageInput 同构，扩展给视频/音频参考槽。
+// 仅 seedance 等同时接图/视频/音频的视频模型在 schema 里声明 format:'video'
+// / 'audio' 字段。识别后同样从 paramsSchema 拆走，避免被渲染成空 string 输入。
+export const isVideoInput = (def) => {
+  if (!def || typeof def !== 'object') return false;
+  if (def.format === 'video') return true;
+  if (def.type === 'array' && def.items?.format === 'video') return true;
+  return false;
+};
+
+export const isAudioInput = (def) => {
+  if (!def || typeof def !== 'object') return false;
+  if (def.format === 'audio') return true;
+  if (def.type === 'array' && def.items?.format === 'audio') return true;
+  return false;
+};
+
+// 任意媒体输入槽（图/视频/音频）。给 splitSchema 用，作为"该字段属于附件
+// 槽不属于参数面板"的统一判定
+export const isMediaInput = (def) =>
+  isImageInput(def) || isVideoInput(def) || isAudioInput(def);
+
 // splitSchema 把一份 JSON Schema 按"控件类型"拆成两份：
-//   - inputsSchema: 只含图像输入槽（SchemaInputsRenderer 用）
+//   - inputsSchema: 含所有媒体输入槽（图/视频/音频）。SchemaInputsRenderer
+//     只渲染其中的图像槽（视频/音频在 UnifiedInputBar 的附件区里上传，不
+//     在 schema-rendered 控件里展示）
 //   - paramsSchema: 其余所有标量旋钮（SchemaParamsRenderer 用）
 //
 // 返回的两份 schema 都保留原始结构（type/properties），properties 可能为空。
-// 若原 schema 里没有图像槽，inputsSchema.properties 就是 {}，
+// 若原 schema 里没有媒体槽，inputsSchema.properties 就是 {}，
 // ImageWorkspace 会据此隐藏附件条，不影响现有模型。
 export const splitSchema = (schema) => {
   const empty = { type: 'object', properties: {} };
@@ -83,7 +107,7 @@ export const splitSchema = (schema) => {
   const params = {};
   const inputs = {};
   Object.entries(props).forEach(([k, def]) => {
-    if (isImageInput(def)) inputs[k] = def;
+    if (isMediaInput(def)) inputs[k] = def;
     else params[k] = def;
   });
   return {
@@ -125,6 +149,13 @@ export const filterSchemaByGroup = (schema, group) => {
 export const hasImageInputSlot = (schema) => {
   const props = schema?.properties || {};
   return Object.values(props).some(isImageInput);
+};
+
+// hasMediaInputSlot：图/视频/音频任一存在即返回 true。
+// 视频模型用此判定"输入区是否需要渲染附件入口"，比 hasImageInputSlot 更宽。
+export const hasMediaInputSlot = (schema) => {
+  const props = schema?.properties || {};
+  return Object.values(props).some(isMediaInput);
 };
 
 // 单个 schema property 渲染成对应控件

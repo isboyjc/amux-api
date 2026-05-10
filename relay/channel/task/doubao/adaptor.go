@@ -238,12 +238,21 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// EstimateBilling 按 (model, resolution, hasVideoInput) 查 seedance 计费档位，
+// 返回相对 ModelRatio 基准（720p + 不含视频）的乘数。命中后塞到 OtherRatios
+// 的 "seedance_pricing" key，由 relay_task 累乘到基础额度上。
 //
-// 折扣查表优先级：UpstreamModelName（考虑 channel 的 model_mapping）> 原始
+// 三维档位映射放在 constants.go 的 seedancePricingMap：
+//   - doubao-seedance-2-0：(720p / 1080p) × (含视频 / 不含视频) 共 4 档
+//   - doubao-seedance-2-0-fast：仅 720p 档（fast 不支持 1080p）
+//
+// 查表优先级：UpstreamModelName（考虑 channel 的 model_mapping）> 原始
 // OriginModelName。这样无论管理员用"官方端点名直接上"还是"配 model_mapping
-// 把别名映射过去"，都能命中；GetVideoInputRatio 内部还会再走一遍别名归一，
-// 兜底"没有配 model_mapping 也没改名"的场景。
+// 把别名映射过去"，都能命中；GetSeedancePricingRatio 内部还会再走一遍
+// 别名归一，兜底"没有配 model_mapping 也没改名"的场景。
+//
+// 仅在 ratio != 1.0 时塞 OtherRatios——720p 不含视频是基准档，没必要在
+// 日志里挂一个无意义的 ratio=1.0 entry，让 BillingContext 干净。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	// Check if this is Doubao raw format
 	if c.GetBool("doubao_raw_format") {
@@ -252,10 +261,10 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 			return nil
 		}
 		reqMap := originalReq.(map[string]interface{})
-		if hasVideoInRawContent(reqMap) {
-			if ratio, ok := lookupVideoInputRatio(info); ok {
-				return map[string]float64{"video_input": ratio}
-			}
+		hasVideo := hasVideoInRawContent(reqMap)
+		resolution := getResolutionFromRawContent(reqMap)
+		if ratio, ok := lookupSeedancePricing(info, resolution, hasVideo); ok && ratio != 1.0 {
+			return map[string]float64{"seedance_pricing": ratio}
 		}
 		return nil
 	}
@@ -265,23 +274,49 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
-	if hasVideoInMetadata(req.Metadata) {
-		if ratio, ok := lookupVideoInputRatio(info); ok {
-			return map[string]float64{"video_input": ratio}
-		}
+	hasVideo := hasVideoInMetadata(req.Metadata)
+	resolution := getResolutionFromMetadata(req.Metadata)
+	if ratio, ok := lookupSeedancePricing(info, resolution, hasVideo); ok && ratio != 1.0 {
+		return map[string]float64{"seedance_pricing": ratio}
 	}
 	return nil
 }
 
-// lookupVideoInputRatio 先尝试 UpstreamModelName（含 model_mapping 结果），
-// 再退回 OriginModelName。两个都经过 GetVideoInputRatio 的别名归一。
-func lookupVideoInputRatio(info *relaycommon.RelayInfo) (float64, bool) {
+// lookupSeedancePricing 先尝试 UpstreamModelName（含 model_mapping 结果），
+// 再退回 OriginModelName。两个都经过 GetSeedancePricingRatio 的别名归一。
+func lookupSeedancePricing(info *relaycommon.RelayInfo, resolution string, hasVideo bool) (float64, bool) {
 	if info.UpstreamModelName != "" {
-		if r, ok := GetVideoInputRatio(info.UpstreamModelName); ok {
+		if r, ok := GetSeedancePricingRatio(info.UpstreamModelName, resolution, hasVideo); ok {
 			return r, true
 		}
 	}
-	return GetVideoInputRatio(info.OriginModelName)
+	return GetSeedancePricingRatio(info.OriginModelName, resolution, hasVideo)
+}
+
+// getResolutionFromMetadata 从 OpenAI 格式 metadata 里读 resolution 字段。
+// schema 里管理员声明的 resolution 字段会经 setting 面板/前端塞到 metadata
+// 顶层。读不到就返回 ""——下游 normalizeSeedanceResolution 会兜成 720p 档。
+func getResolutionFromMetadata(metadata map[string]interface{}) string {
+	if metadata == nil {
+		return ""
+	}
+	if v, ok := metadata["resolution"].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// getResolutionFromRawContent 从 Doubao raw 格式请求体里读 resolution。
+// raw 格式下 resolution 是 body 顶层字段（与 ratio / duration / seed 同级），
+// 不在 content 数组里。
+func getResolutionFromRawContent(reqMap map[string]interface{}) string {
+	if reqMap == nil {
+		return ""
+	}
+	if v, ok := reqMap["resolution"].(string); ok {
+		return v
+	}
+	return ""
 }
 
 // hasVideoInRawContent checks if raw Doubao request contains video_url
