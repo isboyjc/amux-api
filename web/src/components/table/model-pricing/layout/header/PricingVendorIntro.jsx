@@ -121,8 +121,6 @@ const PricingVendorIntro = memo(
     setShowFilterModal,
     showRatio,
     setShowRatio,
-    viewMode,
-    setViewMode,
     tokenUnit,
     setTokenUnit,
     timeRange,
@@ -245,8 +243,6 @@ const PricingVendorIntro = memo(
           setShowFilterModal={setShowFilterModal}
           showRatio={showRatio}
           setShowRatio={setShowRatio}
-          viewMode={viewMode}
-          setViewMode={setViewMode}
           tokenUnit={tokenUnit}
           setTokenUnit={setTokenUnit}
           timeRange={timeRange}
@@ -268,8 +264,6 @@ const PricingVendorIntro = memo(
         setShowFilterModal,
         showRatio,
         setShowRatio,
-        viewMode,
-        setViewMode,
         tokenUnit,
         setTokenUnit,
         timeRange,

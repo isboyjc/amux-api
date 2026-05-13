@@ -515,8 +515,20 @@ const PricingCardView = ({
                     : currentRatio;
               // 折叠时间/请求规则倍率：分组折扣 × 规则倍率 = 当前最终折扣
               const effectiveRatio = useRatio * ruleMultiplier;
-              const discount = formatGroupDiscount(effectiveRatio, t);
-              if (!discount) return null;
+              const rawDiscount = formatGroupDiscount(effectiveRatio, t);
+              const isUsable = isGroupUsable(group);
+              // chip 展示规则（OR 关系）：
+              //   1) 该分组对当前用户实际可用（含倍率=1 的"原价"场景，例如
+              //      svip 用户对自己独有但未配折扣的 test 分组）；
+              //   2) 该分组有折扣 / 加价（升级引导价值）。
+              // 都不满足才不展示，避免营销区被无意义 chip 撑满。
+              if (!rawDiscount && !isUsable) return null;
+              // 用户可用但 ratio=1：用"原价"占位，避免出现"光秃 chip 只有分组名"
+              // 与其他 chip 视觉不一致的问题。
+              const discount = rawDiscount || {
+                type: 'standard',
+                text: t('原价'),
+              };
               return {
                 group,
                 ratio: effectiveRatio,

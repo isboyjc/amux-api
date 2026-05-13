@@ -38,8 +38,6 @@ const PricingContent = ({ isMobile, sidebarProps, ...props }) => {
           setCurrency={sidebarProps.setCurrency}
           showRatio={sidebarProps.showRatio}
           setShowRatio={sidebarProps.setShowRatio}
-          viewMode={sidebarProps.viewMode}
-          setViewMode={sidebarProps.setViewMode}
           tokenUnit={sidebarProps.tokenUnit}
           setTokenUnit={sidebarProps.setTokenUnit}
           timeRange={sidebarProps.timeRange}
@@ -53,7 +51,7 @@ const PricingContent = ({ isMobile, sidebarProps, ...props }) => {
           isMobile ? 'pricing-view-container-mobile' : 'pricing-view-container'
         }
       >
-        <PricingView {...props} viewMode={sidebarProps.viewMode} />
+        <PricingView {...props} />
       </div>
     </div>
   );

@@ -1253,7 +1253,6 @@ const DEFAULT_PRICING_FILTERS = {
   showWithRecharge: false,
   currency: 'USD',
   showRatio: false,
-  viewMode: 'card',
   tokenUnit: 'M',
   filterGroup: 'all',
   filterQuotaType: 'all',
@@ -1269,7 +1268,6 @@ export const resetPricingFilters = ({
   setShowWithRecharge,
   setCurrency,
   setShowRatio,
-  setViewMode,
   setFilterGroup,
   setFilterQuotaType,
   setFilterEndpointType,
@@ -1282,7 +1280,6 @@ export const resetPricingFilters = ({
   setShowWithRecharge?.(DEFAULT_PRICING_FILTERS.showWithRecharge);
   setCurrency?.(DEFAULT_PRICING_FILTERS.currency);
   setShowRatio?.(DEFAULT_PRICING_FILTERS.showRatio);
-  setViewMode?.(DEFAULT_PRICING_FILTERS.viewMode);
   setTokenUnit?.(DEFAULT_PRICING_FILTERS.tokenUnit);
   setFilterGroup?.(DEFAULT_PRICING_FILTERS.filterGroup);
   setFilterQuotaType?.(DEFAULT_PRICING_FILTERS.filterQuotaType);

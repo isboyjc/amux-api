@@ -36,8 +36,6 @@ const PricingTopSection = memo(
     searchValue,
     showRatio,
     setShowRatio,
-    viewMode,
-    setViewMode,
     tokenUnit,
     setTokenUnit,
     timeRange,
@@ -64,8 +62,6 @@ const PricingTopSection = memo(
                 setShowFilterModal={setShowFilterModal}
                 showRatio={showRatio}
                 setShowRatio={setShowRatio}
-                viewMode={viewMode}
-                setViewMode={setViewMode}
                 tokenUnit={tokenUnit}
                 setTokenUnit={setTokenUnit}
                 timeRange={timeRange}
@@ -95,8 +91,6 @@ const PricingTopSection = memo(
             setShowFilterModal={setShowFilterModal}
             showRatio={showRatio}
             setShowRatio={setShowRatio}
-            viewMode={viewMode}
-            setViewMode={setViewMode}
             tokenUnit={tokenUnit}
             setTokenUnit={setTokenUnit}
             timeRange={timeRange}

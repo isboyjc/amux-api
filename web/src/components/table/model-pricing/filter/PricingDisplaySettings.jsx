@@ -21,24 +21,13 @@ import React from 'react';
 import SelectableButtonGroup from '../../../common/ui/SelectableButtonGroup';
 
 const PricingDisplaySettings = ({
-  showWithRecharge,
-  setShowWithRecharge,
   currency,
   setCurrency,
   siteDisplayType,
-  viewMode,
-  setViewMode,
   loading = false,
   t,
 }) => {
   const supportsCurrencyDisplay = siteDisplayType !== 'TOKENS';
-
-  const items = [
-    {
-      value: 'tableView',
-      label: t('表格视图'),
-    },
-  ];
 
   const currencyItems = [
     { value: 'USD', label: 'USD ($)' },
@@ -46,47 +35,21 @@ const PricingDisplaySettings = ({
     { value: 'CUSTOM', label: t('自定义货币') },
   ];
 
-  const handleChange = (value) => {
-    switch (value) {
-      case 'recharge':
-        setShowWithRecharge(!showWithRecharge);
-        break;
-      case 'tableView':
-        setViewMode(viewMode === 'table' ? 'card' : 'table');
-        break;
-    }
-  };
-
-  const getActiveValues = () => {
-    const activeValues = [];
-    if (viewMode === 'table') activeValues.push('tableView');
-    return activeValues;
-  };
+  if (!supportsCurrencyDisplay) {
+    return null;
+  }
 
   return (
     <div>
       <SelectableButtonGroup
-        title={t('显示设置')}
-        items={items}
-        activeValue={getActiveValues()}
-        onChange={handleChange}
-        withCheckbox
+        title={t('货币单位')}
+        items={currencyItems}
+        activeValue={currency}
+        onChange={setCurrency}
         collapsible={false}
         loading={loading}
         t={t}
       />
-
-      {supportsCurrencyDisplay && (
-        <SelectableButtonGroup
-          title={t('货币单位')}
-          items={currencyItems}
-          activeValue={currency}
-          onChange={setCurrency}
-          collapsible={false}
-          loading={loading}
-          t={t}
-        />
-      )}
     </div>
   );
 };

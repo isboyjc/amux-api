@@ -29,8 +29,6 @@ const SearchActions = memo(
     isMobile = false,
     searchValue = '',
     setShowFilterModal,
-    viewMode,
-    setViewMode,
     timeRange,
     setTimeRange,
     total = 0,
@@ -43,10 +41,6 @@ const SearchActions = memo(
     const handleFilterClick = useCallback(() => {
       setShowFilterModal?.(true);
     }, [setShowFilterModal]);
-
-    const handleViewModeToggle = useCallback(() => {
-      setViewMode?.(viewMode === 'table' ? 'card' : 'table');
-    }, [viewMode, setViewMode]);
 
     const handleTimeRangeToggle = useCallback(() => {
       setTimeRange?.(timeRange === '24h' ? '7d' : '24h');
@@ -75,21 +69,6 @@ const SearchActions = memo(
               className='flex items-center gap-1 px-2 py-1 rounded-xl flex-shrink-0'
               style={{ background: 'var(--semi-color-fill-0)' }}
             >
-              {/* 视图模式切换按钮 */}
-              <Button
-                theme={viewMode === 'table' ? 'solid' : 'borderless'}
-                type={viewMode === 'table' ? 'primary' : 'tertiary'}
-                size='small'
-                onClick={handleViewModeToggle}
-              >
-                {t('表格视图')}
-              </Button>
-
-              <div
-                className='self-stretch w-px mx-1'
-                style={{ background: 'var(--semi-color-border)' }}
-              />
-
               {/* 健康状态时间范围切换 */}
               <Button
                 theme='borderless'
