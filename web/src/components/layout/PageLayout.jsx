@@ -35,6 +35,7 @@ import {
   getSystemName,
   showError,
   setStatusData,
+  sanitizeStatusLocalStorage,
 } from '../../helpers';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
@@ -91,6 +92,9 @@ const PageLayout = () => {
   };
 
   useEffect(() => {
+    // 清理历史版本可能写入的字符串 "undefined"/"null"，
+    // 避免在 /api/status 返回前 renderQuota 显示 "$NaN"。
+    sanitizeStatusLocalStorage();
     loadUser();
     loadStatus().catch(console.error);
     let systemName = getSystemName();

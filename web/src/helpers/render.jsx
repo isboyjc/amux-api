@@ -1149,23 +1149,43 @@ export function renderNumberWithPoint(num) {
   return num;
 }
 
+// 与后端 common.QuotaPerUnit 默认值保持一致（common/constants.go:22）。
+// 仅在 localStorage 中 quota_per_unit 缺失/非法时作为兜底，避免 NaN 蔓延。
+const DEFAULT_QUOTA_PER_UNIT = 500000;
+
+// 读取并校验 localStorage 中的 quota_per_unit。返回 NaN 表示未就绪，
+// 调用方按用途自行决定占位符（显示函数）或数值兜底（业务计算）。
+function readQuotaPerUnit() {
+  const raw = localStorage.getItem('quota_per_unit');
+  if (raw === null || raw === '' || raw === 'undefined' || raw === 'null') {
+    return NaN;
+  }
+  const num = parseFloat(raw);
+  if (!Number.isFinite(num) || num <= 0) return NaN;
+  return num;
+}
+
 export function getQuotaPerUnit() {
-  let quotaPerUnit = localStorage.getItem('quota_per_unit');
-  quotaPerUnit = parseFloat(quotaPerUnit);
-  return quotaPerUnit;
+  const num = readQuotaPerUnit();
+  return Number.isFinite(num) ? num : DEFAULT_QUOTA_PER_UNIT;
 }
 
 export function renderUnitWithQuota(quota) {
-  let quotaPerUnit = localStorage.getItem('quota_per_unit');
-  quotaPerUnit = parseFloat(quotaPerUnit);
-  quota = parseFloat(quota);
-  return quotaPerUnit * quota;
+  const quotaPerUnit = readQuotaPerUnit();
+  const numericQuota = parseFloat(quota);
+  if (!Number.isFinite(quotaPerUnit) || !Number.isFinite(numericQuota)) {
+    return 0;
+  }
+  return quotaPerUnit * numericQuota;
 }
 
 export function getQuotaWithUnit(quota, digits = 6) {
-  let quotaPerUnit = localStorage.getItem('quota_per_unit');
-  quotaPerUnit = parseFloat(quotaPerUnit);
-  return (quota / quotaPerUnit).toFixed(digits);
+  const quotaPerUnit = readQuotaPerUnit();
+  const numericQuota = Number(quota);
+  if (!Number.isFinite(quotaPerUnit) || !Number.isFinite(numericQuota)) {
+    return (0).toFixed(digits);
+  }
+  return (numericQuota / quotaPerUnit).toFixed(digits);
 }
 
 export function renderQuotaWithAmount(amount) {
@@ -1240,12 +1260,24 @@ export function convertUSDToCurrency(usdAmount, digits = 2) {
 }
 
 export function renderQuota(quota, digits = 2) {
-  let quotaPerUnit = localStorage.getItem('quota_per_unit');
   const quotaDisplayType = localStorage.getItem('quota_display_type') || 'USD';
-  quotaPerUnit = parseFloat(quotaPerUnit);
-  if (quotaDisplayType === 'TOKENS') {
-    return renderNumber(quota);
+  const numericQuota = Number(quota);
+  // 入参为 undefined/null/NaN 时，返回占位符而非 0 或 NaN：
+  // 显示 "$0.00" 会让用户误以为余额清零；显示 "$NaN" 会引发恐慌。
+  if (!Number.isFinite(numericQuota)) {
+    return '--';
   }
+  if (quotaDisplayType === 'TOKENS') {
+    return renderNumber(numericQuota);
+  }
+  const quotaPerUnit = readQuotaPerUnit();
+  if (!Number.isFinite(quotaPerUnit)) {
+    // localStorage 未就绪（首屏竞态 / 隐私模式 / 被污染）。
+    // 不用硬编码默认值兜底，避免管理员调整过 QuotaPerUnit 时撒谎；
+    // 待 /api/status 返回后下次 render 会自动恢复正确值。
+    return '--';
+  }
+  quota = numericQuota;
   const resultUSD = quota / quotaPerUnit;
   let symbol = '$';
   let value = resultUSD;

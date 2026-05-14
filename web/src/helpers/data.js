@@ -17,12 +17,31 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+function isValidQuotaPerUnit(value) {
+  if (value === null || value === undefined || value === '') return false;
+  const num = typeof value === 'number' ? value : parseFloat(value);
+  return Number.isFinite(num) && num > 0;
+}
+
+// 启动时调用：清理历史版本写入的字符串 "undefined"/"null" 等污染值，
+// 避免 renderQuota 内 parseFloat 出 NaN 导致显示 "$NaN"。
+export function sanitizeStatusLocalStorage() {
+  const stored = localStorage.getItem('quota_per_unit');
+  if (stored !== null && !isValidQuotaPerUnit(stored)) {
+    localStorage.removeItem('quota_per_unit');
+  }
+}
+
 export function setStatusData(data) {
   localStorage.setItem('status', JSON.stringify(data));
   localStorage.setItem('system_name', data.system_name);
   localStorage.setItem('logo', data.logo);
   localStorage.setItem('footer_html', data.footer_html);
-  localStorage.setItem('quota_per_unit', data.quota_per_unit);
+  if (isValidQuotaPerUnit(data.quota_per_unit)) {
+    localStorage.setItem('quota_per_unit', String(data.quota_per_unit));
+  } else {
+    localStorage.removeItem('quota_per_unit');
+  }
   // 兼容：保留旧字段，同时写入新的额度展示类型
   localStorage.setItem('display_in_currency', data.display_in_currency);
   localStorage.setItem('quota_display_type', data.quota_display_type || 'USD');
