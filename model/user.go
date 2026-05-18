@@ -519,7 +519,9 @@ func (user *User) Insert(inviterId int) error {
 
 	// 初始化用户设置，包括默认的边栏配置
 	if user.Setting == "" {
-		defaultSetting := dto.UserSetting{}
+		// 新用户默认开启 record_ip_log——故障定位需要 IP，存量用户由
+		// BackfillUserRecordIpLog 一次性补齐，新建用户在这里设默认。
+		defaultSetting := dto.UserSetting{RecordIpLog: true}
 		// 这里暂时不设置SidebarModules，因为需要在用户创建后根据角色设置
 		user.SetSetting(defaultSetting)
 	}
@@ -582,7 +584,9 @@ func (user *User) InsertWithTx(tx *gorm.DB, inviterId int) error {
 
 	// 初始化用户设置
 	if user.Setting == "" {
-		defaultSetting := dto.UserSetting{}
+		// 新用户默认开启 record_ip_log——故障定位需要 IP，存量用户由
+		// BackfillUserRecordIpLog 一次性补齐，新建用户在这里设默认。
+		defaultSetting := dto.UserSetting{RecordIpLog: true}
 		user.SetSetting(defaultSetting)
 	}
 
@@ -1358,4 +1362,84 @@ func GetInviteeTopups(inviterId int, inviteeId int, pageInfo *common.PageInfo) (
 	}
 
 	return topups, total, nil
+}
+
+// BackfillUserRecordIpLog 把存量用户的 record_ip_log 一次性翻成 true。
+//
+// 业务背景：之前 RecordIpLog 默认 false，导致大量线上用户没开启 IP 记录，
+// 故障定位时拿不到访问来源。新版默认开启，但 omitempty 让"未设置"和
+// "显式关闭"在 JSON 里都是同一种状态（缺字段），所以无法只靠默认值修。
+//
+// 做法：one-shot 迁移，对所有用户 setting JSON 写入 record_ip_log:true。
+// 用户后续在前端手动关掉，会写回 record_ip_log:false（实际是被 omitempty
+// 吃掉了，但 GetSetting 解析回来是 false，对应"关闭"语义）——下次启动
+// 不再触发迁移（Option 表的 flag 记录已完成），尊重用户操作。
+//
+// 迁移完成标志写进 options 表（key = migration:record_ip_log_default_on）：
+// 重启时先查 flag，已存在就跳过；否则跑完后写入 flag。即使写 flag 前
+// 进程崩溃，重启会重跑——但迁移本身幂等（只把 false→true），不会丢用户
+// 后续的手动关闭行为，因为后续关闭发生在 flag 写入之后。
+func BackfillUserRecordIpLog() {
+	const flagKey = "migration:record_ip_log_default_on"
+
+	var existing Option
+	err := DB.Where(&Option{Key: flagKey}).First(&existing).Error
+	if err == nil {
+		// 已经跑过
+		return
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		common.SysLog("BackfillUserRecordIpLog: check flag error: " + err.Error())
+		return
+	}
+
+	type userRow struct {
+		Id      int
+		Setting string
+	}
+	var rows []userRow
+	if err := DB.Model(&User{}).Select("id, setting").Find(&rows).Error; err != nil {
+		common.SysLog("BackfillUserRecordIpLog: load users error: " + err.Error())
+		return
+	}
+
+	updated := 0
+	for _, r := range rows {
+		setting := dto.UserSetting{}
+		if r.Setting != "" {
+			if err := json.Unmarshal([]byte(r.Setting), &setting); err != nil {
+				// 单条解析失败不阻塞整批，跳过即可
+				common.SysLog(fmt.Sprintf("BackfillUserRecordIpLog: unmarshal user %d error: %s", r.Id, err.Error()))
+				continue
+			}
+		}
+		if setting.RecordIpLog {
+			continue
+		}
+		setting.RecordIpLog = true
+		bytes, err := json.Marshal(setting)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("BackfillUserRecordIpLog: marshal user %d error: %s", r.Id, err.Error()))
+			continue
+		}
+		if err := DB.Model(&User{}).Where("id = ?", r.Id).Update("setting", string(bytes)).Error; err != nil {
+			common.SysLog(fmt.Sprintf("BackfillUserRecordIpLog: update user %d error: %s", r.Id, err.Error()))
+			continue
+		}
+		// 注意：这里不主动 invalidate Redis 缓存。本函数在 migrateDB 内执行，
+		// 此时 common.InitRedisClient 尚未运行，common.RDB == nil——直接调
+		// RedisDelKey 会 nil 指针 panic（RedisEnabled 默认 true 但 RDB 未连）。
+		// 单实例部署：缓存此刻还没数据，启动后用户请求会自然从 DB 加载新值。
+		// 多实例 / 滚动部署：老实例的 Redis 缓存最多在 SyncFrequency（默认 60s）
+		// 后过期，IP 不被记录的窗口可接受。
+		updated++
+	}
+
+	if err := DB.Create(&Option{Key: flagKey, Value: "1"}).Error; err != nil {
+		common.SysLog("BackfillUserRecordIpLog: set flag error: " + err.Error())
+		return
+	}
+	if updated > 0 {
+		common.SysLog(fmt.Sprintf("BackfillUserRecordIpLog: %d user(s) opted into record_ip_log", updated))
+	}
 }

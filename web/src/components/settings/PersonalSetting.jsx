@@ -94,7 +94,10 @@ const PersonalSetting = () => {
     gotifyPriority: 5,
     upstreamModelUpdateNotifyEnabled: false,
     acceptUnsetModelRatioModel: false,
-    recordIpLog: false,
+    // 默认开启 IP 记录：故障定位需要这个数据。存量用户由后端 backfill
+    // 一次性补齐 (BackfillUserRecordIpLog)；前端首次渲染、还没拿到
+    // 后端 setting 的瞬间也按 true 渲染，避免开关闪烁。
+    recordIpLog: true,
   });
 
   const {
