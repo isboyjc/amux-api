@@ -52,6 +52,8 @@ const routerMap = {
   playground: '/console/playground',
   personal: '/console/personal',
   operations: '/console/operations',
+  ticket: '/console/ticket',
+  ticket_admin: '/console/ticket/admin',
 };
 
 const SiderBar = ({ onNavigate = () => {} }) => {
@@ -107,6 +109,15 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         to: '/task',
         className:
           localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle',
+      },
+      {
+        text: t('我的工单'),
+        itemKey: 'ticket',
+        to: '/ticket',
+        // 工单总开关从 /api/status 同步到 localStorage（helpers/data.js）。
+        // 关闭时整条入口走 tableHiddle 类隐藏，与「绘图日志」等模块一致。
+        className:
+          localStorage.getItem('ticket_enabled') === 'true' ? '' : 'tableHiddle',
       },
     ];
 
@@ -197,6 +208,16 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         itemKey: 'billing',
         to: '/billing',
         className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('工单管理'),
+        itemKey: 'ticket_admin',
+        to: '/ticket/admin',
+        // 同时需要管理员身份 + 工单系统开关。两者任一不满足都隐藏。
+        className:
+          isAdmin() && localStorage.getItem('ticket_enabled') === 'true'
+            ? ''
+            : 'tableHiddle',
       },
       {
         text: t('系统设置'),

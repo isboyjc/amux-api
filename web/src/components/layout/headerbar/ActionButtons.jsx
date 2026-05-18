@@ -26,7 +26,7 @@ import UserArea from './UserArea';
 
 const ActionButtons = ({
   isNewYear,
-  unreadCount,
+  totalUnread,
   onNoticeOpen,
   theme,
   onThemeToggle,
@@ -44,9 +44,14 @@ const ActionButtons = ({
     <div className='flex items-center gap-2 md:gap-3'>
       <NewYearButton isNewYear={isNewYear} />
 
+      {/*
+        统一收件箱：站内公告 + 系统公告 + 工单未读合并成单一红点，点击打开
+        NoticeModal 内部按 tab 分流。徽标值在 headerbar 层算好后单一透传，
+        避免这层重复加和。
+      */}
       <NotificationButton
-        unreadCount={unreadCount}
-        onNoticeOpen={onNoticeOpen}
+        total={totalUnread}
+        onOpen={onNoticeOpen}
         t={t}
       />
 

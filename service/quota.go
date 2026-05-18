@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service/emailtpl"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -464,8 +465,11 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 		if quotaTooLow {
 			prompt := "您的额度即将用尽"
 			topUpLink := fmt.Sprintf("%s/console/topup", system_setting.ServerAddress)
+			remainQuota := logger.FormatQuota(relayInfo.UserQuota)
 
-			// 根据通知方式生成不同的内容格式
+			// 各通道按自己的能力造内容：Bark / Gotify 是推送通知，只能纯文本
+			// 简短信息；Email 走预渲染的 emailtpl（统一品牌外壳）；其它（如
+			// Webhook）继续用 HTML 文本片段，由消费端自己处理。
 			var content string
 			var values []interface{}
 
@@ -475,19 +479,29 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 			}
 
 			if notifyType == dto.NotifyTypeBark {
-				// Bark推送使用简短文本，不支持HTML
 				content = "{{value}}，剩余额度：{{value}}，请及时充值"
-				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota)}
+				values = []interface{}{prompt, remainQuota}
 			} else if notifyType == dto.NotifyTypeGotify {
 				content = "{{value}}，当前剩余额度为 {{value}}，请及时充值。"
-				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota)}
+				values = []interface{}{prompt, remainQuota}
 			} else {
-				// 默认内容格式，适用于Email和Webhook（支持HTML）
 				content = "{{value}}，当前剩余额度为 {{value}}，为了不影响您的使用，请及时充值。<br/>充值链接：<a href='{{value}}'>{{value}}</a>"
-				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota), topUpLink, topUpLink}
+				values = []interface{}{prompt, remainQuota, topUpLink, topUpLink}
 			}
 
-			err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values))
+			notify := dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values)
+			notify.EmailHTML = emailtpl.Render(emailtpl.Content{
+				Eyebrow:  "账户提醒",
+				Headline: prompt,
+				Intro: fmt.Sprintf(
+					"当前账户剩余额度为 <strong style=\"color:#0f172a;\">%s</strong>，为了不影响您后续的调用，请及时充值。",
+					emailtpl.HtmlEscape(remainQuota)),
+				CTAHref:  topUpLink,
+				CTALabel: "前往充值",
+				Footnote: "若您近期已充值，请稍候片刻让系统同步入账；如有疑问请联系管理员。",
+			})
+
+			err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, notify)
 			if err != nil {
 				common.SysError(fmt.Sprintf("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 			}
@@ -518,6 +532,7 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 
 		prompt := "您的订阅额度即将用尽"
 		topUpLink := fmt.Sprintf("%s/console/topup", system_setting.ServerAddress)
+		remainQuota := logger.FormatQuota(int(remaining))
 
 		var content string
 		var values []interface{}
@@ -528,16 +543,28 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 
 		if notifyType == dto.NotifyTypeBark {
 			content = "{{value}}，剩余额度：{{value}}，请及时充值"
-			values = []interface{}{prompt, logger.FormatQuota(int(remaining))}
+			values = []interface{}{prompt, remainQuota}
 		} else if notifyType == dto.NotifyTypeGotify {
 			content = "{{value}}，当前剩余额度为 {{value}}，请及时充值。"
-			values = []interface{}{prompt, logger.FormatQuota(int(remaining))}
+			values = []interface{}{prompt, remainQuota}
 		} else {
 			content = "{{value}}，当前剩余额度为 {{value}}，为了不影响您的使用，请及时充值。<br/>充值链接：<a href='{{value}}'>{{value}}</a>"
-			values = []interface{}{prompt, logger.FormatQuota(int(remaining)), topUpLink, topUpLink}
+			values = []interface{}{prompt, remainQuota, topUpLink, topUpLink}
 		}
 
-		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values)); err != nil {
+		notify := dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values)
+		notify.EmailHTML = emailtpl.Render(emailtpl.Content{
+			Eyebrow:  "订阅提醒",
+			Headline: prompt,
+			Intro: fmt.Sprintf(
+				"当前订阅剩余额度为 <strong style=\"color:#0f172a;\">%s</strong>，为了不影响您后续的调用，请及时续费或充值。",
+				emailtpl.HtmlEscape(remainQuota)),
+			CTAHref:  topUpLink,
+			CTALabel: "前往充值",
+			Footnote: "若您近期已续费，请稍候片刻让系统同步入账；如有疑问请联系管理员。",
+		})
+
+		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, notify); err != nil {
 			common.SysError(fmt.Sprintf("failed to send subscription quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
 	})

@@ -1288,3 +1288,20 @@ export const resetPricingFilters = ({
   setFilterTag?.(DEFAULT_PRICING_FILTERS.filterTag);
   setCurrentPage?.(DEFAULT_PRICING_FILTERS.currentPage);
 };
+
+/**
+ * djb2 短哈希——非加密用途。
+ *
+ * 用在"内容指纹"场景：例如把"用户已知晓的公告内容"摘要写进 localStorage，
+ * 下次拉到新内容时对比指纹决定要不要再次弹窗。比直接存原文省空间、比
+ * SHA-256 同步快也不必 await，碰撞概率对本场景够用。
+ */
+export function stableStringHash(s) {
+  if (!s) return '';
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) + h + s.charCodeAt(i);
+    h |= 0; // 强制 32-bit 整型
+  }
+  return h.toString(36);
+}

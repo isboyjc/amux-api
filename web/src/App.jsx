@@ -45,6 +45,9 @@ import Task from './pages/Task';
 import ModelPage from './pages/Model';
 import ModelDeploymentPage from './pages/ModelDeployment';
 import OperationsPage from './pages/Operations';
+import Ticket from './pages/Ticket';
+import TicketDetail from './pages/Ticket/Detail';
+import TicketAdmin from './pages/Ticket/Admin';
 import Playground from './pages/Playground';
 import Subscription from './pages/Subscription';
 import OAuth2Callback from './components/auth/OAuth2Callback';
@@ -340,6 +343,39 @@ function App() {
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <Task />
               </Suspense>
+            </PrivateRoute>
+          }
+        />
+        {/* Ticket pages: admin queue must come before /:id to avoid wildcard collision. */}
+        <Route
+          path='/console/ticket/admin'
+          element={
+            <AdminRoute>
+              <TicketAdmin />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/ticket/admin/:id'
+          element={
+            <AdminRoute>
+              <TicketDetail admin />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/ticket'
+          element={
+            <PrivateRoute>
+              <Ticket />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/ticket/:id'
+          element={
+            <PrivateRoute>
+              <TicketDetail />
             </PrivateRoute>
           }
         />

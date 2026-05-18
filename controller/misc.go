@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/service/emailtpl"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -181,6 +182,9 @@ func GetStatus(c *gin.Context) {
 		"user_agreement_enabled":      legalSetting.UserAgreement != "",
 		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
+		// 工单系统总开关。前端用这个字段决定是否渲染"我的工单"/"工单管理"侧边栏
+		// 入口以及头部红点按钮。后端接口本身也会按 enabled 拒绝建单/回复。
+		"ticket_enabled":              operation_setting.GetTicketSetting().Enabled,
 		"AffShowInvitees":             common.OptionMap["AffShowInvitees"],
 		"AffRebateRatio":              common.OptionMap["AffRebateRatio"],
 
@@ -409,10 +413,22 @@ func SendEmailVerification(c *gin.Context) {
 	}
 	code := common.GenerateVerificationCode(6)
 	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
-	subject := fmt.Sprintf("%s邮箱验证邮件", common.SystemName)
-	content := fmt.Sprintf("<p>您好，你正在进行%s邮箱验证。</p>"+
-		"<p>您的验证码为: <strong>%s</strong></p>"+
-		"<p>验证码 %d 分钟内有效，如果不是本人操作，请忽略。</p>", common.SystemName, code, common.VerificationValidMinutes)
+	subject := fmt.Sprintf("%s 邮箱验证码", common.SystemName)
+	// 验证码邮件：用 Highlight 大字号居中展示 6 位码，等宽字体 + 字间距，
+	// 用户一眼就能读、方便手抄；Footnote 放安全提示。
+	content := emailtpl.Render(emailtpl.Content{
+		Tone:     emailtpl.ToneInfo,
+		Eyebrow:  "账户安全",
+		Headline: "验证您的邮箱",
+		Intro: fmt.Sprintf(
+			"您好，您正在进行 %s 的邮箱验证。请使用下方的验证码完成验证。",
+			emailtpl.HtmlEscape(common.SystemName)),
+		Highlight: emailtpl.Highlight{
+			Value: code,
+			Hint:  fmt.Sprintf("验证码 %d 分钟内有效", common.VerificationValidMinutes),
+		},
+		Footnote: "如果不是本人操作，请忽略此邮件。任何人都不会向您索取此验证码，请勿向第三方泄露。",
+	})
 	err := common.SendEmail(subject, email, content)
 	if err != nil {
 		common.ApiError(c, err)
@@ -438,11 +454,31 @@ func SendPasswordResetEmail(c *gin.Context) {
 		code := common.GenerateVerificationCode(0)
 		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
 		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
-		subject := fmt.Sprintf("%s密码重置", common.SystemName)
-		content := fmt.Sprintf("<p>您好，你正在进行%s密码重置。</p>"+
-			"<p>点击 <a href='%s'>此处</a> 进行密码重置。</p>"+
-			"<p>如果链接无法点击，请尝试点击下面的链接或将其复制到浏览器中打开：<br> %s </p>"+
-			"<p>重置链接 %d 分钟内有效，如果不是本人操作，请忽略。</p>", common.SystemName, link, link, common.VerificationValidMinutes)
+		subject := fmt.Sprintf("%s 密码重置", common.SystemName)
+		// 密码重置邮件：CTA 按钮指向重置链接；Rows 兜底显示一份纯链接，
+		// 给按钮点不动的客户端（极少数老邮件客户端） / 用户想拷贝到其它
+		// 浏览器打开时用。Footnote 提示有效期 + 安全免责。
+		content := emailtpl.Render(emailtpl.Content{
+			Tone:     emailtpl.ToneInfo,
+			Eyebrow:  "账户安全",
+			Headline: "重置您的密码",
+			Intro: fmt.Sprintf(
+				"您好，您正在进行 %s 的密码重置。点击下方按钮即可设置新密码。",
+				emailtpl.HtmlEscape(common.SystemName)),
+			CTAHref:  link,
+			CTALabel: "重置密码",
+			Rows: []emailtpl.Row{
+				{
+					Label: "或复制链接",
+					Value: fmt.Sprintf(
+						`<a href="%s" style="color:#475569;text-decoration:none;word-break:break-all;">%s</a>`,
+						link, emailtpl.HtmlEscape(link)),
+				},
+			},
+			Footnote: fmt.Sprintf(
+				"重置链接 %d 分钟内有效。如果不是本人操作，请忽略此邮件并考虑修改账号密码。",
+				common.VerificationValidMinutes),
+		})
 		err := common.SendEmail(subject, email, content)
 		if err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("failed to send password reset email to %s: %s", email, err.Error()))

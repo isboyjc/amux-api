@@ -284,6 +284,8 @@ func migrateDB() error {
 		&DesktopAuthSession{},
 		&UserAccessToken{},
 		&OAuthClient{},
+		&Ticket{},
+		&TicketMessage{},
 	)
 	if err != nil {
 		return err
@@ -312,6 +314,9 @@ func migrateDB() error {
 	if err := MigrateLegacyAccessTokens(); err != nil {
 		common.SysLog("MigrateLegacyAccessTokens error: " + err.Error())
 	}
+	// 一次性迁移：v1 新增的 tickets.user_seen_at 字段，把存量工单基准化，
+	// 避免老工单都顶着红点。详见 BackfillTicketUserSeenAt 注释。
+	BackfillTicketUserSeenAt()
 	// 幂等创建内置 OAuth client（amux-desktop），给未传 client_id 的 device flow
 	// 兜底，授权页能渲染统一文案。旧安装中的 "legacy-desktop" 记录会自动改名。
 	if err := EnsureBuiltinOAuthClient(); err != nil {
@@ -355,6 +360,8 @@ func migrateDBFast() error {
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&AffRebateLog{}, "AffRebateLog"},
 		{&DesktopAuthSession{}, "DesktopAuthSession"},
+		{&Ticket{}, "Ticket"},
+		{&TicketMessage{}, "TicketMessage"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))

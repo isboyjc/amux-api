@@ -423,6 +423,36 @@ func SetApiRouter(router *gin.Engine) {
 			modelsRoute.DELETE("/:id", controller.DeleteModelMeta)
 		}
 
+		// 工单系统：用户侧（建单/列表/详情/回复/关闭/重开/未读数）+ 管理员侧
+		// （队列/详情/回复/状态修改/仪表盘统计）。/setting 是给前端读分类
+		// 白名单和长度上限的，匿名访问可以避免登录前先打 /api/status 再读 setting，
+		// 但为了避免泄露内部上限，仍然挂在 UserAuth 下。
+		ticketRoute := apiRouter.Group("/ticket")
+		ticketRoute.Use(middleware.UserAuth())
+		{
+			ticketRoute.GET("/setting", controller.GetTicketSettingForUser)
+			ticketRoute.GET("", controller.ListUserTickets)
+			// service 层已经按用户/小时/天精细限频，这里不再叠加 CriticalRateLimit。
+			ticketRoute.POST("", controller.CreateTicket)
+			ticketRoute.GET("/unread", controller.GetUserTicketUnreadCount)
+			ticketRoute.GET("/:id", controller.GetUserTicketDetail)
+			ticketRoute.POST("/:id/reply", controller.ReplyToTicket)
+			ticketRoute.PUT("/:id/close", controller.CloseUserTicket)
+			ticketRoute.PUT("/:id/reopen", controller.ReopenUserTicket)
+		}
+		// 注意：/ticket 下既有 :id 参数路由（用户端详情），也有 /admin 静态前缀
+		// 会与 Gin 的 :id 通配冲突，因此管理员侧用 /admin/ticket 独立挂载，
+		// 风格与 /admin/access_tokens 一致。
+		ticketAdminRoute := apiRouter.Group("/admin/ticket")
+		ticketAdminRoute.Use(middleware.AdminAuth())
+		{
+			ticketAdminRoute.GET("", controller.AdminListTickets)
+			ticketAdminRoute.GET("/stats", controller.AdminTicketStats)
+			ticketAdminRoute.GET("/:id", controller.AdminGetTicketDetail)
+			ticketAdminRoute.POST("/:id/reply", controller.AdminReplyTicket)
+			ticketAdminRoute.PUT("/:id", controller.AdminUpdateTicket)
+		}
+
 		// Deployments (model deployment management)
 		deploymentsRoute := apiRouter.Group("/deployments")
 		deploymentsRoute.Use(middleware.AdminAuth())

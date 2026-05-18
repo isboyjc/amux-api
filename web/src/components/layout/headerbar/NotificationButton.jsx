@@ -18,28 +18,36 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Badge } from '@douyinfe/semi-ui';
+import { Badge, Button } from '@douyinfe/semi-ui';
 import { Bell } from 'lucide-react';
 
-const NotificationButton = ({ unreadCount, onNoticeOpen, t }) => {
+/**
+ * 顶部"收件箱"入口。
+ *
+ * 点击打开 NoticeModal（其中含通知 / 系统公告 / 我的工单三 tab）。徽标的
+ * 总数（站内公告 + 系统公告 + 工单未读之和）由 headerbar 层算好直接透传，
+ * 这里只负责渲染。
+ */
+const NotificationButton = ({ total, onOpen, t }) => {
+  const count = total || 0;
+
   const buttonProps = {
     icon: <Bell size={18} />,
-    'aria-label': t('系统公告'),
-    onClick: onNoticeOpen,
+    'aria-label': t('通知'),
+    onClick: onOpen,
     theme: 'borderless',
     type: 'tertiary',
     className:
       '!p-1.5 !text-current !bg-transparent hover:!bg-semi-color-fill-1 focus:!bg-semi-color-fill-1',
   };
 
-  if (unreadCount > 0) {
+  if (count > 0) {
     return (
-      <Badge count={unreadCount} type='danger' overflowCount={99}>
+      <Badge count={count} type='danger' overflowCount={99}>
         <Button {...buttonProps} />
       </Badge>
     );
   }
-
   return <Button {...buttonProps} />;
 };
 

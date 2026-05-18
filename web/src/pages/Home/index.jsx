@@ -26,6 +26,7 @@ import {
   ScrollItem,
 } from '@douyinfe/semi-ui';
 import { API, showError, copy, showSuccess } from '../../helpers';
+import { stableStringHash } from '../../helpers/utils';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { API_ENDPOINTS } from '../../constants/common.constant';
 import { StatusContext } from '../../context/Status';
@@ -39,7 +40,6 @@ import {
   IconCopy,
 } from '@douyinfe/semi-icons';
 import { Link } from 'react-router-dom';
-import NoticeModal from '../../components/layout/NoticeModal';
 import {
   Layers,
   Zap,
@@ -428,7 +428,6 @@ const Home = () => {
   const actualTheme = useActualTheme();
   const [homePageContentLoaded, setHomePageContentLoaded] = useState(false);
   const [homePageContent, setHomePageContent] = useState('');
-  const [noticeVisible, setNoticeVisible] = useState(false);
   const isMobile = useIsMobile();
   const isDemoSiteMode = statusState?.status?.demo_site_enabled || false;
   const docsLink = statusState?.status?.docs_link || '';
@@ -504,19 +503,27 @@ const Home = () => {
   };
 
   useEffect(() => {
+    // 内容指纹判定：用户在弹层里点过"我已知晓"会把当前公告的内容哈希
+    // 写进 localStorage。这里拉到 /api/notice 后对比指纹——
+    //   不一致 / 没指纹 → 是新公告，触发顶部 NoticeModal 打开；
+    //   一致           → 用户已知晓这版内容，跳过。
+    //
+    // 不再用本地 NoticeModal 自管 visible——之前那种做法会出现一个
+    // 没接 noticeRaw 的"空 modal"（未登录首页自动弹是空白，但点 Bell 又
+    // 有内容）。统一通过 window 事件触发 headerbar 那个唯一的 modal，
+    // 内容由 useInAppNoticeUnread 提供。
     const checkNoticeAndShow = async () => {
-      const lastCloseDate = localStorage.getItem('notice_close_date');
-      const today = new Date().toDateString();
-      if (lastCloseDate !== today) {
-        try {
-          const res = await API.get('/api/notice');
-          const { success, data } = res.data;
-          if (success && data && data.trim() !== '') {
-            setNoticeVisible(true);
+      try {
+        const res = await API.get('/api/notice');
+        const { success, data } = res.data;
+        if (success && data && data.trim() !== '') {
+          const ack = localStorage.getItem('notice_ack_hash');
+          if (ack !== stableStringHash(data)) {
+            window.dispatchEvent(new CustomEvent('notice:open'));
           }
-        } catch (error) {
-          console.error('获取公告失败:', error);
         }
+      } catch (error) {
+        console.error('获取公告失败:', error);
       }
     };
 
@@ -537,11 +544,9 @@ const Home = () => {
 
   return (
     <div className='w-full overflow-x-hidden'>
-      <NoticeModal
-        visible={noticeVisible}
-        onClose={() => setNoticeVisible(false)}
-        isMobile={isMobile}
-      />
+      {/* NoticeModal 已迁到 headerbar 统一管理，本页只通过 window 事件
+          'notice:open' 触发它打开，避免出现"两份 modal、内容只接一份"的
+          首页自动弹空白 bug。 */}
       {homePageContentLoaded && homePageContent === '' ? (
         <div className='w-full overflow-x-hidden'>
           {/* 首屏 Hero —— 全屏高度（减去导航栏 64px） */}

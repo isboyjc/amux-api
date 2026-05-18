@@ -38,6 +38,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     log: true,
     midjourney: true,
     task: true,
+    ticket: true,
   },
   personal: {
     enabled: true,
@@ -54,6 +55,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     user: true,
     billing: true,
     subscription: true,
+    ticket_admin: true,
     setting: true,
   },
 };

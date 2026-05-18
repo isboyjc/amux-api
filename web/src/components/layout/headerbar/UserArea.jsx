@@ -21,7 +21,7 @@ import React, { useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { Avatar, Button, Dropdown, Typography } from '@douyinfe/semi-ui';
 import { IconExit } from '@douyinfe/semi-icons';
-import { UserCog, KeyRound, Wallet } from 'lucide-react';
+import { UserCog, KeyRound, Wallet, Ticket as TicketIcon } from 'lucide-react';
 import SkeletonWrapper from '../components/SkeletonWrapper';
 
 const UserArea = ({
@@ -34,6 +34,9 @@ const UserArea = ({
   t,
 }) => {
   const dropdownRef = useRef(null);
+  // 工单总开关由 /api/status 同步进 localStorage，sidebar / NotificationButton
+  // 也是同源——这里同步用，关掉时不显示入口。
+  const ticketEnabled = localStorage.getItem('ticket_enabled') === 'true';
   if (isLoading) {
     return (
       <SkeletonWrapper
@@ -95,6 +98,22 @@ const UserArea = ({
                   <span>{t('钱包管理')}</span>
                 </div>
               </Dropdown.Item>
+              {ticketEnabled && (
+                <Dropdown.Item
+                  onClick={() => {
+                    navigate('/console/ticket');
+                  }}
+                  className='!px-3 !py-1.5 !text-sm !text-semi-color-text-0 hover:!bg-semi-color-fill-1 dark:!text-zinc-200 dark:hover:!bg-zinc-700 dark:hover:!text-white'
+                >
+                  <div className='flex items-center gap-2'>
+                    <TicketIcon
+                      size={14}
+                      className='text-zinc-500 dark:text-zinc-400'
+                    />
+                    <span>{t('我的工单')}</span>
+                  </div>
+                </Dropdown.Item>
+              )}
               <Dropdown.Item
                 onClick={logout}
                 className='!px-3 !py-1.5 !text-sm !text-semi-color-text-0 hover:!bg-semi-color-fill-1 dark:!text-zinc-200 dark:hover:!bg-red-500 dark:hover:!text-white'

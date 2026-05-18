@@ -82,6 +82,30 @@ var allowedUploadScopes = map[string]uploadScopeRule{
 		maxBytes:        50 * mb,
 		contentPrefixes: nil,
 	},
+
+	// ----- 工单附件 -----
+	// 路径自带 {userID}/{YYYY/MM/DD}/{uuid}.ext，公开链接也不可枚举。
+	// 上限比 user-upload 严一档：工单不是分发大文件的场景。
+	"ticket-attachment-image": {
+		pathPrefix:      "ticket-attachment/image",
+		maxBytes:        10 * mb,
+		contentPrefixes: []string{"image/"},
+	},
+	"ticket-attachment-video": {
+		pathPrefix:      "ticket-attachment/video",
+		maxBytes:        50 * mb,
+		contentPrefixes: []string{"video/"},
+	},
+	"ticket-attachment-audio": {
+		pathPrefix:      "ticket-attachment/audio",
+		maxBytes:        20 * mb,
+		contentPrefixes: []string{"audio/"},
+	},
+	"ticket-attachment-file": {
+		pathPrefix:      "ticket-attachment/file",
+		maxBytes:        20 * mb,
+		contentPrefixes: nil,
+	},
 }
 
 // presignUploadRequest /api/upload/presign 请求体。所有字段都来自客户端，

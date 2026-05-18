@@ -48,6 +48,9 @@ export function setStatusData(data) {
   localStorage.setItem('enable_drawing', data.enable_drawing);
   localStorage.setItem('enable_task', data.enable_task);
   localStorage.setItem('enable_data_export', data.enable_data_export);
+  // 工单系统开关：影响侧边栏「我的工单」「工单管理」入口及头部 NotificationButton
+  // 是否渲染工单行。值是字符串 'true'/'false'，读取处用 === 'true' 比较。
+  localStorage.setItem('ticket_enabled', data.ticket_enabled ? 'true' : 'false');
   localStorage.setItem('chats', JSON.stringify(data.chats));
   localStorage.setItem(
     'data_export_default_time',

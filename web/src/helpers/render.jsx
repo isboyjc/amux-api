@@ -91,6 +91,7 @@ import {
   Server,
   CalendarClock,
   Receipt,
+  Ticket,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -173,6 +174,9 @@ export function getLucideIcon(key, selected = false) {
       return <CalendarClock {...commonProps} color={iconColor} />;
     case 'setting':
       return <Settings {...commonProps} color={iconColor} />;
+    case 'ticket':
+    case 'ticket_admin':
+      return <Ticket {...commonProps} color={iconColor} />;
     default:
       return <CircleUser {...commonProps} color={iconColor} />;
   }

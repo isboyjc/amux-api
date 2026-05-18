@@ -27,6 +27,7 @@ import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsTicket from '../../pages/Setting/Operation/SettingsTicket';
 import SettingsUserAutoUpgrade from '../../pages/Setting/Operation/SettingsUserAutoUpgrade';
 import SettingsTaskURLRewrite from '../../pages/Setting/Operation/SettingsTaskURLRewrite';
 import SettingsAnnouncementBar from '../../pages/Setting/Operation/SettingsAnnouncementBar';
@@ -84,6 +85,26 @@ const OperationSetting = () => {
     'checkin_setting.enabled': false,
     'checkin_setting.min_quota': 1000,
     'checkin_setting.max_quota': 10000,
+
+    /* 工单设置 */
+    'ticket_setting.enabled': false,
+    'ticket_setting.user_daily_limit': 30,
+    'ticket_setting.user_hourly_limit': 10,
+    'ticket_setting.user_reply_per_minute': 6,
+    'ticket_setting.max_title_length': 200,
+    'ticket_setting.max_content_length': 32768,
+    'ticket_setting.max_attachments_per_message': 6,
+    'ticket_setting.require_verified_email': true,
+    'ticket_setting.auto_resolve_days': 14,
+    'ticket_setting.reopen_after_closed_days': 7,
+    'ticket_setting.reopen_after_resolved_days': 30,
+    'ticket_setting.notify_email_to_admin': true,
+    'ticket_setting.notify_email_to_user': true,
+    'ticket_setting.notify_telegram_to_admin': false,
+    'ticket_setting.notify_in_app_enabled': true,
+    'ticket_setting.telegram_bot_token': '',
+    'ticket_setting.telegram_chat_id': '',
+    'ticket_setting.admin_emails': '',
 
     /* 令牌设置 */
     'token_setting.max_user_tokens': 1000,
@@ -192,6 +213,10 @@ const OperationSetting = () => {
         {/* 签到设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsCheckin options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 工单设置：总开关 + 限流 + 通知。关闭后用户/管理员侧入口都会隐藏 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsTicket options={inputs} refresh={onRefresh} />
         </Card>
         {/* 任务结果 URL 脱敏设置 */}
         <Card style={{ marginTop: '10px' }}>

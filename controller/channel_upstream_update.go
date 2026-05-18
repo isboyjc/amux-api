@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/emailtpl"
 
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -632,21 +633,119 @@ func runChannelUpstreamModelUpdateTaskOnce() {
 			))
 			return
 		}
-		service.NotifyUpstreamModelUpdateWatchers(
-			"上游模型巡检通知",
-			buildUpstreamModelUpdateTaskNotificationContent(
-				checkedChannels,
-				changedChannels,
-				detectedAddModels,
-				detectedRemoveModels,
-				autoAddedModels,
-				failedChannelIDs,
-				channelSummaries,
-				addModelSamples,
-				removeModelSamples,
-			),
+		subject := "上游模型巡检通知"
+		plainContent := buildUpstreamModelUpdateTaskNotificationContent(
+			checkedChannels,
+			changedChannels,
+			detectedAddModels,
+			detectedRemoveModels,
+			autoAddedModels,
+			failedChannelIDs,
+			channelSummaries,
+			addModelSamples,
+			removeModelSamples,
 		)
+		emailHTML := buildUpstreamModelUpdateEmailHTML(
+			checkedChannels,
+			changedChannels,
+			detectedAddModels,
+			detectedRemoveModels,
+			autoAddedModels,
+			failedChannelIDs,
+			channelSummaries,
+			addModelSamples,
+			removeModelSamples,
+		)
+		service.NotifyUpstreamModelUpdateWatchers(subject, plainContent, emailHTML)
 	}
+}
+
+// buildUpstreamModelUpdateEmailHTML 把巡检结果包装成 emailtpl 风格的富 HTML
+// 邮件。和 buildUpstreamModelUpdateTaskNotificationContent 共用数据但表达
+// 形式不同——纯文本给 Bark / Webhook / Gotify，富 HTML 给邮件。
+func buildUpstreamModelUpdateEmailHTML(
+	checkedChannels int,
+	changedChannels int,
+	detectedAddModels int,
+	detectedRemoveModels int,
+	autoAddedModels int,
+	failedChannelIDs []int,
+	channelSummaries []upstreamModelUpdateChannelSummary,
+	addModelSamples []string,
+	removeModelSamples []string,
+) string {
+	failedChannels := len(failedChannelIDs)
+	rows := []emailtpl.Row{
+		{Label: "检测渠道", Value: fmt.Sprintf("%d", checkedChannels)},
+		{Label: "变更渠道", Value: fmt.Sprintf("%d", changedChannels)},
+		{Label: "新增模型", Value: fmt.Sprintf("%d", detectedAddModels)},
+		{Label: "删除模型", Value: fmt.Sprintf("%d", detectedRemoveModels)},
+		{Label: "自动同步", Value: fmt.Sprintf("%d", autoAddedModels)},
+		{Label: "失败渠道", Value: fmt.Sprintf("%d", failedChannels)},
+	}
+
+	// 把可选的明细段组装成 HTML 介绍段落，多段用 <br><br> 分隔，配合
+	// emailtpl 的 line-height 1.7 阅读体验稳定。
+	var introParts []string
+	introParts = append(introParts, "本次上游模型巡检已完成，下面是关键指标和变更明细。")
+
+	if len(channelSummaries) > 0 {
+		displayCount := min(len(channelSummaries), channelUpstreamModelUpdateNotifyMaxChannelDetails)
+		var b strings.Builder
+		fmt.Fprintf(&b, "<strong style=\"color:#0f172a;\">变更渠道明细（%d/%d）：</strong><br>", displayCount, len(channelSummaries))
+		for _, summary := range channelSummaries[:displayCount] {
+			fmt.Fprintf(&b, "• %s (+%d / -%d)<br>",
+				emailtpl.HtmlEscape(summary.ChannelName), summary.AddCount, summary.RemoveCount)
+		}
+		if len(channelSummaries) > displayCount {
+			fmt.Fprintf(&b, "<span style=\"color:#94a3b8;\">其余 %d 个渠道已省略</span>",
+				len(channelSummaries)-displayCount)
+		}
+		introParts = append(introParts, b.String())
+	}
+
+	normalizedAdd := normalizeModelNames(addModelSamples)
+	if len(normalizedAdd) > 0 {
+		displayCount := min(len(normalizedAdd), channelUpstreamModelUpdateNotifyMaxModelDetails)
+		introParts = append(introParts, fmt.Sprintf(
+			"<strong style=\"color:#0f172a;\">新增模型示例（%d/%d）：</strong><br>%s",
+			displayCount, len(normalizedAdd),
+			emailtpl.HtmlEscape(strings.Join(normalizedAdd[:displayCount], ", "))))
+	}
+
+	normalizedRemove := normalizeModelNames(removeModelSamples)
+	if len(normalizedRemove) > 0 {
+		displayCount := min(len(normalizedRemove), channelUpstreamModelUpdateNotifyMaxModelDetails)
+		introParts = append(introParts, fmt.Sprintf(
+			"<strong style=\"color:#0f172a;\">删除模型示例（%d/%d）：</strong><br>%s",
+			displayCount, len(normalizedRemove),
+			emailtpl.HtmlEscape(strings.Join(normalizedRemove[:displayCount], ", "))))
+	}
+
+	if failedChannels > 0 {
+		displayCount := min(failedChannels, channelUpstreamModelUpdateNotifyMaxFailedChannelIDs)
+		ids := lo.Map(failedChannelIDs[:displayCount], func(channelID int, _ int) string {
+			return fmt.Sprintf("#%d", channelID)
+		})
+		introParts = append(introParts, fmt.Sprintf(
+			"<strong style=\"color:#ef4444;\">失败渠道（%d/%d）：</strong><br>%s",
+			displayCount, failedChannels, emailtpl.HtmlEscape(strings.Join(ids, ", "))))
+	}
+
+	tone := emailtpl.ToneInfo
+	if failedChannels > 0 {
+		tone = emailtpl.ToneWarning
+	}
+
+	return emailtpl.Render(emailtpl.Content{
+		Tone:     tone,
+		Eyebrow:  "上游巡检",
+		Headline: "上游模型巡检通知",
+		Intro:    strings.Join(introParts, "<br><br>"),
+		Rows:     rows,
+		CTAHref:  channelListAdminURL(),
+		CTALabel: "查看渠道",
+	})
 }
 
 func StartChannelUpstreamModelUpdateTask() {

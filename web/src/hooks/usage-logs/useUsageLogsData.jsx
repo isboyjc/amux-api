@@ -95,19 +95,32 @@ export const useLogsData = () => {
   // Form state
   const [formApi, setFormApi] = useState(null);
   let now = new Date();
+  // 从 URL 读一次过滤参数，让外部模块（如工单详情"查看日志"按钮）跳转过来
+  // 直接预填筛选条件 + 参与首次 loadLogs。
+  //
+  // 关键时序：URL 读取放 useState lazy initializer 里"只读取"，不做副作用；
+  // 清 URL 放后面的 useEffect 里。否则 React 18 StrictMode 在 dev 模式下
+  // 会把 initializer 跑两次，第二次跑时 URL 可能已被自己清空，导致 params
+  // 被错读成空，filter 失效。
+  const [initialUrlParams] = useState(() => {
+    if (typeof window === 'undefined') return new URLSearchParams();
+    return new URLSearchParams(window.location.search);
+  });
+  const urlLogType = initialUrlParams.get('type');
   const formInitValues = {
-    username: '',
-    user_id: '',
-    token_name: '',
-    model_name: '',
-    channel: '',
-    group: '',
-    request_id: '',
+    username: initialUrlParams.get('username') || '',
+    user_id: initialUrlParams.get('user_id') || '',
+    token_name: initialUrlParams.get('token_name') || '',
+    model_name: initialUrlParams.get('model_name') || '',
+    channel: initialUrlParams.get('channel') || '',
+    group: initialUrlParams.get('group') || '',
+    request_id: initialUrlParams.get('request_id') || '',
     dateRange: [
       timestamp2string(getTodayStartTimestamp()),
       timestamp2string(now.getTime() / 1000 + 3600),
     ],
-    logType: '0',
+    // type 是字符串枚举（"0" / "5"），保持现有 select 的预期格式
+    logType: urlLogType !== null && urlLogType !== '' ? urlLogType : '0',
   };
 
   // Get default column visibility based on user role
@@ -236,7 +249,9 @@ export const useLogsData = () => {
 
   // 获取表单值的辅助函数，确保所有值都是字符串
   const getFormValues = () => {
-    const formValues = formApi ? formApi.getValues() : {};
+    // 首次 loadLogs() 在 formApi 挂载前就会触发；这时直接用 formInitValues 兜底，
+    // 让 URL query 预填的过滤条件（如 ?request_id=xxx）能立刻参与首次请求。
+    const formValues = formApi ? formApi.getValues() : formInitValues;
 
     let start_timestamp = timestamp2string(getTodayStartTimestamp());
     let end_timestamp = timestamp2string(now.getTime() / 1000 + 3600);
@@ -754,6 +769,13 @@ export const useLogsData = () => {
       .catch((reason) => {
         showError(reason);
       });
+    // URL 上的 query 在这里清掉。此时 initialUrlParams 已被捕获 + formInitValues
+    // 已在 form 里、loadLogs 也已经发出去带着 request_id，安全清理。
+    // 用 replaceState 避免触发新的导航/重渲染；StrictMode 双跑这个 effect
+    // 也是幂等的（第二次时 search 已经空，条件不成立直接跳过）。
+    if (typeof window !== 'undefined' && window.location.search) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
   }, []);
 
   // Initialize statistics when formApi is available

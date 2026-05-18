@@ -7,7 +7,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/emailtpl"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -29,7 +31,21 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 	if success {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelError.ChannelName, channelError.ChannelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
-		NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
+
+		notify := dto.NewNotify(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content, nil)
+		notify.EmailHTML = emailtpl.Render(emailtpl.Content{
+			Tone:     emailtpl.ToneDanger,
+			Eyebrow:  "渠道告警",
+			Headline: subject,
+			Intro:    "系统检测到错误并已自动禁用该渠道，可前往后台查看详情或手动恢复。",
+			Rows: []emailtpl.Row{
+				{Label: "渠道", Value: fmt.Sprintf("%s (#%d)", emailtpl.HtmlEscape(channelError.ChannelName), channelError.ChannelId)},
+				{Label: "原因", Value: emailtpl.HtmlEscape(reason)},
+			},
+			CTAHref:  channelAdminURL(channelError.ChannelId),
+			CTALabel: "查看渠道",
+		})
+		NotifyRootUserWith(notify)
 	}
 }
 
@@ -38,8 +54,30 @@ func EnableChannel(channelId int, usingKey string, channelName string) {
 	if success {
 		subject := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
 		content := fmt.Sprintf("通道「%s」（#%d）已被启用", channelName, channelId)
-		NotifyRootUser(formatNotifyType(channelId, common.ChannelStatusEnabled), subject, content)
+
+		notify := dto.NewNotify(formatNotifyType(channelId, common.ChannelStatusEnabled), subject, content, nil)
+		notify.EmailHTML = emailtpl.Render(emailtpl.Content{
+			Tone:     emailtpl.ToneSuccess,
+			Eyebrow:  "渠道恢复",
+			Headline: subject,
+			Intro:    "系统检测到错误已解除，渠道已自动重新启用。",
+			Rows: []emailtpl.Row{
+				{Label: "渠道", Value: fmt.Sprintf("%s (#%d)", emailtpl.HtmlEscape(channelName), channelId)},
+			},
+			CTAHref:  channelAdminURL(channelId),
+			CTALabel: "查看渠道",
+		})
+		NotifyRootUserWith(notify)
 	}
+}
+
+// channelAdminURL 拼出后台渠道详情页链接；ServerAddress 没配时返回空串。
+func channelAdminURL(id int) string {
+	server := strings.TrimRight(system_setting.ServerAddress, "/")
+	if server == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s/console/channel?id=%d", server, id)
 }
 
 func ShouldDisableChannel(err *types.NewAPIError) bool {

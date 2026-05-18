@@ -26,7 +26,9 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/emailtpl"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -871,6 +873,16 @@ func TestChannel(c *gin.Context) {
 var testAllChannelsLock sync.Mutex
 var testAllChannelsRunning bool = false
 
+// channelListAdminURL 后台渠道列表页链接；ServerAddress 没配时返回空串，
+// 邮件 CTA 拿到空 href 会自动不渲染按钮。
+func channelListAdminURL() string {
+	server := strings.TrimRight(system_setting.ServerAddress, "/")
+	if server == "" {
+		return ""
+	}
+	return server + "/console/channel"
+}
+
 func testAllChannels(notify bool) error {
 
 	testAllChannelsLock.Lock()
@@ -937,7 +949,17 @@ func testAllChannels(notify bool) error {
 		}
 
 		if notify {
-			service.NotifyRootUser(dto.NotifyTypeChannelTest, "通道测试完成", "所有通道测试已完成")
+			subject := "通道测试完成"
+			content := "所有通道测试已完成"
+			n := dto.NewNotify(dto.NotifyTypeChannelTest, subject, content, nil)
+			n.EmailHTML = emailtpl.Render(emailtpl.Content{
+				Eyebrow:  "渠道测试",
+				Headline: subject,
+				Intro:    "所有通道的批量测试任务已执行完毕，可前往后台查看每个渠道的最新测试结果。",
+				CTAHref:  channelListAdminURL(),
+				CTALabel: "查看渠道",
+			})
+			service.NotifyRootUserWith(n)
 		}
 	})
 	return nil

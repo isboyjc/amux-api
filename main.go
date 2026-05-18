@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/ticket"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -117,6 +118,9 @@ func main() {
 
 	// Desktop auth session cleanup task
 	service.StartDesktopAuthCleanupTask()
+
+	// Ticket: auto-resolve inactive tickets after configured days
+	ticket.StartTicketAutoResolveTask()
 
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {

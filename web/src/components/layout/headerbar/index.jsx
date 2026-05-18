@@ -20,6 +20,8 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { useHeaderBar } from '../../../hooks/common/useHeaderBar';
 import { useNotifications } from '../../../hooks/common/useNotifications';
+import { useTicketUnread } from '../../../hooks/common/useTicketUnread';
+import { useInAppNoticeUnread } from '../../../hooks/common/useInAppNoticeUnread';
 import { useNavigation } from '../../../hooks/common/useNavigation';
 import NoticeModal from '../NoticeModal';
 import MobileMenuButton from './MobileMenuButton';
@@ -64,7 +66,33 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     getUnreadKeys,
   } = useNotifications(statusState);
 
+  // 工单未读由 useTicketUnread 统一管理（60s 轮询 + ticket:seen 事件），
+  // 同时供顶部红点徽标和 NoticeModal 内的"我的工单"tab 使用。
+  const { ticketUnread, ticketEnabled } = useTicketUnread(!!userState?.user);
+
+  // 站内 markdown 公告未读（管理员主动 push 的内容）。透传出 noticeRaw 给
+  // 弹层复用，省一次重复请求。
+  const { unread: noticeUnread, noticeRaw } = useInAppNoticeUnread();
+
   const { mainNavLinks } = useNavigation(t, docsLink, headerNavModules);
+
+  // 顶部 Bell 红点 = 三类未读之和：站内公告 + 系统公告（announcement
+  // timeline）+ 工单。
+  const totalUnread = (unreadCount || 0) + (noticeUnread || 0) + (ticketUnread || 0);
+
+  // 打开弹窗时优先停在最值得看的 tab。优先级：
+  //   1. inApp（管理员新公告，最 push 性）
+  //   2. tickets（用户自己的事项）
+  //   3. system（announcement timeline，相对被动）
+  //   4. 默认 inApp
+  const initialTab =
+    noticeUnread > 0
+      ? 'inApp'
+      : ticketUnread > 0
+        ? 'tickets'
+        : unreadCount > 0
+          ? 'system'
+          : 'inApp';
 
   return (
     <header className='text-semi-color-text-0 sticky top-0 z-50 transition-colors duration-300 bg-white/75 dark:bg-zinc-900/75 backdrop-blur-lg'>
@@ -72,8 +100,13 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
         visible={noticeVisible}
         onClose={handleNoticeClose}
         isMobile={isMobile}
-        defaultTab={unreadCount > 0 ? 'system' : 'inApp'}
+        defaultTab={initialTab}
         unreadKeys={getUnreadKeys()}
+        ticketEnabled={ticketEnabled && !!userState?.user}
+        ticketUnread={ticketUnread}
+        noticeUnread={noticeUnread}
+        noticeRaw={noticeRaw}
+        navigate={navigate}
       />
 
       <div className='w-full px-4 md:px-4'>
@@ -132,7 +165,7 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
 
             <ActionButtons
             isNewYear={isNewYear}
-            unreadCount={unreadCount}
+            totalUnread={totalUnread}
             onNoticeOpen={handleNoticeOpen}
             theme={theme}
             onThemeToggle={handleThemeToggle}

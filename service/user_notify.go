@@ -15,14 +15,24 @@ import (
 )
 
 func NotifyRootUser(t string, subject string, content string) {
+	NotifyRootUserWith(dto.NewNotify(t, subject, content, nil))
+}
+
+// NotifyRootUserWith 用预构造的 dto.Notify 通知 root，调用方可以设置
+// EmailHTML 字段让邮件渠道走 emailtpl 渲染后的富 HTML，其它通道仍走
+// Content + Values 路径。
+func NotifyRootUserWith(notify dto.Notify) {
 	user := model.GetRootUser().ToBaseUser()
-	err := NotifyUser(user.Id, user.Email, user.GetSetting(), dto.NewNotify(t, subject, content, nil))
+	err := NotifyUser(user.Id, user.Email, user.GetSetting(), notify)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to notify root user: %s", err.Error()))
 	}
 }
 
-func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
+// NotifyUpstreamModelUpdateWatchers 分发"上游模型巡检"通知给所有 admin。
+// emailHTML 可空：不空时邮件渠道走预渲染富 HTML（emailtpl 输出），其它
+// 通道仍用 plain text content。
+func NotifyUpstreamModelUpdateWatchers(subject string, content string, emailHTML string) {
 	var users []model.User
 	if err := model.DB.
 		Select("id", "email", "role", "status", "setting").
@@ -33,6 +43,7 @@ func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
 	}
 
 	notification := dto.NewNotify(dto.NotifyTypeChannelUpdate, subject, content, nil)
+	notification.EmailHTML = emailHTML
 	sentCount := 0
 	for _, user := range users {
 		userSetting := user.GetSetting()
@@ -106,9 +117,12 @@ func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data 
 }
 
 func sendEmailNotify(userEmail string, data dto.Notify) error {
-	// make email content
+	// 优先用调用方预渲染好的富 HTML（一般来自 emailtpl，自带品牌外壳）。
+	// 没有就退到旧逻辑：拿 Content + 替换 {{value}} 占位符。
+	if data.EmailHTML != "" {
+		return common.SendEmail(data.Title, userEmail, data.EmailHTML)
+	}
 	content := data.Content
-	// 处理占位符
 	for _, value := range data.Values {
 		content = strings.Replace(content, dto.ContentValueParam, fmt.Sprintf("%v", value), 1)
 	}

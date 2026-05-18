@@ -61,6 +61,16 @@ export const useNotifications = (statusState) => {
     setUnreadCount(calculateUnreadCount());
   }, [announcements]);
 
+  // Home 页（以及任何想触发顶部公告 modal 的地方）通过 window 事件
+  // 'notice:open' 打开本 hook 管控的 NoticeModal。原本 Home 自管一份本地
+  // modal 但没接 noticeRaw，会出现"未登录首页自动弹是空白、Bell 点开有
+  // 内容"的诡异 bug；统一到这一份 modal 后就只有一个真相源。
+  useEffect(() => {
+    const onOpen = () => setNoticeVisible(true);
+    window.addEventListener('notice:open', onOpen);
+    return () => window.removeEventListener('notice:open', onOpen);
+  }, []);
+
   // Actions
   const handleNoticeOpen = () => {
     setNoticeVisible(true);
