@@ -110,15 +110,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className:
           localStorage.getItem('enable_task') === 'true' ? '' : 'tableHiddle',
       },
-      {
-        text: t('我的工单'),
-        itemKey: 'ticket',
-        to: '/ticket',
-        // 工单总开关从 /api/status 同步到 localStorage（helpers/data.js）。
-        // 关闭时整条入口走 tableHiddle 类隐藏，与「绘图日志」等模块一致。
-        className:
-          localStorage.getItem('ticket_enabled') === 'true' ? '' : 'tableHiddle',
-      },
     ];
 
     // 根据配置过滤项目
@@ -137,7 +128,25 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   ]);
 
   const financeItems = useMemo(() => {
-    const items = [
+    const items = [];
+
+    // "我的工单"放在最上方，更符合"重要个人事务优先"的心智。配置开关
+    // 沿用 console.ticket（之前的位置），不动 DEFAULT_ADMIN_CONFIG 的
+    // section 归属，避免老用户已存的禁用偏好被覆盖。tableHiddle 由工单
+    // 总开关 ticket_enabled 控制。
+    if (isModuleVisible('console', 'ticket')) {
+      items.push({
+        text: t('我的工单'),
+        itemKey: 'ticket',
+        to: '/ticket',
+        className:
+          localStorage.getItem('ticket_enabled') === 'true'
+            ? ''
+            : 'tableHiddle',
+      });
+    }
+
+    const personalItems = [
       {
         text: t('钱包管理'),
         itemKey: 'topup',
@@ -150,13 +159,14 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       },
     ];
 
-    // 根据配置过滤项目
-    const filteredItems = items.filter((item) => {
-      const configVisible = isModuleVisible('personal', item.itemKey);
-      return configVisible;
+    // 根据配置过滤个人项
+    personalItems.forEach((item) => {
+      if (isModuleVisible('personal', item.itemKey)) {
+        items.push(item);
+      }
     });
 
-    return filteredItems;
+    return items;
   }, [t, isModuleVisible]);
 
   const adminItems = useMemo(() => {
