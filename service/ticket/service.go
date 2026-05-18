@@ -61,10 +61,21 @@ func CreateTicket(userId int, req *dto.CreateTicketReq) (*model.Ticket, *model.T
 		return nil, nil, err
 	}
 
-	// enrichment：把 bug_context 用 request_id 补全。enrichment 不阻断，
-	// request_id 错了也允许建单，只是标记 verified=false。
-	enrichedCtx := EnrichBugContext(userId, req.BugContext)
-	meta := &dto.TicketMetadata{BugContext: enrichedCtx}
+	// enrichment：按分类挑选要落 metadata 的结构化字段。
+	//   - refund：必须带 RefundContext，校验失败直接拒绝（金额/订单是法律凭据，
+	//     不能像 bug_context 那样软失败）。
+	//   - 其它分类：沿用 bug_context 软校验（request_id 错了仍允许建单）。
+	meta := &dto.TicketMetadata{}
+	if req.Category == "refund" {
+		enrichedRefund, err := EnrichRefundContext(userId, req.RefundContext)
+		if err != nil {
+			return nil, nil, err
+		}
+		meta.RefundContext = enrichedRefund
+	} else {
+		enrichedCtx := EnrichBugContext(userId, req.BugContext)
+		meta.BugContext = enrichedCtx
+	}
 
 	metaStr, err := SerializeMetadata(meta)
 	if err != nil {
@@ -107,11 +118,12 @@ func CreateTicket(userId int, req *dto.CreateTicketReq) (*model.Ticket, *model.T
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	// 平铺索引列从 enriched bug_context 拷贝过来
-	if enrichedCtx != nil {
-		t.ChannelId = enrichedCtx.ChannelId
-		t.ModelName = enrichedCtx.Model
-		t.Group = enrichedCtx.Group
+	// 平铺索引列从 enriched bug_context 拷贝过来（refund 工单 BugContext 为空，
+	// 三个索引列保持默认零值即可）。
+	if meta.BugContext != nil {
+		t.ChannelId = meta.BugContext.ChannelId
+		t.ModelName = meta.BugContext.Model
+		t.Group = meta.BugContext.Group
 	}
 
 	firstMsg := &model.TicketMessage{

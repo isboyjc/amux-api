@@ -79,6 +79,7 @@ var ticketSupportCategories = map[string]struct{}{
 	"billing":          {},
 	"account":          {},
 	"abuse":            {},
+	"refund":           {},
 	"other":            {},
 }
 

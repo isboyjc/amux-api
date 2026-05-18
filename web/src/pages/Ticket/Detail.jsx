@@ -4,7 +4,7 @@ Copyright (C) 2025 QuantumNous
 Licensed under AGPL-3.0. See repository LICENSE for details.
 */
 
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -30,10 +30,13 @@ import {
   tCategory,
   tDynamicStatusLabel,
   tPriorityLabel,
+  tRefundMethod,
+  tRefundReason,
   tRole,
   tStatusLabel,
   tType,
 } from './constants';
+import { StatusContext } from '../../context/Status';
 import {
   TicketAttachmentsUploader,
   TicketAttachmentsView,
@@ -156,6 +159,7 @@ const TicketDetail = ({ admin = false }) => {
   }
 
   const bug = data.metadata?.bug_context;
+  const refund = data.metadata?.refund_context;
   const dynStatusLabel = tDynamicStatusLabel(
     t,
     data.status,
@@ -222,6 +226,9 @@ const TicketDetail = ({ admin = false }) => {
           )}
 
           {bug && <BugContextPanel bug={bug} admin={admin} t={t} />}
+          {refund && (
+            <RefundContextPanel refund={refund} admin={admin} t={t} />
+          )}
         </Card>
 
         <Card title={t('消息')}>
@@ -342,6 +349,87 @@ function AdminControls({ data, onUpdate, categoryOptions, t }) {
           }))}
         />
       </Space>
+    </div>
+  );
+}
+
+/**
+ * 退款工单的结构化补充信息：方式 / 原因 / （平台充值时）订单列表。
+ * 管理员侧附"打开订单"按钮，方便跳到充值列表查 trade_no。
+ */
+function RefundContextPanel({ refund, admin, t }) {
+  const [statusState] = useContext(StatusContext);
+  const currencySymbol =
+    statusState?.status?.stripe_currency_symbol || '$';
+
+  const rows = [
+    { key: t('退款方式'), value: tRefundMethod(t, refund.method) },
+    { key: t('退款原因'), value: tRefundReason(t, refund.reason) },
+  ];
+  if (refund.reason === 'other' && refund.reason_other) {
+    rows.push({
+      key: t('补充说明'),
+      value: (
+        <pre className='m-0 whitespace-pre-wrap text-xs'>
+          {refund.reason_other}
+        </pre>
+      ),
+    });
+  }
+
+  const topups = Array.isArray(refund.topups) ? refund.topups : [];
+  const openTopupAdmin = (tradeNo) => {
+    const params = new URLSearchParams();
+    if (tradeNo) params.set('keyword', tradeNo);
+    window.open(`/console/topup?${params.toString()}`, '_blank');
+  };
+
+  return (
+    <div className='mt-6 pt-5 border-t border-[var(--semi-color-border)]'>
+      <Title heading={6} className='!mb-3'>
+        {t('退款信息')}
+      </Title>
+      <Descriptions data={rows} />
+      {refund.method === 'platform' && topups.length > 0 && (
+        <div className='mt-3'>
+          <div className='text-sm text-[var(--semi-color-text-2)] mb-2'>
+            {t('涉及订单')}（{topups.length}）
+          </div>
+          <div className='flex flex-col gap-2'>
+            {topups.map((tp) => (
+              <div
+                key={tp.trade_no}
+                className='flex flex-wrap items-center gap-3 p-2 rounded bg-[var(--semi-color-fill-0)]'
+              >
+                <Text copyable className='font-mono text-xs'>
+                  {tp.trade_no}
+                </Text>
+                <Tag color='green' size='small'>
+                  {currencySymbol}
+                  {Number(tp.money || 0).toFixed(2)}
+                </Tag>
+                {tp.payment_method && (
+                  <Tag size='small'>{tp.payment_method}</Tag>
+                )}
+                {tp.completed_at > 0 && (
+                  <Text type='tertiary' size='small'>
+                    {fmtTime(tp.completed_at)}
+                  </Text>
+                )}
+                {admin && (
+                  <Button
+                    size='small'
+                    type='tertiary'
+                    onClick={() => openTopupAdmin(tp.trade_no)}
+                  >
+                    {t('查看订单')}
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

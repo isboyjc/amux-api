@@ -4,7 +4,7 @@ Copyright (C) 2025 QuantumNous
 Licensed under AGPL-3.0. See repository LICENSE for details.
 */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -30,14 +30,20 @@ import CardTable from '../../components/common/ui/CardTable';
 import CompactModeToggle from '../../components/common/ui/CompactModeToggle';
 import {
   PRIORITY_COLOR,
+  REFUND_METHODS,
+  REFUND_REASONS,
   STATUS_COLOR,
+  buildCategoryOptions,
   fmtTime,
   tCategory,
   tDynamicStatusLabel,
   tPriorityLabel,
+  tRefundMethod,
+  tRefundReason,
   tStatusLabel,
   tType,
 } from './constants';
+import { StatusContext } from '../../context/Status';
 import { TicketAttachmentsUploader } from './TicketAttachments';
 
 const { Text } = Typography;
@@ -58,7 +64,15 @@ const Ticket = () => {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [filter, setFilter] = useState({ status: '', type: '', priority: '' });
+  const [filter, setFilter] = useState({
+    status: '',
+    type: '',
+    category: '',
+    priority: '',
+  });
+  // 筛选区当前选中的 type，用于联动 category 下拉。
+  // 只在筛选行内部使用，不进入实际请求；请求值仍走 filter.type。
+  const [filterType, setFilterType] = useState('');
   const [setting, setSetting] = useState(null);
   const [compactMode, setCompactMode] = useState(false);
   const [newModalOpen, setNewModalOpen] = useState(false);
@@ -71,6 +85,7 @@ const Ticket = () => {
       const params = { page: eff.page, page_size: eff.pageSize };
       if (eff.filter.status !== '') params.status = eff.filter.status;
       if (eff.filter.type) params.type = eff.filter.type;
+      if (eff.filter.category) params.category = eff.filter.category;
       if (eff.filter.priority !== '') params.priority = eff.filter.priority;
       const res = await API.get('/api/ticket', { params });
       const { success, data, message } = res.data;
@@ -108,6 +123,7 @@ const Ticket = () => {
     const next = {
       status: values.status === undefined || values.status === '' ? '' : Number(values.status),
       type: values.type || '',
+      category: values.category || '',
       priority:
         values.priority === undefined || values.priority === ''
           ? ''
@@ -120,9 +136,10 @@ const Ticket = () => {
 
   const onReset = () => {
     filterFormApi.current?.reset();
-    const next = { status: '', type: '', priority: '' };
+    const next = { status: '', type: '', category: '', priority: '' };
     setPage(1);
     setFilter(next);
+    setFilterType('');
     load({ page: 1, filter: next });
   };
 
@@ -314,7 +331,12 @@ const Ticket = () => {
               </Button>
             </div>
             <Form
-              initValues={{ status: '', type: '', priority: '' }}
+              initValues={{
+                status: '',
+                type: '',
+                category: '',
+                priority: '',
+              }}
               getFormApi={(api) => (filterFormApi.current = api)}
               onSubmit={onSearch}
               allowEmpty
@@ -336,10 +358,33 @@ const Ticket = () => {
                     pure
                     size='small'
                     style={{ width: '100%' }}
+                    onChange={(v) => {
+                      // 切换 type 时清空 category，避免出现「support 工单 +
+                      // feature 分类」这种不存在的组合。
+                      setFilterType(v || '');
+                      filterFormApi.current?.setValue('category', '');
+                    }}
                     optionList={[
                       { label: tType(t, 'support'), value: 'support' },
                       { label: tType(t, 'feedback'), value: 'feedback' },
                     ]}
+                  />
+                </div>
+                <div className='w-full md:w-40'>
+                  <Form.Select
+                    // 同一 type 内变更分类时无需重挂载；
+                    // type 切换会因为 optionList 引用变化触发选项刷新。
+                    field='category'
+                    placeholder={t('分类')}
+                    showClear
+                    pure
+                    size='small'
+                    style={{ width: '100%' }}
+                    optionList={buildCategoryOptions(
+                      t,
+                      filterType,
+                      setting?.categories,
+                    )}
                   />
                 </div>
                 <div className='w-full md:w-36'>
@@ -473,6 +518,20 @@ function NewTicketModal({ setting, onClose, onCreated }) {
   const [rawLogCount, setRawLogCount] = useState(null);
   const [attachments, setAttachments] = useState([]);
 
+  // 退款工单相关状态。
+  //   refundMethod: platform / offline，影响订单下拉是否显示。
+  //   refundReason: 控制 "其他原因" 文本框的显隐。
+  //   topupOptions: 异步拉到的可退款订单（status=success），仅在用户首次切到
+  //     refund 分类时拉一次，避免每次切换都打接口。
+  const [statusState] = useContext(StatusContext);
+  const currencySymbol =
+    statusState?.status?.stripe_currency_symbol || '$';
+  const [refundMethod, setRefundMethod] = useState('platform');
+  const [refundReason, setRefundReason] = useState('wrong_amount');
+  const [topupOptions, setTopupOptions] = useState([]);
+  const [loadingTopups, setLoadingTopups] = useState(false);
+  const [topupsLoadedOnce, setTopupsLoadedOnce] = useState(false);
+
   const categoryOptions = useMemo(() => {
     if (!setting?.categories) return [];
     return (setting.categories[type] || []).map((c) => ({
@@ -481,11 +540,14 @@ function NewTicketModal({ setting, onClose, onCreated }) {
     }));
   }, [type, setting, t]);
 
+  // 退款工单走独立分支：不再显示 Request ID 字段，避免和 bug_context 混用。
+  const showRefund = category === 'refund';
   // 哪些分类需要带 Request ID 字段。计费/额度也常常关联具体请求，所以也加上。
   const showBugCtx =
-    category === 'model_invocation' ||
-    category === 'channel_issue' ||
-    category === 'billing';
+    !showRefund &&
+    (category === 'model_invocation' ||
+      category === 'channel_issue' ||
+      category === 'billing');
 
   // 拉用户最近 100 条日志做 Request ID 下拉。沿用 UsageLogs hook 的请求格式
   // （p / page_size / 后端只认 p 而不是 page），保持一致。过滤掉没有 request_id
@@ -545,6 +607,42 @@ function NewTicketModal({ setting, onClose, onCreated }) {
     // eslint-disable-next-line
   }, []);
 
+  // 拉最近 100 笔成功充值订单做退款下拉。后端 30 天窗口已闸住返回量。
+  // 懒加载：第一次切到 refund 分类才请求；后续切换不重复打。
+  const fetchRecentTopups = async () => {
+    setLoadingTopups(true);
+    try {
+      const res = await API.get('/api/user/topup/self', {
+        params: { p: 1, page_size: 100, status: 'success' },
+      });
+      if (!res.data?.success) {
+        // eslint-disable-next-line no-console
+        console.warn('[ticket] topup fetch failed:', res.data);
+        setTopupOptions([]);
+        return;
+      }
+      const payload = res.data.data;
+      const raw = Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload)
+          ? payload
+          : [];
+      setTopupOptions(
+        raw.map((tp) => buildTopupOption(tp, currencySymbol, t)),
+      );
+    } finally {
+      setLoadingTopups(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showRefund && !topupsLoadedOnce) {
+      setTopupsLoadedOnce(true);
+      fetchRecentTopups();
+    }
+    // eslint-disable-next-line
+  }, [showRefund]);
+
   const submit = async () => {
     if (!formApi.current) return;
     try {
@@ -562,6 +660,21 @@ function NewTicketModal({ setting, onClose, onCreated }) {
         if (requestId) {
           payload.bug_context = { request_id: requestId };
         }
+      }
+      if (showRefund) {
+        // 表单校验已保证：reason 必选、其他原因必填、platform 必选至少一笔。
+        const refundCtx = {
+          method: refundMethod,
+          reason: refundReason,
+        };
+        if (refundReason === 'other') {
+          refundCtx.reason_other = (values._refund_reason_other || '').trim();
+        }
+        if (refundMethod === 'platform') {
+          const tradeNos = values._refund_topups || [];
+          refundCtx.topups = tradeNos.map((tn) => ({ trade_no: tn }));
+        }
+        payload.refund_context = refundCtx;
       }
       if (attachments.length > 0) {
         payload.attachments = attachments;
@@ -724,6 +837,110 @@ function NewTicketModal({ setting, onClose, onCreated }) {
             </div>
           </>
         )}
+
+        {showRefund && (
+          <div className='mt-3 p-3 rounded-md bg-[var(--semi-color-fill-0)]'>
+            <div className='mb-2 text-sm text-[var(--semi-color-text-2)]'>
+              {t('退款信息')}
+            </div>
+            {/*
+              退款方式 / 原因走 Semi Form 字段，复用框架的 reset 和校验。
+              方式切换时清空已选订单，避免离线模式残留 platform 的订单引用。
+            */}
+            <Form.RadioGroup
+              field='_refund_method'
+              label={t('退款方式')}
+              initValue={refundMethod}
+              onChange={(e) => {
+                const v = e?.target?.value ?? e;
+                setRefundMethod(v);
+                if (v === 'offline') {
+                  formApi.current?.setValue('_refund_topups', []);
+                }
+              }}
+              rules={[
+                { required: true, message: t('请选择退款方式') },
+              ]}
+            >
+              {REFUND_METHODS.map((m) => (
+                <Form.Radio key={m} value={m}>
+                  {tRefundMethod(t, m)}
+                </Form.Radio>
+              ))}
+            </Form.RadioGroup>
+
+            {refundMethod === 'platform' && (
+              <Form.Select
+                key={`topup-${topupOptions.length}`}
+                field='_refund_topups'
+                label={t('退款订单')}
+                placeholder={t('选择需要退款的订单（可多选）')}
+                multiple
+                showClear
+                maxTagCount={3}
+                loading={loadingTopups}
+                optionList={topupOptions}
+                filter={(input, option) =>
+                  !input ||
+                  (option?.searchText || option?.value || '')
+                    .toLowerCase()
+                    .includes(input.toLowerCase())
+                }
+                // 多选模式 Semi 要求返回 { isRenderInTag, content } 对象；
+                // 返回裸字符串时输入框里不会显示任何 chip。
+                renderSelectedItem={(option) => ({
+                  isRenderInTag: true,
+                  content: option?.tradeNo || option?.value || '',
+                })}
+                emptyContent={
+                  loadingTopups
+                    ? t('加载中…')
+                    : t('近 30 天内暂无可退款的成功订单')
+                }
+                rules={[
+                  {
+                    required: true,
+                    type: 'array',
+                    min: 1,
+                    message: t('请至少选择一笔订单'),
+                  },
+                  {
+                    type: 'array',
+                    max: 10,
+                    message: t('一次最多选择 10 笔订单'),
+                  },
+                ]}
+                style={{ width: '100%' }}
+              />
+            )}
+
+            <Form.Select
+              field='_refund_reason'
+              label={t('退款原因')}
+              initValue={refundReason}
+              onChange={setRefundReason}
+              rules={[{ required: true, message: t('请选择退款原因') }]}
+              optionList={REFUND_REASONS.map((r) => ({
+                label: tRefundReason(t, r),
+                value: r,
+              }))}
+              style={{ width: '100%' }}
+            />
+
+            {refundReason === 'other' && (
+              <Form.TextArea
+                field='_refund_reason_other'
+                label={t('补充说明')}
+                placeholder={t('请描述具体原因')}
+                rows={3}
+                maxLength={512}
+                rules={[
+                  { required: true, message: t('请填写补充说明') },
+                ]}
+              />
+            )}
+          </div>
+        )}
       </Form>
     </Modal>
   );
@@ -738,6 +955,42 @@ function NewTicketModal({ setting, onClose, onCreated }) {
  * searchText 是可被自定义 filter 函数匹配的纯文本，使下拉支持
  *   按 id / group / model / "success" / "error" 关键字搜索。
  */
+/**
+ * 把一条充值订单组装成 Semi Select 选项。
+ *   value: trade_no（提交时取这个字符串）
+ *   label: 双行 —— 订单号 + 金额 / 时间 / 支付方式
+ *   searchText: 用于自定义过滤（用户可能按金额或时间搜）
+ */
+function buildTopupOption(tp, currencySymbol, t) {
+  const tradeNo = String(tp.trade_no || '');
+  const money = Number(tp.money || 0);
+  const completed = tp.complete_time
+    ? fmtTime(tp.complete_time)
+    : fmtTime(tp.create_time);
+  const pay = tp.payment_method || '—';
+  return {
+    value: tradeNo,
+    tradeNo,
+    searchText: [tradeNo, pay, String(money), completed]
+      .join(' ')
+      .toLowerCase(),
+    label: (
+      <div className='flex flex-col py-1'>
+        <div className='flex items-center gap-2'>
+          <span className='font-mono text-xs truncate'>{tradeNo}</span>
+          <span className='inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'>
+            {currencySymbol}
+            {money.toFixed(2)}
+          </span>
+        </div>
+        <div className='mt-0.5 text-[11px] text-[var(--semi-color-text-2)]'>
+          {t('完成时间')}: {completed} · {pay}
+        </div>
+      </div>
+    ),
+  };
+}
+
 function buildLogOption(l) {
   const id = String(l.request_id);
   const model = l.model_name || '—';

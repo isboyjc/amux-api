@@ -31,6 +31,7 @@ import CompactModeToggle from '../../../components/common/ui/CompactModeToggle';
 import {
   PRIORITY_COLOR,
   STATUS_COLOR,
+  buildCategoryOptions,
   fmtTime,
   tCategory,
   tDynamicStatusLabel,
@@ -59,10 +60,13 @@ const TicketAdmin = () => {
   const [filter, setFilter] = useState({
     status: '',
     type: '',
+    category: '',
     priority: '',
     keyword: '',
     user_id: '',
   });
+  // 筛选区当前选中的 type，仅用于联动 category 下拉选项。
+  const [filterType, setFilterType] = useState('');
   const [stats, setStats] = useState(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [compactMode, setCompactMode] = useState(false);
@@ -119,6 +123,7 @@ const TicketAdmin = () => {
           ? ''
           : Number(values.status),
       type: values.type || '',
+      category: values.category || '',
       priority:
         values.priority === undefined || values.priority === ''
           ? ''
@@ -136,12 +141,14 @@ const TicketAdmin = () => {
     const next = {
       status: '',
       type: '',
+      category: '',
       priority: '',
       keyword: '',
       user_id: '',
     };
     setPage(1);
     setFilter(next);
+    setFilterType('');
     load({ page: 1, filter: next });
   };
 
@@ -309,6 +316,7 @@ const TicketAdmin = () => {
     <Form
       initValues={{
         type: '',
+        category: '',
         status: '',
         priority: '',
         user_id: '',
@@ -339,10 +347,27 @@ const TicketAdmin = () => {
             pure
             size='small'
             style={{ width: '100%' }}
+            onChange={(v) => {
+              // 切换 type 时清空 category，避免出现「support 工单 +
+              // feature 分类」这种不存在的组合。
+              setFilterType(v || '');
+              filterFormApi.current?.setValue('category', '');
+            }}
             optionList={[
               { label: tType(t, 'support'), value: 'support' },
               { label: tType(t, 'feedback'), value: 'feedback' },
             ]}
+          />
+        </div>
+        <div className='w-full md:w-40'>
+          <Form.Select
+            field='category'
+            placeholder={t('分类')}
+            showClear
+            pure
+            size='small'
+            style={{ width: '100%' }}
+            optionList={buildCategoryOptions(t, filterType)}
           />
         </div>
         <div className='w-full md:w-36'>

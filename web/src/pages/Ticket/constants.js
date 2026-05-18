@@ -58,6 +58,8 @@ export function tCategory(t, category) {
       return t('账号/鉴权');
     case 'abuse':
       return t('滥用举报');
+    case 'refund':
+      return t('退款申请');
     case 'feature':
       return t('功能建议');
     case 'ux':
@@ -135,4 +137,82 @@ export function tPriorityLabel(t, p) {
 export function fmtTime(ts) {
   if (!ts) return '-';
   return new Date(ts * 1000).toLocaleString();
+}
+
+// 退款方式 / 退款原因 label。后端枚举值见 service/ticket/refund.go。
+// 同样为了 i18next-cli 静态扫描器能采到 key，文案写成 t('字面量')。
+export function tRefundMethod(t, m) {
+  switch (m) {
+    case 'platform':
+      return t('平台充值');
+    case 'offline':
+      return t('线下充值');
+    default:
+      return m;
+  }
+}
+
+export function tRefundReason(t, r) {
+  switch (r) {
+    case 'wrong_amount':
+      return t('充错金额');
+    case 'duplicate':
+      return t('重复充值');
+    case 'unused':
+      return t('不再使用');
+    case 'dissatisfied':
+      return t('服务不满意');
+    case 'other':
+      return t('其他');
+    default:
+      return r;
+  }
+}
+
+// 提供给建单页生成下拉项。集中在 constants 里避免 index.jsx 与 Detail.jsx 双份。
+export const REFUND_METHODS = ['platform', 'offline'];
+export const REFUND_REASONS = [
+  'wrong_amount',
+  'duplicate',
+  'unused',
+  'dissatisfied',
+  'other',
+];
+
+// 工单分类白名单。与后端 model/ticket.go 的 ticketSupportCategories /
+// ticketFeedbackCategories 完全对齐；列表筛选 / 建单页分类下拉共用。
+// 新增分类时同步后端白名单 + tCategory 翻译。
+export const TICKET_CATEGORIES_BY_TYPE = {
+  support: [
+    'model_invocation',
+    'channel_issue',
+    'billing',
+    'account',
+    'abuse',
+    'refund',
+    'other',
+  ],
+  feedback: ['feature', 'ux', 'docs', 'other'],
+};
+
+/**
+ * 构造工单分类下拉项。type 为空时返回两类合并去重后的全集。
+ * 用于列表页筛选区——筛选不一定先选 type。
+ *   t：i18n hook
+ *   type：'' | 'support' | 'feedback'
+ *   overrides：可选 map（用户侧可传 setting.categories 覆盖默认列表）
+ */
+export function buildCategoryOptions(t, type, overrides) {
+  const src = overrides || TICKET_CATEGORIES_BY_TYPE;
+  let cats = [];
+  if (type === 'support' || type === 'feedback') {
+    cats = src[type] || [];
+  } else {
+    const seen = new Set();
+    Object.values(src).forEach((arr) => {
+      (arr || []).forEach((c) => seen.add(c));
+    });
+    cats = [...seen];
+  }
+  return cats.map((c) => ({ label: tCategory(t, c), value: c }));
 }

@@ -309,3 +309,8 @@ ticket.reopen_too_late: "This ticket was closed too long ago, please create a ne
 ticket.created: "Ticket created"
 ticket.replied: "Reply sent"
 ticket.invalid_id: "Invalid ticket ID"
+ticket.refund_context_invalid: "Refund information is missing or invalid"
+ticket.refund_other_reason_required: "When the reason is 'other', please provide a description (up to 512 characters)"
+ticket.refund_order_required: "Please pick at least one order to request a platform-topup refund"
+ticket.refund_order_too_many: "At most 10 orders per refund request"
+ticket.refund_order_not_found: "One or more orders cannot be verified — please re-check the order number, status, and ownership"

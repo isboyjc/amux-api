@@ -32,12 +32,36 @@ type TicketBugContext struct {
 	LogId int `json:"log_id,omitempty"`
 }
 
+// TicketRefundTopupRef 退款工单引用的一笔充值订单。前端只需要给出
+// trade_no（充值订单号），其它字段由后端 enrichment 从 top_ups 表回填，
+// 用户传入的值不被信任（防伪造金额 / 时间）。
+type TicketRefundTopupRef struct {
+	TradeNo       string  `json:"trade_no"`
+	Money         float64 `json:"money,omitempty"`
+	Amount        int64   `json:"amount,omitempty"`
+	PaymentMethod string  `json:"payment_method,omitempty"`
+	CompletedAt   int64   `json:"completed_at,omitempty"`
+}
+
+// TicketRefundContext 退款工单的结构化补充字段。
+//   - Method=platform：从平台在线充值的订单，TopUps 必填、所有 trade_no 必须是
+//     本人且 status=success；
+//   - Method=offline：线下充值（运营手工对账），不附订单；
+//   - Reason=other 时必须填 ReasonOther（≤512 字）。
+type TicketRefundContext struct {
+	Method      string                 `json:"method"`
+	Reason      string                 `json:"reason"`
+	ReasonOther string                 `json:"reason_other,omitempty"`
+	TopUps      []TicketRefundTopupRef `json:"topups,omitempty"`
+}
+
 // TicketMetadata 是 tickets.metadata JSON 列的强类型表示。新增字段按需补充，
 // 不要把它做成 map[string]any，避免前后端契约漂移。
 type TicketMetadata struct {
-	BugContext *TicketBugContext `json:"bug_context,omitempty"`
-	ClientUA   string            `json:"client_ua,omitempty"`
-	ClientIP   string            `json:"client_ip,omitempty"`
+	BugContext    *TicketBugContext    `json:"bug_context,omitempty"`
+	RefundContext *TicketRefundContext `json:"refund_context,omitempty"`
+	ClientUA      string               `json:"client_ua,omitempty"`
+	ClientIP      string               `json:"client_ip,omitempty"`
 }
 
 // ----- 请求 DTO -----
@@ -51,8 +75,9 @@ type CreateTicketReq struct {
 	// Priority 是用户建议优先级；最终是否生效由管理员判断。可空，省略时取默认 1（普通）。
 	// 用指针：Rule 6 — 区分"没传"和"显式传 0"。
 	Priority    *int               `json:"priority,omitempty"`
-	Attachments []TicketAttachment `json:"attachments,omitempty"`
-	BugContext  *TicketBugContext  `json:"bug_context,omitempty"`
+	Attachments   []TicketAttachment   `json:"attachments,omitempty"`
+	BugContext    *TicketBugContext    `json:"bug_context,omitempty"`
+	RefundContext *TicketRefundContext `json:"refund_context,omitempty"`
 }
 
 // ReplyTicketReq 工单追加回复入参。管理员侧也复用，IsInternal 仅管理员可设

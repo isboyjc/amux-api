@@ -181,7 +181,10 @@ func topUpQueryCutoff() int64 {
 	return common.GetTimestamp() - topUpQueryWindowSeconds
 }
 
-func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
+// GetUserTopUps 列出某用户的充值记录，按 id desc 排序。
+// status 非空时按订单状态精确过滤（如 "success"），空串表示不过滤。
+// 调用方负责把状态字符串收敛到 common.TopUpStatus* 白名单内。
+func GetUserTopUps(userId int, status string, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -195,16 +198,19 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 
 	cutoff := topUpQueryCutoff()
 
+	q := tx.Model(&TopUp{}).Where("user_id = ? AND create_time >= ?", userId, cutoff)
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
+
 	// Get total count within transaction
-	err = tx.Model(&TopUp{}).Where("user_id = ? AND create_time >= ?", userId, cutoff).Count(&total).Error
-	if err != nil {
+	if err = q.Count(&total).Error; err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
 	// Get paginated topups within same transaction
-	err = tx.Where("user_id = ? AND create_time >= ?", userId, cutoff).Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error
-	if err != nil {
+	if err = q.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
@@ -268,8 +274,8 @@ func GetAllTopUps(status string, pageInfo *common.PageInfo) (topups []*TopupList
 // 防止对超大表执行无界 COUNT 触发 DoS。
 const searchTopUpCountHardLimit = 10000
 
-// SearchUserTopUps 按订单号搜索某用户的充值记录
-func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
+// SearchUserTopUps 按订单号搜索某用户的充值记录。status 同 GetUserTopUps。
+func SearchUserTopUps(userId int, keyword string, status string, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return nil, 0, tx.Error
@@ -288,6 +294,9 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 			return nil, 0, perr
 		}
 		query = query.Where("trade_no LIKE ? ESCAPE '!'", pattern)
+	}
+	if status != "" {
+		query = query.Where("status = ?", status)
 	}
 
 	if err = query.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {

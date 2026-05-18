@@ -418,6 +418,14 @@ func GetUserTopUps(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
 	keyword := c.Query("keyword")
+	// status 可选过滤，白名单收敛；其它取值（含 "all" / 空）一律视为不过滤。
+	// 退款工单建单页用 status=success 拉「可退款订单」下拉。
+	status := ""
+	switch c.Query("status") {
+	case common.TopUpStatusSuccess, common.TopUpStatusPending,
+		common.TopUpStatusFailed, common.TopUpStatusExpired:
+		status = c.Query("status")
+	}
 
 	var (
 		topups []*model.TopUp
@@ -425,9 +433,9 @@ func GetUserTopUps(c *gin.Context) {
 		err    error
 	)
 	if keyword != "" {
-		topups, total, err = model.SearchUserTopUps(userId, keyword, pageInfo)
+		topups, total, err = model.SearchUserTopUps(userId, keyword, status, pageInfo)
 	} else {
-		topups, total, err = model.GetUserTopUps(userId, pageInfo)
+		topups, total, err = model.GetUserTopUps(userId, status, pageInfo)
 	}
 	if err != nil {
 		common.ApiError(c, err)

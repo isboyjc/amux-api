@@ -27,7 +27,7 @@ func GetTicketSettingForUser(c *gin.Context) {
 		"max_attachments_per_message": st.MaxAttachmentsPerMessage,
 		"require_verified_email":      st.RequireVerifiedEmail,
 		"categories": gin.H{
-			"support":  []string{"model_invocation", "channel_issue", "billing", "account", "abuse", "other"},
+			"support":  []string{"model_invocation", "channel_issue", "billing", "account", "abuse", "refund", "other"},
 			"feedback": []string{"feature", "ux", "docs", "other"},
 		},
 	})
@@ -235,6 +235,16 @@ func ticketErrorToI18nKey(err error) string {
 		return "ticket.metadata_too_large"
 	case errors.Is(err, ticket.ErrReopenTooLate):
 		return "ticket.reopen_too_late"
+	case errors.Is(err, ticket.ErrRefundContextInvalid):
+		return "ticket.refund_context_invalid"
+	case errors.Is(err, ticket.ErrRefundOtherReasonRequired):
+		return "ticket.refund_other_reason_required"
+	case errors.Is(err, ticket.ErrRefundOrderRequired):
+		return "ticket.refund_order_required"
+	case errors.Is(err, ticket.ErrRefundOrderTooMany):
+		return "ticket.refund_order_too_many"
+	case errors.Is(err, ticket.ErrRefundOrderNotFound):
+		return "ticket.refund_order_not_found"
 	}
 	return ""
 }
