@@ -26,26 +26,33 @@ import (
 // BackfillOpts 控制并发与批次大小。
 type BackfillOpts struct {
 	// Concurrency 同时调 Provider.Sync 的 goroutine 数。
-	// 默认 2 —— 配合 Provider.Sync 每次 3-4 个 HTTP 调用，已能稳定塞满 Resend 免费档（2 req/s）
-	// 不会触发限流。如果是付费档可以调到 4-6。
+	//
+	// 默认 1 —— Provider 内部的 resend client 已用令牌桶限流到 4 req/s，并发再高
+	// 也只是排队等令牌，没意义。保留参数是给"用户付费档限流更高 + 多 audience 切片"
+	// 等未来场景留口子。
+	//
+	// SyncTimeout 必须够长（>= 10s），让限流排队 + 429 重试有时间完成；
+	// 否则会出现"令牌等到了，请求被 ctx 取消"的伪失败。
 	Concurrency int
 
 	// BatchSize 每次从 DB 拉取的用户 id 数。默认 200。
 	BatchSize int
 
-	// SyncTimeout 单次 Provider.Sync 的上下文超时。默认 30s。
+	// SyncTimeout 单次 Provider.Sync 的上下文超时。默认 120s。
+	// 每个 Sync 含 3-4 次 HTTP 调用，加上限流排队 + 可能的 429 重试链
+	// （单 do() 最坏 ~20s × 4 = 80s）；120s 留 33% 余量给极端抖动。
 	SyncTimeout time.Duration
 }
 
 func (o *BackfillOpts) setDefaults() {
 	if o.Concurrency <= 0 {
-		o.Concurrency = 2
+		o.Concurrency = 1
 	}
 	if o.BatchSize <= 0 {
 		o.BatchSize = 200
 	}
 	if o.SyncTimeout <= 0 {
-		o.SyncTimeout = 30 * time.Second
+		o.SyncTimeout = 120 * time.Second
 	}
 }
 

@@ -63,6 +63,8 @@ require (
 
 require github.com/resend/resend-go/v3 v3.6.0
 
+require golang.org/x/time v0.15.0
+
 require (
 	github.com/DmitriyVTitov/size v1.5.0 // indirect
 	github.com/anknown/darts v0.0.0-20151216065714-83ff685239e6 // indirect
