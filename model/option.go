@@ -173,6 +173,12 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	common.OptionMap["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
+	common.OptionMap["MarketingEnabled"] = strconv.FormatBool(operation_setting.MarketingEnabled)
+	common.OptionMap["MarketingProvider"] = operation_setting.MarketingProvider
+	common.OptionMap["ResendAPIKey"] = operation_setting.ResendAPIKey
+	common.OptionMap["ResendDefaultSegmentID"] = operation_setting.ResendDefaultSegmentID
+	common.OptionMap["ResendVIPSegmentID"] = operation_setting.ResendVIPSegmentID
+	common.OptionMap["ResendDefaultTopicIDs"] = operation_setting.ResendDefaultTopicIDs
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
 	// 自动添加所有注册的模型配置
@@ -328,6 +334,11 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.DefaultUseAutoGroup = boolValue
 		case "ExposeRatioEnabled":
 			ratio_setting.SetExposeRatioEnabled(boolValue)
+		case "MarketingEnabled":
+			if operation_setting.MarketingEnabled != boolValue {
+				operation_setting.MarketingEnabled = boolValue
+				operation_setting.TriggerMarketingReload()
+			}
 		}
 	}
 	switch key {
@@ -368,6 +379,31 @@ func updateOptionMap(key string, value string) (err error) {
 		operation_setting.EpayId = value
 	case "EpayKey":
 		operation_setting.EpayKey = value
+	case "MarketingProvider":
+		if operation_setting.MarketingProvider != value {
+			operation_setting.MarketingProvider = value
+			operation_setting.TriggerMarketingReload()
+		}
+	case "ResendAPIKey":
+		if operation_setting.ResendAPIKey != value {
+			operation_setting.ResendAPIKey = value
+			operation_setting.TriggerMarketingReload()
+		}
+	case "ResendDefaultSegmentID":
+		if operation_setting.ResendDefaultSegmentID != value {
+			operation_setting.ResendDefaultSegmentID = value
+			operation_setting.TriggerMarketingReload()
+		}
+	case "ResendVIPSegmentID":
+		if operation_setting.ResendVIPSegmentID != value {
+			operation_setting.ResendVIPSegmentID = value
+			operation_setting.TriggerMarketingReload()
+		}
+	case "ResendDefaultTopicIDs":
+		if operation_setting.ResendDefaultTopicIDs != value {
+			operation_setting.ResendDefaultTopicIDs = value
+			operation_setting.TriggerMarketingReload()
+		}
 	case "Price":
 		operation_setting.Price, _ = strconv.ParseFloat(value, 64)
 	case "USDExchangeRate":

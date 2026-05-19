@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/service/events"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/hot"
 	"gorm.io/gorm"
@@ -444,6 +445,14 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 		Update("group", prevGroup).Error; err != nil {
 		return "", err
 	}
+	events.PublishBestEffortInTx(tx, events.UserGroupChanged, sub.UserId, &events.UserGroupChangedPayload{
+		UserId:    sub.UserId,
+		Email:     fetchUserEmailTx(tx, sub.UserId),
+		FromGroup: currentGroup,
+		ToGroup:   prevGroup,
+		Trigger:   "subscription",
+		ChangedAt: common.GetTimestamp(),
+	})
 	return prevGroup, nil
 }
 
@@ -493,6 +502,14 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 				Update("group", upgradeGroup).Error; err != nil {
 				return nil, err
 			}
+			events.PublishBestEffortInTx(tx, events.UserGroupChanged, userId, &events.UserGroupChangedPayload{
+				UserId:    userId,
+				Email:     fetchUserEmailTx(tx, userId),
+				FromGroup: currentGroup,
+				ToGroup:   upgradeGroup,
+				Trigger:   "subscription",
+				ChangedAt: common.GetTimestamp(),
+			})
 		}
 	}
 	sub := &UserSubscription{
@@ -910,6 +927,14 @@ func ExpireDueSubscriptions(limit int) (int, error) {
 				Update("group", prevGroup).Error; err != nil {
 				return err
 			}
+			events.PublishBestEffortInTx(tx, events.UserGroupChanged, userId, &events.UserGroupChangedPayload{
+				UserId:    userId,
+				Email:     fetchUserEmailTx(tx, userId),
+				FromGroup: currentGroup,
+				ToGroup:   prevGroup,
+				Trigger:   "subscription",
+				ChangedAt: common.GetTimestamp(),
+			})
 			cacheGroup = prevGroup
 			return nil
 		})

@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service/events"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -102,6 +103,17 @@ func WeChatAuth(c *gin.Context) {
 					"message": err.Error(),
 				})
 				return
+			}
+			if err := events.PublishNoTx(events.UserRegistered, user.Id, &events.UserRegisteredPayload{
+				UserId:         user.Id,
+				Email:          user.Email,
+				Username:       user.Username,
+				DisplayName:    user.DisplayName,
+				Group:          "default",
+				RegisterSource: "wechat",
+				CreatedAt:      common.GetTimestamp(),
+			}); err != nil {
+				common.SysError(fmt.Sprintf("publish user.registered (wechat) failed: %v", err))
 			}
 		} else {
 			c.JSON(http.StatusOK, gin.H{

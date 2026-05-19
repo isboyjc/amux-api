@@ -22,6 +22,11 @@ var commonKeyCol string
 var commonTrueVal string
 var commonFalseVal string
 
+// InitCommonColumnsForTest 测试用：初始化跨库列名变量（commonGroupCol 等）。
+// 生产代码不需要——InitDB() 已经调过 initCol()。
+// 测试如果绕过 InitDB 直接用 SQLite，需要先调一次。
+func InitCommonColumnsForTest() { initCol() }
+
 var logKeyCol string
 var logGroupCol string
 

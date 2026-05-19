@@ -36,6 +36,7 @@ import {
   Activity,
   HardDrive,
   KeyRound,
+  Mail,
 } from 'lucide-react';
 
 import SystemSetting from '../../components/settings/SystemSetting';
@@ -53,6 +54,7 @@ import ModelDeploymentSetting from '../../components/settings/ModelDeploymentSet
 import PerformanceSetting from '../../components/settings/PerformanceSetting';
 import StorageSetting from '../../components/settings/StorageSetting';
 import OAuthClientsSetting from '../../components/settings/OAuthClientsSetting';
+import MarketingSetting from '../../components/settings/MarketingSetting';
 
 const Setting = () => {
   const { t } = useTranslation();
@@ -111,6 +113,16 @@ const Setting = () => {
       ),
       content: <PaymentSetting />,
       itemKey: 'payment',
+    });
+    panes.push({
+      tab: (
+        <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+          <Mail size={18} />
+          {t('邮件营销设置')}
+        </span>
+      ),
+      content: <MarketingSetting />,
+      itemKey: 'marketing',
     });
     panes.push({
       tab: (

@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/service/events"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -325,6 +327,27 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 
 		// Perform post-transaction tasks
 		user.FinalizeOAuthUserCreation(inviterId)
+	}
+
+	// 至此走到的是"新建 OAuth 用户"分支（已存在的用户在函数顶部就返回了）。
+	// user.Group 在 OAuth 流程里不会被显式赋值，InsertWithTx 后内存 struct 也不
+	// 回填 DB 默认值，因此这里做一个保护性兜底。
+	group := user.Group
+	if group == "" {
+		group = "default"
+	}
+	registerSource := strings.TrimSuffix(provider.GetProviderPrefix(), "_")
+	if err := events.PublishNoTx(events.UserRegistered, user.Id, &events.UserRegisteredPayload{
+		UserId:         user.Id,
+		Email:          user.Email,
+		Username:       user.Username,
+		DisplayName:    user.DisplayName,
+		Group:          group,
+		RegisterSource: registerSource,
+		InviterId:      inviterId,
+		CreatedAt:      common.GetTimestamp(),
+	}); err != nil {
+		common.SysError(fmt.Sprintf("publish user.registered (oauth) failed: %v", err))
 	}
 
 	return user, nil

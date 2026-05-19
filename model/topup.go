@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/service/events"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -50,6 +51,16 @@ const (
 )
 
 var ErrPaymentMethodMismatch = errors.New("payment method mismatch")
+
+// fetchUserEmailTx 在事务内取用户 email（事件 payload 用）。
+// 失败时返回空串，不阻塞主流程。
+func fetchUserEmailTx(tx *gorm.DB, userId int) string {
+	var u User
+	if err := tx.Select("email").Where("id = ?", userId).First(&u).Error; err != nil {
+		return ""
+	}
+	return u.Email
+}
 
 // derivePaymentProvider 根据 PaymentMethod 推断 PaymentProvider，
 // 用于历史订单（PaymentProvider 为空）的回退校验。
@@ -150,6 +161,16 @@ func Recharge(referenceId string, customerId string) (err error) {
 			return err
 		}
 
+		events.PublishBestEffortInTx(tx, events.BillingTopupSucceeded, topUp.UserId, &events.BillingTopupSucceededPayload{
+			UserId:           topUp.UserId,
+			Email:            fetchUserEmailTx(tx, topUp.UserId),
+			TopupId:          topUp.Id,
+			AmountQuota:      int(quota),
+			AmountMoneyCents: int64(topUp.Money * 100),
+			PaymentMethod:    PaymentProviderStripe,
+			TradeNo:          topUp.TradeNo,
+			CompletedAt:      topUp.CompleteTime,
+		})
 		return nil
 	})
 
@@ -425,6 +446,21 @@ func ManualCompleteTopUp(tradeNo string) error {
 
 		userId = topUp.UserId
 		payMoney = topUp.Money
+
+		paymentMethod := topUp.PaymentProvider
+		if paymentMethod == "" {
+			paymentMethod = derivePaymentProvider(topUp.PaymentMethod)
+		}
+		events.PublishBestEffortInTx(tx, events.BillingTopupSucceeded, topUp.UserId, &events.BillingTopupSucceededPayload{
+			UserId:           topUp.UserId,
+			Email:            fetchUserEmailTx(tx, topUp.UserId),
+			TopupId:          topUp.Id,
+			AmountQuota:      quotaToAdd,
+			AmountMoneyCents: int64(topUp.Money * 100),
+			PaymentMethod:    paymentMethod,
+			TradeNo:          topUp.TradeNo,
+			CompletedAt:      topUp.CompleteTime,
+		})
 		return nil
 	})
 
@@ -509,6 +545,16 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			return err
 		}
 
+		events.PublishBestEffortInTx(tx, events.BillingTopupSucceeded, topUp.UserId, &events.BillingTopupSucceededPayload{
+			UserId:           topUp.UserId,
+			Email:            fetchUserEmailTx(tx, topUp.UserId),
+			TopupId:          topUp.Id,
+			AmountQuota:      int(quota),
+			AmountMoneyCents: int64(topUp.Money * 100),
+			PaymentMethod:    PaymentProviderCreem,
+			TradeNo:          topUp.TradeNo,
+			CompletedAt:      topUp.CompleteTime,
+		})
 		return nil
 	})
 
@@ -580,6 +626,20 @@ func RechargeWaffo(tradeNo string) (err error) {
 			return err
 		}
 
+		paymentMethod := topUp.PaymentProvider
+		if paymentMethod == "" {
+			paymentMethod = derivePaymentProvider(topUp.PaymentMethod)
+		}
+		events.PublishBestEffortInTx(tx, events.BillingTopupSucceeded, topUp.UserId, &events.BillingTopupSucceededPayload{
+			UserId:           topUp.UserId,
+			Email:            fetchUserEmailTx(tx, topUp.UserId),
+			TopupId:          topUp.Id,
+			AmountQuota:      quotaToAdd,
+			AmountMoneyCents: int64(topUp.Money * 100),
+			PaymentMethod:    paymentMethod,
+			TradeNo:          topUp.TradeNo,
+			CompletedAt:      topUp.CompleteTime,
+		})
 		return nil
 	})
 
@@ -648,6 +708,7 @@ func CheckAndUpgradeUserGroup(userId int) error {
 		// 2. 累计充值金额达到或超过阈值
 		if user.Group == rule.FromGroup && totalAmount >= rule.Threshold {
 			// 执行升级
+			fromGroup := user.Group
 			user.Group = rule.ToGroup
 			err = user.Update(false)
 			if err != nil {
@@ -657,6 +718,17 @@ func CheckAndUpgradeUserGroup(userId int) error {
 			// 记录升级日志
 			RecordLog(userId, LogTypeSystem, fmt.Sprintf("充值累计达到 %.2f 元，自动升级到 %s 分组", totalAmount, rule.ToGroup))
 			common.SysLog(fmt.Sprintf("用户 %d (%s) 充值累计 %.2f 元，自动从 %s 升级到 %s", userId, user.Username, totalAmount, rule.FromGroup, rule.ToGroup))
+
+			if pubErr := events.PublishNoTx(events.UserGroupChanged, userId, &events.UserGroupChangedPayload{
+				UserId:    userId,
+				Email:     user.Email,
+				FromGroup: fromGroup,
+				ToGroup:   rule.ToGroup,
+				Trigger:   "topup",
+				ChangedAt: common.GetTimestamp(),
+			}); pubErr != nil {
+				common.SysError(fmt.Sprintf("publish user.group.changed failed: %v", pubErr))
+			}
 
 			// 升级后继续检查是否还能继续升级（支持 default -> vip -> svip 这样的链式升级）
 			return CheckAndUpgradeUserGroup(userId)

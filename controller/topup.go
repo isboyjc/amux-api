@@ -12,11 +12,13 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/events"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/Calcium-Ion/go-epay/epay"
+	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
 	"github.com/shopspring/decimal"
@@ -379,9 +381,38 @@ func EpayNotify(c *gin.Context) {
 			}
 			log.Printf("易支付回调更新用户成功 %v", topUp)
 			model.RecordLog(topUp.UserId, model.LogTypeTopup, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money))
-			
+
 			// 处理邀请返现（基于实付金额）
 			model.ProcessAffiliateRebate(topUp.UserId, topUp.Money)
+
+			// 发布"付费成功"事件（best-effort：失败不影响回调返回，已经在事务外）
+			email := ""
+			if u, err := model.GetUserById(topUp.UserId, false); err == nil && u != nil {
+				email = u.Email
+			}
+			paymentMethod := topUp.PaymentProvider
+			if paymentMethod == "" {
+				paymentMethod = model.PaymentProviderEpay
+			}
+			if pubErr := events.PublishNoTx(events.BillingTopupSucceeded, topUp.UserId, &events.BillingTopupSucceededPayload{
+				UserId:           topUp.UserId,
+				Email:            email,
+				TopupId:          topUp.Id,
+				AmountQuota:      quotaToAdd,
+				AmountMoneyCents: int64(topUp.Money * 100),
+				PaymentMethod:    paymentMethod,
+				TradeNo:          topUp.TradeNo,
+				CompletedAt:      common.GetTimestamp(),
+			}); pubErr != nil {
+				common.SysError(fmt.Sprintf("publish billing.topup.succeeded (epay notify) failed: %v", pubErr))
+			}
+
+			// 检查并自动升级用户分组（与 model.Recharge 等其他充值路径保持一致）
+			gopool.Go(func() {
+				if err := model.CheckAndUpgradeUserGroup(topUp.UserId); err != nil {
+					common.SysLog(fmt.Sprintf("自动升级用户分组失败 userId=%d: %v", topUp.UserId, err))
+				}
+			})
 		}
 	} else {
 		log.Printf("易支付异常回调: %v", verifyInfo)

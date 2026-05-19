@@ -100,6 +100,8 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/models", controller.GetUserModels)
 				selfRoute.PUT("/self", controller.UpdateSelf)
 				selfRoute.DELETE("/self", controller.DeleteSelf)
+				selfRoute.GET("/self/marketing_subscriptions", controller.GetMyMarketingSubscriptions)
+				selfRoute.PUT("/self/marketing_subscriptions", controller.UpdateMyMarketingSubscriptions)
 				selfRoute.GET("/token", controller.GenerateAccessToken)
 				// 新版 PAT 自助管理（推荐路径，老客户端继续用 GET /token）
 				selfRoute.POST("/access_tokens", controller.CreateUserAccessToken)
@@ -233,6 +235,9 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
 			optionRoute.POST("/migrate_console_setting", controller.MigrateConsoleSetting) // 用于迁移检测的旧键，下个版本会删除
+			optionRoute.POST("/test_resend", controller.TestResendToken)
+			optionRoute.POST("/backfill_marketing", controller.BackfillMarketing)
+			optionRoute.GET("/backfill_marketing/status", controller.GetBackfillMarketingStatus)
 		}
 
 		// Custom OAuth provider management (root only)

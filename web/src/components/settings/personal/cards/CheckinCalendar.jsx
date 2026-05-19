@@ -289,50 +289,50 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
       {/* 可折叠内容 */}
       <Collapsible isOpen={isCollapsed === false} keepDOM>
         {/* 签到统计 */}
-        <div className='grid grid-cols-3 gap-3 mb-4 mt-4'>
-          <div className='text-center p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
-            <div className='text-xl font-bold text-green-600'>
+        <div className='grid grid-cols-3 gap-2 mb-3 mt-3'>
+          <div className='text-center py-1.5 px-2 bg-slate-50 dark:bg-slate-800 rounded-lg'>
+            <div className='text-base font-bold text-green-600'>
               {checkinData.stats?.total_checkins || 0}
             </div>
-            <div className='text-xs text-gray-500'>{t('累计签到')}</div>
+            <div className='text-[11px] text-gray-500'>{t('累计签到')}</div>
           </div>
-          <div className='text-center p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
-            <div className='text-xl font-bold text-orange-600'>
+          <div className='text-center py-1.5 px-2 bg-slate-50 dark:bg-slate-800 rounded-lg'>
+            <div className='text-base font-bold text-orange-600'>
               {renderQuota(monthlyQuota, 6)}
             </div>
-            <div className='text-xs text-gray-500'>{t('本月获得')}</div>
+            <div className='text-[11px] text-gray-500'>{t('本月获得')}</div>
           </div>
-          <div className='text-center p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
-            <div className='text-xl font-bold text-blue-600'>
+          <div className='text-center py-1.5 px-2 bg-slate-50 dark:bg-slate-800 rounded-lg'>
+            <div className='text-base font-bold text-blue-600'>
               {renderQuota(checkinData.stats?.total_quota || 0, 6)}
             </div>
-            <div className='text-xs text-gray-500'>{t('累计获得')}</div>
+            <div className='text-[11px] text-gray-500'>{t('累计获得')}</div>
           </div>
         </div>
 
-        {/* 签到日历 - 使用更紧凑的样式 */}
+        {/* 签到日历 - 紧凑样式 */}
         <Spin spinning={loading}>
           <div className='border rounded-lg overflow-hidden checkin-calendar'>
             <style>{`
             .checkin-calendar .semi-calendar {
-              font-size: 13px;
+              font-size: 12px;
             }
             .checkin-calendar .semi-calendar-month-header {
-              padding: 8px 12px;
+              padding: 6px 10px;
             }
             .checkin-calendar .semi-calendar-month-week-row {
-              height: 28px;
+              height: 24px;
             }
             .checkin-calendar .semi-calendar-month-week-row th {
-              font-size: 12px;
-              padding: 4px 0;
+              font-size: 11px;
+              padding: 2px 0;
             }
             .checkin-calendar .semi-calendar-month-grid-row {
               height: auto;
             }
             .checkin-calendar .semi-calendar-month-grid-row td {
-              height: 56px;
-              padding: 2px;
+              height: 42px;
+              padding: 1px;
             }
             .checkin-calendar .semi-calendar-month-grid-row-cell {
               position: relative;
@@ -340,10 +340,10 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
             }
             .checkin-calendar .semi-calendar-month-grid-row-cell-day {
               position: absolute;
-              top: 4px;
+              top: 2px;
               left: 50%;
               transform: translateX(-50%);
-              font-size: 12px;
+              font-size: 11px;
               z-index: 1;
             }
             .checkin-calendar .semi-calendar-month-same {
@@ -351,12 +351,14 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
             }
             .checkin-calendar .semi-calendar-month-today .semi-calendar-month-grid-row-cell-day {
               background: var(--semi-color-primary);
-              color: white;border-radius: 50%;
-              width: 20px;
-              height: 20px;
+              color: white;
+              border-radius: 50%;
+              width: 18px;
+              height: 18px;
               display: flex;
               align-items: center;
-              justify-content: center;}
+              justify-content: center;
+            }
           `}</style>
             <Calendar
               mode='month'
@@ -365,17 +367,6 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
             />
           </div>
         </Spin>
-
-        {/* 签到说明 */}
-        <div className='mt-3 p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
-          <Typography.Text type='tertiary' className='text-xs'>
-            <ul className='list-disc list-inside space-y-0.5'>
-              <li>{t('每日签到可获得随机额度奖励')}</li>
-              <li>{t('签到奖励将直接添加到您的账户余额')}</li>
-              <li>{t('每日仅可签到一次，请勿重复签到')}</li>
-            </ul>
-          </Typography.Text>
-        </div>
       </Collapsible>
     </Card>
   );

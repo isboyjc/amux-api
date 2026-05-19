@@ -353,6 +353,34 @@ func DeleteUserById(id int) (err error) {
 	return user.Delete()
 }
 
+// GetPaidUserIDsBatch 取一批"付费用户"的 id，按 id 升序，afterID 之后的 limit 条。
+// 用作 marketing.Backfill 的游标分页查询。
+//
+// "付费"定义与 service/marketing.tierForUser 严格对齐：
+//   - 任何 vip 分组用户（不论是否有 topup —— 含线下/admin 调额度的）
+//   - default 分组且至少有一笔成功 top_ups 记录（money > 0）
+//
+// 必须排除 deleted_at / email 为空的行（事件 payload 用得到 email）。
+// 三库兼容：用 commonGroupCol 包装 group 列；子查询走 top_ups.user_id 索引。
+func GetPaidUserIDsBatch(afterID int, limit int) ([]int, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	paidTopupSub := DB.Model(&TopUp{}).Select("user_id").
+		Where("status = ? AND money > 0", common.TopUpStatusSuccess)
+
+	var ids []int
+	err := DB.Model(&User{}).
+		Where("id > ?", afterID).
+		Where("email <> ''").
+		Where(commonGroupCol+" = ? OR ("+commonGroupCol+" = ? AND id IN (?))",
+			"vip", "default", paidTopupSub).
+		Order("id ASC").
+		Limit(limit).
+		Pluck("id", &ids).Error
+	return ids, err
+}
+
 func HardDeleteUserById(id int) error {
 	if id == 0 {
 		return errors.New("id 为空！")

@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/service/events"
 
 	"gorm.io/gorm"
 )
@@ -144,8 +145,20 @@ func Redeem(key string, userId int) (quota int, err error) {
 		redemption.RedeemedTime = common.GetTimestamp()
 		redemption.Status = common.RedemptionCodeStatusUsed
 		redemption.UsedUserId = userId
-		err = tx.Save(redemption).Error
-		return err
+		if err := tx.Save(redemption).Error; err != nil {
+			return err
+		}
+
+		var u User
+		_ = tx.Select("email").Where("id = ?", userId).First(&u).Error
+		events.PublishBestEffortInTx(tx, events.BillingRedemptionUsed, userId, &events.BillingRedemptionUsedPayload{
+			UserId:       userId,
+			Email:        u.Email,
+			RedemptionId: redemption.Id,
+			AmountQuota:  redemption.Quota,
+			UsedAt:       redemption.RedeemedTime,
+		})
+		return nil
 	})
 	if err != nil {
 		common.SysError("redemption failed: " + err.Error())

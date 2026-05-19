@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"log"
@@ -22,9 +23,17 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/router"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/events"
+	_ "github.com/QuantumNous/new-api/service/events/subscribers/logger"    // 触发 init 注册 logger 订阅者
+	_ "github.com/QuantumNous/new-api/service/events/subscribers/marketing" // 触发 init 注册 marketing 订阅者
+	"github.com/QuantumNous/new-api/service/marketing"
+	resendprovider "github.com/QuantumNous/new-api/service/marketing/providers/resend"
 	"github.com/QuantumNous/new-api/service/ticket"
 	_ "github.com/QuantumNous/new-api/setting/performance_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+
+	"github.com/google/uuid"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-contrib/sessions"
@@ -115,6 +124,27 @@ func main() {
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
+
+	// 事件总线 worker（所有实例都跑，靠 DB 乐观 claim 互斥）+ 每日清理任务（仅 master）
+	if operation_setting.EventWorkerEnabled {
+		workerOpts := events.WorkerOpts{
+			PollInterval:  time.Duration(operation_setting.EventWorkerPollIntervalMs) * time.Millisecond,
+			BatchSize:     operation_setting.EventWorkerBatchSize,
+			Concurrency:   operation_setting.EventWorkerConcurrency,
+			HandleTimeout: time.Duration(operation_setting.EventHandleTimeoutMs) * time.Millisecond,
+			WorkerId:      uuid.New().String(),
+		}
+		gopool.Go(func() {
+			events.StartWorker(context.Background(), workerOpts)
+		})
+	}
+	service.StartEventCleanupTask()
+
+	// 营销 Provider 接线：注册"配置变更回调"，配置载入完成后跑一次完成初始装配。
+	// 此后 admin 在后台改 MarketingEnabled/ResendAPIKey/Segment ID 等都会经
+	// model/option.go updateOptionMap → TriggerMarketingReload → 触发本回调重建 Provider。
+	operation_setting.OnMarketingConfigChanged = rebuildMarketingProvider
+	rebuildMarketingProvider()
 
 	// Desktop auth session cleanup task
 	service.StartDesktopAuthCleanupTask()
@@ -208,6 +238,56 @@ func main() {
 	}
 }
 
+// rebuildMarketingProvider 根据当前 operation_setting 重建 marketing.Provider 并注入。
+// 在启动时调用一次；之后由 OnMarketingConfigChanged 钩子在配置变更时调用。
+//
+// 行为：
+//   - MarketingEnabled=false / APIKey 为空 → 显式 SetProvider(nil)，订阅者变 no-op
+//   - 构造新 Provider 成功 → SetProvider(newP) 切换
+//   - 构造失败（不应发生，留为防御性兜底）→ **保留现有 Provider 不动**，仅记日志
+func rebuildMarketingProvider() {
+	if !operation_setting.MarketingEnabled {
+		marketing.SetProvider(nil)
+		return
+	}
+	switch operation_setting.MarketingProvider {
+	case "", "resend":
+		if operation_setting.ResendAPIKey == "" {
+			common.SysLog("[marketing] enabled but ResendAPIKey empty; provider not built")
+			marketing.SetProvider(nil)
+			return
+		}
+		p, err := resendprovider.New(resendprovider.Config{
+			APIKey:          operation_setting.ResendAPIKey,
+			DefaultSegment:  operation_setting.ResendDefaultSegmentID,
+			VIPSegment:      operation_setting.ResendVIPSegmentID,
+			DefaultTopicIDs: splitTopicIDs(operation_setting.ResendDefaultTopicIDs),
+		})
+		if err != nil {
+			common.SysError("[marketing] failed to build resend provider, keeping existing: " + err.Error())
+			return
+		}
+		marketing.SetProvider(p)
+		common.SysLog("[marketing] resend provider activated")
+	default:
+		common.SysError("[marketing] unknown provider, keeping existing: " + operation_setting.MarketingProvider)
+	}
+}
+
+func splitTopicIDs(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func InjectUmamiAnalytics() {
 	analyticsInjectBuilder := &strings.Builder{}
 	if os.Getenv("UMAMI_WEBSITE_ID") != "" {
@@ -275,6 +355,13 @@ func InitResources() error {
 	err = model.InitDB()
 	if err != nil {
 		common.FatalLog("failed to initialize database: " + err.Error())
+		return err
+	}
+
+	// 事件总线表自迁移（与主 DB 共用一个连接，独立于 model.AutoMigrate 流程）
+	events.SetDB(model.DB)
+	if err := events.AutoMigrate(); err != nil {
+		common.FatalLog("failed to migrate event tables: " + err.Error())
 		return err
 	}
 

@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/events"
 	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -223,6 +224,19 @@ func Register(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgCreateDefaultTokenErr)
 			return
 		}
+	}
+
+	if err := events.PublishNoTx(events.UserRegistered, insertedUser.Id, &events.UserRegisteredPayload{
+		UserId:         insertedUser.Id,
+		Email:          insertedUser.Email,
+		Username:       insertedUser.Username,
+		DisplayName:    insertedUser.DisplayName,
+		Group:          insertedUser.Group,
+		RegisterSource: "email",
+		InviterId:      inviterId,
+		CreatedAt:      common.GetTimestamp(),
+	}); err != nil {
+		common.SysError(fmt.Sprintf("publish user.registered failed: %v", err))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -597,6 +611,38 @@ func UpdateUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// 与 originUser 做 diff 决定要发哪类事件；group 变化与 profile 变化是两件事，分别发。
+	var profileChanged []string
+	if updatedUser.Username != "" && updatedUser.Username != originUser.Username {
+		profileChanged = append(profileChanged, "username")
+	}
+	if updatedUser.DisplayName != "" && updatedUser.DisplayName != originUser.DisplayName {
+		profileChanged = append(profileChanged, "display_name")
+	}
+	if len(profileChanged) > 0 {
+		if err := events.PublishNoTx(events.UserProfileUpdated, originUser.Id, &events.UserProfileUpdatedPayload{
+			UserId:        originUser.Id,
+			Email:         originUser.Email,
+			Username:      updatedUser.Username,
+			DisplayName:   updatedUser.DisplayName,
+			ChangedFields: profileChanged,
+			UpdatedAt:     common.GetTimestamp(),
+		}); err != nil {
+			common.SysError(fmt.Sprintf("publish user.profile.updated (admin) failed: %v", err))
+		}
+	}
+	if updatedUser.Group != "" && updatedUser.Group != originUser.Group {
+		if err := events.PublishNoTx(events.UserGroupChanged, originUser.Id, &events.UserGroupChangedPayload{
+			UserId:    originUser.Id,
+			Email:     originUser.Email,
+			FromGroup: originUser.Group,
+			ToGroup:   updatedUser.Group,
+			Trigger:   "admin",
+			ChangedAt: common.GetTimestamp(),
+		}); err != nil {
+			common.SysError(fmt.Sprintf("publish user.group.changed (admin) failed: %v", err))
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -742,9 +788,32 @@ func UpdateSelf(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// 在 Update 前快照原值，用于 diff 判定是否需要发 user.profile.updated 事件。
+	originalUser, _ := model.GetUserById(cleanUser.Id, false)
 	if err := cleanUser.Update(updatePassword); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if originalUser != nil {
+		var changed []string
+		if cleanUser.Username != "" && cleanUser.Username != originalUser.Username {
+			changed = append(changed, "username")
+		}
+		if cleanUser.DisplayName != "" && cleanUser.DisplayName != originalUser.DisplayName {
+			changed = append(changed, "display_name")
+		}
+		if len(changed) > 0 {
+			if err := events.PublishNoTx(events.UserProfileUpdated, originalUser.Id, &events.UserProfileUpdatedPayload{
+				UserId:        originalUser.Id,
+				Email:         originalUser.Email,
+				Username:      cleanUser.Username,
+				DisplayName:   cleanUser.DisplayName,
+				ChangedFields: changed,
+				UpdatedAt:     common.GetTimestamp(),
+			}); err != nil {
+				common.SysError(fmt.Sprintf("publish user.profile.updated failed: %v", err))
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -798,6 +867,15 @@ func DeleteUser(c *gin.Context) {
 		})
 		return
 	}
+	if err := events.PublishNoTx(events.UserDeleted, originUser.Id, &events.UserDeletedPayload{
+		UserId:     originUser.Id,
+		Email:      originUser.Email,
+		Username:   originUser.Username,
+		DeleteType: "admin_hard",
+		DeletedAt:  common.GetTimestamp(),
+	}); err != nil {
+		common.SysError(fmt.Sprintf("publish user.deleted failed: %v", err))
+	}
 }
 
 func DeleteSelf(c *gin.Context) {
@@ -813,6 +891,15 @@ func DeleteSelf(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if err := events.PublishNoTx(events.UserDeleted, user.Id, &events.UserDeletedPayload{
+		UserId:     user.Id,
+		Email:      user.Email,
+		Username:   user.Username,
+		DeleteType: "self_soft",
+		DeletedAt:  common.GetTimestamp(),
+	}); err != nil {
+		common.SysError(fmt.Sprintf("publish user.deleted failed: %v", err))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -851,6 +938,22 @@ func CreateUser(c *gin.Context) {
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+
+	// 取出 DB 默认值（Group="default" 等）后再发事件，与邮箱注册路径保持一致
+	var insertedUser model.User
+	if err := model.DB.Where("username = ?", cleanUser.Username).First(&insertedUser).Error; err == nil {
+		if err := events.PublishNoTx(events.UserRegistered, insertedUser.Id, &events.UserRegisteredPayload{
+			UserId:         insertedUser.Id,
+			Email:          insertedUser.Email,
+			Username:       insertedUser.Username,
+			DisplayName:    insertedUser.DisplayName,
+			Group:          insertedUser.Group,
+			RegisterSource: "admin",
+			CreatedAt:      common.GetTimestamp(),
+		}); err != nil {
+			common.SysError(fmt.Sprintf("publish user.registered (admin) failed: %v", err))
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -915,6 +1018,15 @@ func ManageUser(c *gin.Context) {
 		// 避免已缓存的令牌在 TTL 过期前仍能通过 TokenAuth 校验。
 		if err := model.InvalidateUserTokensCache(user.Id); err != nil {
 			common.SysLog(fmt.Sprintf("failed to invalidate tokens cache for user %d: %s", user.Id, err.Error()))
+		}
+		if err := events.PublishNoTx(events.UserDeleted, user.Id, &events.UserDeletedPayload{
+			UserId:     user.Id,
+			Email:      user.Email,
+			Username:   user.Username,
+			DeleteType: "admin_soft",
+			DeletedAt:  common.GetTimestamp(),
+		}); err != nil {
+			common.SysError(fmt.Sprintf("publish user.deleted (admin soft) failed: %v", err))
 		}
 	case "promote":
 		if myRole != common.RoleRootUser {
@@ -1037,12 +1149,21 @@ func EmailBind(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	oldEmail := user.Email
 	user.Email = email
 	// no need to check if this email already taken, because we have used verification code to check it
 	err = user.Update(false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if err := events.PublishNoTx(events.UserEmailBound, user.Id, &events.UserEmailBoundPayload{
+		UserId:   user.Id,
+		OldEmail: oldEmail,
+		NewEmail: email,
+		BoundAt:  common.GetTimestamp(),
+	}); err != nil {
+		common.SysError(fmt.Sprintf("publish user.email.bound failed: %v", err))
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
