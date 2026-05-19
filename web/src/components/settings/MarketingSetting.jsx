@@ -61,6 +61,7 @@ const MarketingSetting = () => {
     ResendDefaultSegmentID: '',
     ResendVIPSegmentID: '',
     ResendDefaultTopicIDs: '',
+    MarketingExtraEligibleGroups: '',
   });
 
   // 历史付费用户回填任务的状态
@@ -148,6 +149,7 @@ const MarketingSetting = () => {
         { key: 'ResendDefaultSegmentID', value: inputs.ResendDefaultSegmentID || '' },
         { key: 'ResendVIPSegmentID', value: inputs.ResendVIPSegmentID || '' },
         { key: 'ResendDefaultTopicIDs', value: inputs.ResendDefaultTopicIDs || '' },
+        { key: 'MarketingExtraEligibleGroups', value: inputs.MarketingExtraEligibleGroups || '' },
       ];
       // API Key 仅在用户填写了新值时才保存（避免空字符串覆盖已有 key）
       if (inputs.ResendAPIKey && inputs.ResendAPIKey.trim() !== '') {
@@ -325,6 +327,22 @@ const MarketingSetting = () => {
                   label={t('默认 Topic IDs（逗号分隔）')}
                   placeholder={t('topic-id-1, topic-id-2')}
                   extraText={t('新联系人创建时会自动 opt_in 这些 Topic；留空则不订阅')}
+                />
+              </Col>
+            </Row>
+
+            <Row
+              gutter={{ xs: 8, sm: 16, md: 24, lg: 24, xl: 24, xxl: 24 }}
+              style={{ marginTop: 16 }}
+            >
+              <Col xs={24}>
+                <Form.Input
+                  field='MarketingExtraEligibleGroups'
+                  label={t('额外允许自助订阅的用户组（逗号分隔）')}
+                  placeholder={t('enterprise_a, enterprise_b')}
+                  extraText={t(
+                    '这些组的用户可以在个人设置里管理邮件订阅，但 amux 不会自动同步他们到 Resend。需要管理员先手动在 Resend 创建 contact；用户首次保存时也会自动尝试创建。',
+                  )}
                 />
               </Col>
             </Row>

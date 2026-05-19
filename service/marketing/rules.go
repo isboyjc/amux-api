@@ -2,10 +2,12 @@ package marketing
 
 import (
 	"context"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/events"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 // Resolve 把一个事件翻译为"目标平台应当处于的状态"（Intent）。
@@ -91,8 +93,15 @@ func Resolve(ctx context.Context, e events.Event) (*Intent, error) {
 }
 
 // IsEligible 判断用户是否有资格在 amux 设置页管理营销订阅。
-// 等同于"用户当前是否应该在平台 contact 列表里"。
-// 给 user-end controller 复用 tierForUser 规则的公开入口。
+//
+// 这里的"资格"和事件驱动同步的 tier 是两个独立概念：
+//   - tier（tierForUser）→ amux 是否要"自动"把这个用户的状态推到 Resend
+//   - eligibility（本函数）→ 用户能不能在 UI 上自助管理订阅偏好
+//
+// 大多数情况两者一致（vip / 付费 default 既被自动同步，也能 UI 自助管理）。
+// 特例：企业 / 自定义组用户走 admin 手动维护，amux 不该自动同步（tier=TierNone），
+// 但应该让他们能 UI 自助管理 —— 通过 operation_setting.MarketingExtraEligibleGroups
+// 配置开放这些组的 UI 资格。
 func IsEligible(u *model.User) (bool, error) {
 	if u == nil || u.Email == "" {
 		return false, nil
@@ -101,7 +110,32 @@ func IsEligible(u *model.User) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return tier != TierNone, nil
+	if tier != TierNone {
+		return true, nil
+	}
+	if isInExtraEligibleGroups(u.Group) {
+		return true, nil
+	}
+	return false, nil
+}
+
+// isInExtraEligibleGroups 检查 group 是否在 admin 配置的「额外允许自助订阅」列表里。
+// 列表为空或 group 为空时返回 false。比较时去掉首尾空白，区分大小写
+// （与 user.Group 在 DB 里的存储保持一致）。
+func isInExtraEligibleGroups(group string) bool {
+	if group == "" {
+		return false
+	}
+	raw := operation_setting.MarketingExtraEligibleGroups
+	if raw == "" {
+		return false
+	}
+	for _, g := range strings.Split(raw, ",") {
+		if strings.TrimSpace(g) == group {
+			return true
+		}
+	}
+	return false
 }
 
 // tierForUser 当前用户状态 → tier 的判定。

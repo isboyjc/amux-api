@@ -26,6 +26,20 @@ var (
 	// 创建新 contact 时默认 opt_in 的 topic IDs，逗号分隔字符串。
 	// 例：" abc-123, def-456" → ["abc-123", "def-456"]
 	ResendDefaultTopicIDs = ""
+
+	// MarketingExtraEligibleGroups 额外允许在「个人设置 → 邮件订阅」里自助管理
+	// 订阅状态的用户组，逗号分隔。
+	//
+	// 用途：企业 / 自定义分组用户由 admin 手动维护到 Resend，不走 amux 的自动同步
+	// （tierForUser 对这些组返回 TierNone），但 UI 上应该允许这些用户管理自己的
+	// 全局退订状态和 topic 偏好。
+	//
+	// 例：" enterprise_a, enterprise_b" → ["enterprise_a", "enterprise_b"]
+	//
+	// 注意：本配置只影响 UI 资格判定（IsEligible），不会触发 amux 自动把这些组
+	// 同步到 Resend。Admin 仍需手动建好 contact；用户首次保存时 ensureContactExists
+	// 会兜底建/复用。
+	MarketingExtraEligibleGroups = ""
 )
 
 // OnMarketingConfigChanged 是配置变更钩子。由 main.go 在启动时设置为"重新构造

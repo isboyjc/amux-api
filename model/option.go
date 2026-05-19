@@ -179,6 +179,7 @@ func InitOptionMap() {
 	common.OptionMap["ResendDefaultSegmentID"] = operation_setting.ResendDefaultSegmentID
 	common.OptionMap["ResendVIPSegmentID"] = operation_setting.ResendVIPSegmentID
 	common.OptionMap["ResendDefaultTopicIDs"] = operation_setting.ResendDefaultTopicIDs
+	common.OptionMap["MarketingExtraEligibleGroups"] = operation_setting.MarketingExtraEligibleGroups
 	common.OptionMap["ExposeRatioEnabled"] = strconv.FormatBool(ratio_setting.IsExposeRatioEnabled())
 
 	// 自动添加所有注册的模型配置
@@ -404,6 +405,9 @@ func updateOptionMap(key string, value string) (err error) {
 			operation_setting.ResendDefaultTopicIDs = value
 			operation_setting.TriggerMarketingReload()
 		}
+	case "MarketingExtraEligibleGroups":
+		// 仅影响 IsEligible 判定，不需要重建 Provider
+		operation_setting.MarketingExtraEligibleGroups = value
 	case "Price":
 		operation_setting.Price, _ = strconv.ParseFloat(value, 64)
 	case "USDExchangeRate":

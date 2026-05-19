@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service/events"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
 
 // fullMockProvider 实现完整的 Provider interface 用于测试 Sync 的 RemovalMode 分支
@@ -155,6 +156,55 @@ func TestIsEligible(t *testing.T) {
 				t.Fatalf("want %v, got %v", tc.want, got)
 			}
 		})
+	}
+}
+
+// TestIsEligible_ExtraGroups 验证 MarketingExtraEligibleGroups 配置生效。
+func TestIsEligible_ExtraGroups(t *testing.T) {
+	defer setupTestDB(t)()
+
+	entA := &model.User{Username: "entA", Email: "a@example.com", Group: "enterprise_a"}
+	entB := &model.User{Username: "entB", Email: "b@example.com", Group: "enterprise_b"}
+	entC := &model.User{Username: "entC", Email: "c@example.com", Group: "enterprise_c"}
+	free := &model.User{Username: "free", Email: "free@example.com", Group: "default"}
+	for _, u := range []*model.User{entA, entB, entC, free} {
+		createUser(t, u)
+	}
+
+	// 保存原值，测试后恢复，避免污染其他测试
+	orig := operation_setting.MarketingExtraEligibleGroups
+	defer func() { operation_setting.MarketingExtraEligibleGroups = orig }()
+
+	// 配置 enterprise_a 和 enterprise_b 为额外允许的组（含前后空白以测 Trim）
+	operation_setting.MarketingExtraEligibleGroups = " enterprise_a , enterprise_b "
+
+	cases := []struct {
+		name string
+		u    *model.User
+		want bool
+	}{
+		{"enterprise_a (in list)", entA, true},
+		{"enterprise_b (in list)", entB, true},
+		{"enterprise_c (not in list)", entC, false},
+		{"free default still not eligible", free, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := IsEligible(tc.u)
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("want %v, got %v", tc.want, got)
+			}
+		})
+	}
+
+	// 空配置 → 不影响
+	operation_setting.MarketingExtraEligibleGroups = ""
+	got, _ := IsEligible(entA)
+	if got {
+		t.Fatal("empty config should not grant eligibility")
 	}
 }
 
