@@ -63,6 +63,107 @@ type UserListItem struct {
 	TopupAmount float64 `json:"topup_amount" gorm:"column:topup_amount"`
 }
 
+// UserExportItem 供 email 营销系统同步用户数据，包含充值聚合和 language 字段。
+type UserExportItem struct {
+	Id             int     `json:"id" gorm:"column:id"`
+	Username       string  `json:"username" gorm:"column:username"`
+	DisplayName    string  `json:"display_name" gorm:"column:display_name"`
+	Email          string  `json:"email" gorm:"column:email"`
+	Role           int     `json:"role" gorm:"column:role"`
+	Status         int     `json:"status" gorm:"column:status"`
+	Group          string  `json:"group" gorm:"column:group"`
+	Quota          int     `json:"quota" gorm:"column:quota"`
+	UsedQuota      int     `json:"used_quota" gorm:"column:used_quota"`
+	RequestCount   int     `json:"request_count" gorm:"column:request_count"`
+	AffCode        string  `json:"aff_code" gorm:"column:aff_code"`
+	AffCount       int     `json:"aff_count" gorm:"column:aff_count"`
+	InviterId      int     `json:"inviter_id" gorm:"column:inviter_id"`
+	StripeCustomer string  `json:"stripe_customer" gorm:"column:stripe_customer"`
+	CreatedTime    int64   `json:"created_time" gorm:"column:created_time"`
+	LastLoginAt    int64   `json:"last_login_at" gorm:"column:last_login_at"`
+	Setting        string  `json:"-" gorm:"column:setting"`
+	TopupCount     int     `json:"topup_count" gorm:"column:topup_count"`
+	TopupAmount    float64 `json:"topup_amount" gorm:"column:topup_amount"`
+	LastTopupAt    int64   `json:"last_topup_at" gorm:"column:last_topup_at"`
+	Language       string  `json:"language" gorm:"-"`
+}
+
+type UserExportFilter struct {
+	UpdatedAfter int64
+	Group        string
+	Status       int
+}
+
+func GetUsersForExport(filter *UserExportFilter, page, pageSize int) (items []*UserExportItem, total int64, err error) {
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, 0, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	countQuery := tx.Model(&User{})
+	if filter.UpdatedAfter > 0 {
+		countQuery = countQuery.Where("last_login_at >= ? OR created_time >= ?", filter.UpdatedAfter, filter.UpdatedAfter)
+	}
+	if filter.Group != "" {
+		countQuery = countQuery.Where(commonGroupCol+" = ?", filter.Group)
+	}
+	if filter.Status > 0 {
+		countQuery = countQuery.Where("status = ?", filter.Status)
+	}
+
+	if err = countQuery.Count(&total).Error; err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	listQuery := tx.Table("users").
+		Select("users.id, users.username, users.display_name, users.email, users.role, users.status, users."+commonGroupCol+" AS "+commonGroupCol+", users.quota, users.used_quota, users.request_count, users.aff_code, users.aff_count, users.inviter_id, users.stripe_customer, users.created_time, users.last_login_at, users.setting, COALESCE(SUM(top_ups.money), 0) AS topup_amount, COUNT(top_ups.id) AS topup_count, COALESCE(MAX(top_ups.complete_time), 0) AS last_topup_at").
+		Joins("LEFT JOIN top_ups ON users.id = top_ups.user_id AND top_ups.status = ?", common.TopUpStatusSuccess).
+		Where("users.deleted_at IS NULL").
+		Group("users.id")
+
+	if filter.UpdatedAfter > 0 {
+		listQuery = listQuery.Where("users.last_login_at >= ? OR users.created_time >= ?", filter.UpdatedAfter, filter.UpdatedAfter)
+	}
+	if filter.Group != "" {
+		listQuery = listQuery.Where("users."+commonGroupCol+" = ?", filter.Group)
+	}
+	if filter.Status > 0 {
+		listQuery = listQuery.Where("users.status = ?", filter.Status)
+	}
+
+	offset := (page - 1) * pageSize
+	if err = listQuery.Order("users.id desc").Limit(pageSize).Offset(offset).Scan(&items).Error; err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+
+	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
+
+	for _, item := range items {
+		if item.Setting != "" {
+			var settingMap map[string]json.RawMessage
+			if common.Unmarshal([]byte(item.Setting), &settingMap) == nil {
+				if lang, ok := settingMap["language"]; ok {
+					var l string
+					if common.Unmarshal(lang, &l) == nil {
+						item.Language = l
+					}
+				}
+			}
+		}
+	}
+
+	return items, total, nil
+}
+
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
 		Id:       user.Id,

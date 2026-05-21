@@ -277,6 +277,45 @@ func SearchUsers(c *gin.Context) {
 	return
 }
 
+func ExportUsers(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "100"))
+	if pageSize < 1 {
+		pageSize = 100
+	}
+	if pageSize > 500 {
+		pageSize = 500
+	}
+
+	updatedAfter, _ := strconv.ParseInt(c.Query("updated_after"), 10, 64)
+	status, _ := strconv.Atoi(c.Query("status"))
+
+	filter := &model.UserExportFilter{
+		UpdatedAfter: updatedAfter,
+		Group:        c.Query("group"),
+		Status:       status,
+	}
+
+	items, total, err := model.GetUsersForExport(filter, page, pageSize)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data": gin.H{
+			"page":      page,
+			"page_size": pageSize,
+			"total":     total,
+			"items":     items,
+		},
+	})
+}
+
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
