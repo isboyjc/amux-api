@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/sjson"
 )
 
 type TaskSubmitResult struct {
@@ -403,6 +404,9 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 			if err != nil {
 				taskResp = service.TaskErrorWrapper(err, "convert_to_openai_video_failed", http.StatusInternalServerError)
 				return
+			}
+			if originTask.TotalTokens > 0 {
+				openAIVideoData, _ = sjson.SetBytes(openAIVideoData, "usage.total_tokens", originTask.TotalTokens)
 			}
 			respBody = openAIVideoData
 			return
