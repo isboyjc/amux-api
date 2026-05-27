@@ -122,9 +122,10 @@ type zeroCutResponse struct {
 			Resolution     string `json:"resolution"`
 			RevisedPrompt  string `json:"revised_prompt"`
 			Usage          struct {
-				Credits        int    `json:"credits"`
-				TotalTokens    int    `json:"total_tokens"`
-				TransactionID  string `json:"transactionId"`
+				Credits          int    `json:"credits"`
+				TotalTokens      int    `json:"total_tokens"`
+				CompletionTokens int    `json:"completion_tokens"`
+				TransactionID    string `json:"transactionId"`
 			} `json:"usage"`
 		} `json:"output"`
 		CreatedAt string `json:"created_at"`
@@ -676,8 +677,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			// Extract output data
 			if zeroCutResp.Data.Output != nil {
 				taskResult.Url = zeroCutResp.Data.Output.URL
-				// Map credits to tokens
-				taskResult.CompletionTokens = zeroCutResp.Data.Output.Usage.Credits
+				taskResult.CompletionTokens = zeroCutResp.Data.Output.Usage.CompletionTokens
 				taskResult.TotalTokens = zeroCutResp.Data.Output.Usage.TotalTokens
 			}
 		case "FAILED":
