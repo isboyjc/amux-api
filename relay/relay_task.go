@@ -565,6 +565,9 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		"task_id":  task.TaskID,
 		"url":      resultURL,
 	}
+	if task.TotalTokens > 0 {
+		out["usage"] = map[string]any{"total_tokens": task.TotalTokens}
+	}
 	respBody, _ := common.Marshal(dto.TaskResponse[any]{
 		Code:    "success",
 		Message: responseMessage,
@@ -622,7 +625,8 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		UserId:     task.UserId,
 		Group:      task.Group,
 		ChannelId:  task.ChannelId,
-		Quota:      task.Quota,
+		Quota:       task.Quota,
+		TotalTokens: task.TotalTokens,
 		Action:     task.Action,
 		Status:     string(task.Status),
 		FailReason: task.FailReason,
