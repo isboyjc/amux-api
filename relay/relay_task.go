@@ -282,9 +282,10 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
-	relayconstant.RelayModeSunoFetchByID:  sunoFetchByIDRespBodyBuilder,
-	relayconstant.RelayModeSunoFetch:      sunoFetchRespBodyBuilder,
-	relayconstant.RelayModeVideoFetchByID: videoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSunoFetchByID:      sunoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSunoFetch:           sunoFetchRespBodyBuilder,
+	relayconstant.RelayModeVideoFetchByID:      videoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSTTAsyncFetchByID:   sttFetchByIDRespBodyBuilder,
 }
 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
@@ -606,6 +607,27 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 	default:
 		return "processing"
 	}
+}
+
+func sttFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.TaskError) {
+	taskId := c.Param("task_id")
+	userId := c.GetInt("id")
+
+	originTask, exist, err := model.GetByTaskId(userId, taskId)
+	if err != nil {
+		taskResp = service.TaskErrorWrapper(err, "get_task_failed", http.StatusInternalServerError)
+		return
+	}
+	if !exist {
+		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
+		return
+	}
+
+	respBody, err = common.Marshal(dto.TaskResponse[any]{
+		Code: "success",
+		Data: TaskModel2Dto(originTask),
+	})
+	return
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {

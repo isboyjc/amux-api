@@ -37,6 +37,7 @@ import (
 	taskjimeng "github.com/QuantumNous/new-api/relay/channel/task/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/task/kling"
 	tasksora "github.com/QuantumNous/new-api/relay/channel/task/sora"
+	taskamuxstt "github.com/QuantumNous/new-api/relay/channel/task/amux_stt"
 	"github.com/QuantumNous/new-api/relay/channel/task/suno"
 	taskvertex "github.com/QuantumNous/new-api/relay/channel/task/vertex"
 	taskVidu "github.com/QuantumNous/new-api/relay/channel/task/vidu"
@@ -138,6 +139,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	//	return &aiproxy.Adaptor{}
 	case constant.TaskPlatformSuno:
 		return &suno.TaskAdaptor{}
+	case constant.TaskPlatformAmuxSTT:
+		return &taskamuxstt.TaskAdaptor{}
 	}
 	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
 		switch channelType {

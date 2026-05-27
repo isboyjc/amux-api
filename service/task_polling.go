@@ -81,6 +81,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		if !isLegacy && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, reason)
 		}
+		NotifyTaskCallback(ctx, task)
 	}
 
 	if timedOutCount > 0 {
@@ -245,6 +246,8 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		err = task.Update()
 		if err != nil {
 			common.SysLog("UpdateSunoTask task error: " + err.Error())
+		} else if task.Status == model.TaskStatusFailure || task.Status == model.TaskStatusSuccess {
+			NotifyTaskCallback(ctx, task)
 		}
 	}
 	return nil
@@ -498,6 +501,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)
+	}
+	if isDone && (shouldSettle || shouldRefund) {
+		NotifyTaskCallback(ctx, task)
 	}
 
 	return nil

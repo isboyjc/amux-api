@@ -586,6 +586,10 @@ func RelayTask(c *gin.Context) {
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
+		if cbURL := c.GetString("task_callback_url"); cbURL != "" {
+			task.PrivateData.CallbackURL = cbURL
+			task.PrivateData.CallbackSecret = c.GetString("task_callback_secret")
+		}
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
 		}

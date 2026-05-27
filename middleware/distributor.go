@@ -23,8 +23,10 @@ import (
 )
 
 type ModelRequest struct {
-	Model string `json:"model"`
-	Group string `json:"group,omitempty"`
+	Model          string `json:"model"`
+	Group          string `json:"group,omitempty"`
+	CallbackURL    string `json:"callback_url,omitempty"`
+	CallbackSecret string `json:"callback_secret,omitempty"`
 }
 
 func Distribute() func(c *gin.Context) {
@@ -185,6 +187,10 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 	if err != nil {
 		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 	}
+	if modelRequest.CallbackURL != "" {
+		c.Set("task_callback_url", modelRequest.CallbackURL)
+		c.Set("task_callback_secret", modelRequest.CallbackSecret)
+	}
 	return &modelRequest, nil
 }
 
@@ -338,7 +344,20 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			}
 		}
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions/async") {
+		relayMode := relayconstant.RelayModeSTTAsyncSubmit
+		req, err := getModelFromRequest(c)
+		if err == nil && req.Model != "" {
+			modelRequest.Model = req.Model
+		}
+		c.Set("relay_mode", relayMode)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions/") &&
+		c.Request.Method == http.MethodGet &&
+		!strings.HasSuffix(c.Request.URL.Path, "/transcriptions/") {
+		relayMode := relayconstant.RelayModeSTTAsyncFetchByID
+		shouldSelectChannel = false
+		c.Set("relay_mode", relayMode)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {
 		relayMode := relayconstant.RelayModeAudioSpeech
 		if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech") {
 
