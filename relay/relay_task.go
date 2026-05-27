@@ -386,8 +386,13 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/") ||
 		strings.HasPrefix(c.Request.RequestURI, "/pg/video/generations/")
 
-	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
-	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
+	// 火山方舟 v3 协议查询端点：返回火山官方 v3 结构（由 adaptor 转换）
+	isDoubaoV3API := strings.HasPrefix(c.Request.RequestURI, "/api/v3/contents/generations/tasks/")
+
+	// Gemini/Vertex/Doubao 支持实时查询：用户 fetch 时直接从上游拉取最新状态。
+	// OpenAI 与 Doubao v3 格式由各自的转换分支负责构建响应体，因此让实时查询
+	// 只负责刷新+结算 task（skipCustomResponse=true），不构建自定义格式响应。
+	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI || isDoubaoV3API); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
 	}
@@ -416,6 +421,25 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 
+	// 火山方舟 v3 协议格式: 走 adaptor 的 ConvertToDoubaoV3
+	if isDoubaoV3API {
+		adaptor := GetTaskAdaptor(originTask.Platform)
+		if adaptor == nil {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("invalid channel id: %d", originTask.ChannelId), "invalid_channel_id", http.StatusBadRequest)
+			return
+		}
+		if converter, ok := adaptor.(channel.DoubaoV3VideoConverter); ok {
+			doubaoV3Data, err := converter.ConvertToDoubaoV3(originTask)
+			if err != nil {
+				taskResp = service.TaskErrorWrapper(err, "convert_to_doubao_v3_failed", http.StatusInternalServerError)
+				return
+			}
+			respBody = doubaoV3Data
+			return
+		}
+		// adaptor 未实现 v3 转换时回退到通用 TaskDto 格式
+	}
+
 	// 通用 TaskDto 格式
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
@@ -429,8 +453,10 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/Doubao 任务状态。
 // 仅当渠道类型为 Gemini、Vertex 或 DoubaoVideo 时触发；其他渠道或出错时返回 nil。
-// 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
-func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
+// skipCustomResponse=true 时只刷新+结算 task 后返回 nil（响应体交由调用方的
+// ConvertToOpenAIVideo / ConvertToDoubaoV3 等分支构建）；为 false 时额外构建
+// 通用自定义格式响应体并返回。
+func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil
@@ -539,8 +565,8 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		}
 	}
 
-	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理
-	if isOpenAIVideoAPI {
+	// OpenAI Video / Doubao v3 格式由调用者的转换分支处理，这里只负责刷新+结算
+	if skipCustomResponse {
 		return nil
 	}
 

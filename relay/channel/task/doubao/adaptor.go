@@ -786,3 +786,90 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 	return common.Marshal(openAIVideo)
 }
+
+// mapToDoubaoV3Status 将网关内部任务状态映射回火山 v3 协议的状态字符串。
+func mapToDoubaoV3Status(s model.TaskStatus) string {
+	switch s {
+	case model.TaskStatusInProgress:
+		return dto.DoubaoV3StatusRunning
+	case model.TaskStatusSuccess:
+		return dto.DoubaoV3StatusSucceeded
+	case model.TaskStatusFailure:
+		return dto.DoubaoV3StatusFailed
+	default:
+		// NOT_START / SUBMITTED / QUEUED / UNKNOWN 统一归为 queued
+		return dto.DoubaoV3StatusQueued
+	}
+}
+
+// ConvertToDoubaoV3 将网关任务转换为火山方舟 v3 协议的任务查询响应。
+//
+// 注意：当前上游是 ZeroCut 聚合器，task.Data 里存的是 ZeroCut 格式
+// （{code, data:{status, output:{url, ratio, duration, resolution, usage}}}），
+// 与火山官方结构不同。因此提取 resolution/duration/ratio 等元数据时优先按
+// ZeroCut 解析，官方格式兜底；对外输出统一归一化为火山官方 v3 结构。
+//
+// id 使用网关 public task ID（非上游 cgt-xxx），video_url 使用脱敏/代理后的
+// GetResultURL()，与 ConvertToOpenAIVideo 的口径保持一致，不暴露上游直链。
+func (a *TaskAdaptor) ConvertToDoubaoV3(originTask *model.Task) ([]byte, error) {
+	resp := &dto.DoubaoV3Video{
+		ID:        originTask.TaskID,
+		Model:     originTask.Properties.OriginModelName,
+		Status:    mapToDoubaoV3Status(originTask.Status),
+		CreatedAt: originTask.CreatedAt,
+		UpdatedAt: originTask.UpdatedAt,
+	}
+
+	if originTask.TotalTokens > 0 || originTask.CompletionTokens > 0 {
+		resp.Usage = &dto.DoubaoV3VideoUsage{
+			CompletionTokens: originTask.CompletionTokens,
+			TotalTokens:      originTask.TotalTokens,
+		}
+	}
+
+	// 从原始上游响应提取 resolution/duration/ratio 等元数据。
+	if len(originTask.Data) > 0 {
+		var zResp zeroCutResponse
+		if err := common.Unmarshal(originTask.Data, &zResp); err == nil && zResp.Data.Output != nil {
+			// ZeroCut 聚合器格式（当前实际上游）
+			resp.Resolution = zResp.Data.Output.Resolution
+			resp.Duration = zResp.Data.Output.Duration
+			resp.Ratio = zResp.Data.Output.Ratio
+		} else {
+			// 火山官方格式兜底
+			var oResp responseTask
+			if err := common.Unmarshal(originTask.Data, &oResp); err == nil {
+				resp.Resolution = oResp.Resolution
+				resp.Duration = oResp.Duration
+				resp.Ratio = oResp.Ratio
+				resp.Seed = oResp.Seed
+				resp.FramesPerSecond = oResp.FramesPerSecond
+			}
+		}
+	}
+
+	if originTask.Status == model.TaskStatusFailure {
+		resp.Error = &dto.DoubaoV3VideoError{
+			Message: originTask.FailReason,
+			Code:    "task_failed",
+		}
+		// 失败任务从上游原始体里尽量提取更精确的错误信息
+		if len(originTask.Data) > 0 {
+			var zResp zeroCutResponse
+			if err := common.Unmarshal(originTask.Data, &zResp); err == nil && zResp.Data.Output != nil && zResp.Data.Output.Error != "" {
+				resp.Error.Message = zResp.Data.Output.Error
+				resp.Error.Code = "zerocut_error"
+			} else {
+				var oResp responseTask
+				if err := common.Unmarshal(originTask.Data, &oResp); err == nil && oResp.Error.Message != "" {
+					resp.Error.Message = oResp.Error.Message
+					resp.Error.Code = oResp.Error.Code
+				}
+			}
+		}
+	} else if url := originTask.GetResultURL(); url != "" {
+		resp.Content = &dto.DoubaoV3VideoContent{VideoURL: url}
+	}
+
+	return common.Marshal(resp)
+}
