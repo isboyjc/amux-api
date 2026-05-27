@@ -551,9 +551,13 @@ func SettleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 //  3. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	if taskResult.TotalTokens > 0 {
+		task.CompletionTokens = taskResult.CompletionTokens
 		task.TotalTokens = taskResult.TotalTokens
-		if err := model.DB.Model(task).Update("total_tokens", taskResult.TotalTokens).Error; err != nil {
-			logger.LogError(ctx, fmt.Sprintf("持久化 total_tokens 失败 task %s: %s", task.TaskID, err.Error()))
+		if err := model.DB.Model(task).Updates(map[string]any{
+			"completion_tokens": taskResult.CompletionTokens,
+			"total_tokens":      taskResult.TotalTokens,
+		}).Error; err != nil {
+			logger.LogError(ctx, fmt.Sprintf("持久化 token 用量失败 task %s: %s", task.TaskID, err.Error()))
 		}
 	}
 	// 0. 按次计费的任务不做差额结算

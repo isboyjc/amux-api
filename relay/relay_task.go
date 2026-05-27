@@ -406,6 +406,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 				return
 			}
 			if originTask.TotalTokens > 0 {
+				openAIVideoData, _ = sjson.SetBytes(openAIVideoData, "usage.completion_tokens", originTask.CompletionTokens)
 				openAIVideoData, _ = sjson.SetBytes(openAIVideoData, "usage.total_tokens", originTask.TotalTokens)
 			}
 			respBody = openAIVideoData
@@ -566,7 +567,10 @@ func tryRealtimeFetch(task *model.Task, isOpenAIVideoAPI bool) []byte {
 		"url":      resultURL,
 	}
 	if task.TotalTokens > 0 {
-		out["usage"] = map[string]any{"total_tokens": task.TotalTokens}
+		out["usage"] = map[string]any{
+			"completion_tokens": task.CompletionTokens,
+			"total_tokens":      task.TotalTokens,
+		}
 	}
 	respBody, _ := common.Marshal(dto.TaskResponse[any]{
 		Code:    "success",
@@ -625,8 +629,9 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		UserId:     task.UserId,
 		Group:      task.Group,
 		ChannelId:  task.ChannelId,
-		Quota:       task.Quota,
-		TotalTokens: task.TotalTokens,
+		Quota:            task.Quota,
+		CompletionTokens: task.CompletionTokens,
+		TotalTokens:      task.TotalTokens,
 		Action:     task.Action,
 		Status:     string(task.Status),
 		FailReason: task.FailReason,
