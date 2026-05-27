@@ -71,6 +71,14 @@ func GetOptions(c *gin.Context) {
 			strings.HasSuffix(k, "Key") ||
 			strings.HasSuffix(k, "secret") ||
 			strings.HasSuffix(k, "api_key") {
+			// 敏感字段不回传值，但派生一个 *Configured 标记，
+			// 让前端能判断是否已配置（避免出现"已保存过 key 但前端校验仍报缺失"的体验问题）。
+			if value != "" {
+				options = append(options, &model.Option{
+					Key:   k + "Configured",
+					Value: "true",
+				})
+			}
 			continue
 		}
 		options = append(options, &model.Option{

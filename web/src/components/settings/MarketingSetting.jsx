@@ -64,6 +64,11 @@ const MarketingSetting = () => {
     MarketingExtraEligibleGroups: '',
   });
 
+  // ResendAPIKeyConfigured：后端派生标记，表示"已保存过 API Key"。
+  // 后端 GetOptions 出于安全不回传 key 本身，所以前端无法从 inputs.ResendAPIKey 判断是否已配置。
+  // 没有这个标记，"保存其他配置项"时会误报"启用前请先填写 Resend API Key"。
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
+
   // 历史付费用户回填任务的状态
   const [backfillStatus, setBackfillStatus] = useState({
     running: false,
@@ -82,7 +87,12 @@ const MarketingSetting = () => {
         return;
       }
       const next = { ...inputs };
+      let keyConfigured = false;
       data.forEach((item) => {
+        if (item.key === 'ResendAPIKeyConfigured') {
+          keyConfigured = toBoolean(item.value);
+          return;
+        }
         if (!(item.key in next)) return;
         if (item.key === 'MarketingEnabled') {
           next[item.key] = toBoolean(item.value);
@@ -91,6 +101,7 @@ const MarketingSetting = () => {
         }
       });
       setInputs(next);
+      setApiKeyConfigured(keyConfigured);
       if (formApiRef.current) {
         formApiRef.current.setValues(next);
       }
@@ -137,7 +148,12 @@ const MarketingSetting = () => {
   };
 
   const handleSave = async () => {
-    if (inputs.MarketingEnabled && !inputs.ResendAPIKey) {
+    // 校验：启用了营销但既没新填 API Key、后端也没已配置 → 真缺
+    if (
+      inputs.MarketingEnabled &&
+      !inputs.ResendAPIKey &&
+      !apiKeyConfigured
+    ) {
       showError(t('启用前请先填写 Resend API Key'));
       return;
     }
@@ -273,7 +289,11 @@ const MarketingSetting = () => {
                 <Form.Input
                   field='ResendAPIKey'
                   label={t('Resend API Key')}
-                  placeholder={t('re_xxx，敏感信息保存后不回显')}
+                  placeholder={
+                    apiKeyConfigured
+                      ? t('已保存（如需修改请重新输入）')
+                      : t('re_xxx，敏感信息保存后不回显')
+                  }
                   type='password'
                   extraText={t('从 https://resend.com/api-keys 创建')}
                 />
