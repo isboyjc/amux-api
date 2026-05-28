@@ -565,6 +565,30 @@ func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 		}
 	}
 
+	// 迟到 token 回填：纯显示层补登记，不影响计费。
+	//
+	// 背景：commit dc7cb5e47（2026-05-27 17:47）之前，settle 会拿 ti.TotalTokens
+	// 算差额、做退款，但只在内存里用完就丢，不会持久化到 task 表列。这个
+	// commit 之后才新增"settle 写 token 列"的代码。所以那之前完成的老任务，
+	// 计费完全正确（账单日志可查），但 task.total_tokens / completion_tokens
+	// 列一直是 0，v3 响应里 usage 因此为空。
+	//
+	// 这里把上游响应里实际的 token 写回列，让 v3 响应能展示出来，并避免每次
+	// 查询都重新解析 task.Data。计费已经在历史上正确结算过，这里只是补一个
+	// 字段，不会触发任何计费动作（settle 仍只挂在 becameSuccess 事件上）；
+	// 用 task.TotalTokens == 0 作 gate 保证幂等。
+	if ti.TotalTokens > 0 && task.TotalTokens == 0 {
+		if err := model.DB.Model(task).Updates(map[string]any{
+			"completion_tokens": ti.CompletionTokens,
+			"total_tokens":      ti.TotalTokens,
+		}).Error; err != nil {
+			common.SysError(fmt.Sprintf("backfill token usage failed for task %s: %s", task.TaskID, err.Error()))
+		} else {
+			task.CompletionTokens = ti.CompletionTokens
+			task.TotalTokens = ti.TotalTokens
+		}
+	}
+
 	// OpenAI Video / Doubao v3 格式由调用者的转换分支处理，这里只负责刷新+结算
 	if skipCustomResponse {
 		return nil
