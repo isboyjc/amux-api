@@ -556,6 +556,16 @@ func SettleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 //  2. taskResult.TotalTokens > 0 → 按 token 重算
 //  3. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
+	if taskResult.TotalTokens > 0 {
+		task.CompletionTokens = taskResult.CompletionTokens
+		task.TotalTokens = taskResult.TotalTokens
+		if err := model.DB.Model(task).Updates(map[string]any{
+			"completion_tokens": taskResult.CompletionTokens,
+			"total_tokens":      taskResult.TotalTokens,
+		}).Error; err != nil {
+			logger.LogError(ctx, fmt.Sprintf("持久化 token 用量失败 task %s: %s", task.TaskID, err.Error()))
+		}
+	}
 	// 0. 按次计费的任务不做差额结算
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))

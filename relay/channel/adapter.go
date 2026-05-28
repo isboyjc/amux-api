@@ -81,3 +81,9 @@ type TaskAdaptor interface {
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
+
+// DoubaoV3VideoConverter 将网关任务转换为火山方舟（Doubao）v3 协议的
+// 任务查询响应格式，供 /api/v3/contents/generations/tasks/:task_id 端点使用。
+type DoubaoV3VideoConverter interface {
+	ConvertToDoubaoV3(originTask *model.Task) ([]byte, error)
+}
