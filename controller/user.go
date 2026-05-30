@@ -900,10 +900,7 @@ func DeleteUser(c *gin.Context) {
 	}
 	err = model.HardDeleteUserById(id)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"message": "",
-		})
+		common.ApiError(c, err)
 		return
 	}
 	if err := events.PublishNoTx(events.UserDeleted, originUser.Id, &events.UserDeletedPayload{
@@ -915,6 +912,11 @@ func DeleteUser(c *gin.Context) {
 	}); err != nil {
 		common.SysError(fmt.Sprintf("publish user.deleted failed: %v", err))
 	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+	})
+	return
 }
 
 func DeleteSelf(c *gin.Context) {
