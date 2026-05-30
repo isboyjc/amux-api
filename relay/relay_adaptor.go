@@ -162,6 +162,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskGemini.TaskAdaptor{}
 		case constant.ChannelTypeMiniMax:
 			return &hailuo.TaskAdaptor{}
+		case constant.ChannelTypeAmux:
+			return &taskamuxstt.TaskAdaptor{}
 		}
 	}
 	return nil

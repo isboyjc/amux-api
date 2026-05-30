@@ -88,7 +88,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 // ── Billing ──────────────────────────────────────────────────────────
 
 func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
-	return map[string]float64{"minutes": 30}
+	// 提交时拿不到音频时长，固定预扣 1 小时，完成后按实际时长差额结算。
+	return map[string]float64{"hours": 1}
 }
 
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.TaskInfo) int {
@@ -109,11 +110,13 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.T
 		result = wrapped.Result
 	}
 
+	// ModelPrice 是 $/小时；音频时长按分钟向上取整（最低 1 分钟）后换算成小时计费。
 	actualMinutes := math.Ceil(result.AudioDuration / 60.0)
 	if actualMinutes < 1 {
 		actualMinutes = 1
 	}
-	return int(bc.ModelPrice * common.QuotaPerUnit * bc.GroupRatio * actualMinutes)
+	actualHours := actualMinutes / 60.0
+	return int(bc.ModelPrice * common.QuotaPerUnit * bc.GroupRatio * actualHours)
 }
 
 // ── Request Building ─────────────────────────────────────────────────
@@ -123,7 +126,7 @@ func (a *TaskAdaptor) BuildRequestURL(_ *relaycommon.RelayInfo) (string, error) 
 }
 
 func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
-	req.Header.Set("Authorization", "Bearer "+a.apiKey)
+	req.Header.Set("X-API-Key", a.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 	return nil
 }
@@ -149,7 +152,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, req
 
 // ── Response Handling ────────────────────────────────────────────────
 
-func (a *TaskAdaptor) DoResponse(_ *gin.Context, resp *http.Response, _ *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
+func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", nil, &dto.TaskError{Code: "read_response_failed", Message: err.Error(), StatusCode: http.StatusInternalServerError}
@@ -160,11 +163,17 @@ func (a *TaskAdaptor) DoResponse(_ *gin.Context, resp *http.Response, _ *relayco
 	if err := common.Unmarshal(body, &statusResp); err != nil {
 		return "", nil, &dto.TaskError{Code: "parse_response_failed", Message: err.Error(), StatusCode: http.StatusInternalServerError}
 	}
-	if statusResp.ID == "" {
+	upstreamTaskID := statusResp.ID
+	if upstreamTaskID == "" {
 		return "", nil, &dto.TaskError{Code: "invalid_upstream_response", Message: "upstream returned empty task id", StatusCode: http.StatusBadGateway}
 	}
 
-	return statusResp.ID, body, nil
+	// 回写给客户端的是网关自己的公开 task ID（task_xxxx），客户端用它轮询；
+	// 上游真实 ID 作为返回值存为 UpstreamTaskID，仅供后台轮询访问上游使用。
+	statusResp.ID = info.PublicTaskID
+	c.JSON(http.StatusOK, statusResp)
+
+	return upstreamTaskID, body, nil
 }
 
 // ── Polling ──────────────────────────────────────────────────────────
@@ -187,7 +196,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("X-API-Key", key)
 
 	statusResp, err := client.Do(req)
 	if err != nil {
@@ -209,7 +218,7 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 		resultURL := fmt.Sprintf("%s/tasks/%s/result", base, taskID)
 		resultReq, err := http.NewRequest(http.MethodGet, resultURL, nil)
 		if err == nil {
-			resultReq.Header.Set("Authorization", "Bearer "+key)
+			resultReq.Header.Set("X-API-Key", key)
 			resultResp, err := client.Do(resultReq)
 			if err == nil {
 				resultBody, _ := io.ReadAll(resultResp.Body)

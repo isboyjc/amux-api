@@ -350,6 +350,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if err == nil && req.Model != "" {
 			modelRequest.Model = req.Model
 		}
+		c.Set("platform", string(constant.TaskPlatformAmuxSTT))
 		c.Set("relay_mode", relayMode)
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions/") &&
 		c.Request.Method == http.MethodGet &&

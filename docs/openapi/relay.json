@@ -52,6 +52,9 @@
       "name": "OpenAI音频(Audio)"
     },
     {
+      "name": "语音转文字(STT异步)"
+    },
+    {
       "name": "重排序(Rerank)"
     },
     {
@@ -1778,6 +1781,126 @@
                 "schema": {
                   "type": "string",
                   "format": "binary"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/audio/transcriptions/async": {
+      "post": {
+        "summary": "提交异步语音转录任务",
+        "deprecated": false,
+        "description": "提交异步语音转录(STT)任务，适用于较长音频的转录。\n\n音频来源二选一：`audio_url`(音频文件 URL) 或 `audio_base64` + `audio_filename`(Base64 内容及文件名)。\n\n返回任务 ID，可通过 GET 接口查询任务状态与结果。\n",
+        "operationId": "createTranscriptionAsync",
+        "tags": [
+          "语音转文字(STT异步)"
+        ],
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/STTAsyncRequest"
+              },
+              "example": {
+                "model": "amux-stt-v1",
+                "audio_url": "https://example.com/episode.mp3",
+                "audio_filename": "episode.mp3",
+                "options": {
+                  "enable_asr": true,
+                  "enable_diarize": true,
+                  "enable_audio_events": true,
+                  "asr_language": "zh",
+                  "hotwords": [
+                    "产品名",
+                    "人名"
+                  ]
+                },
+                "batch_mode": false,
+                "callback_url": "https://your-server.com/webhook"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "成功创建转录任务",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/STTSubmitResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "请求参数错误(缺少音频来源，或使用 Base64 时未提供文件名)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {}
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/audio/transcriptions/{task_id}": {
+      "get": {
+        "summary": "查询异步语音转录任务",
+        "deprecated": false,
+        "description": "查询异步语音转录任务的状态和结果。\n\n任务状态：\n- `SUBMITTED` / `QUEUED`: 已提交 / 排队中\n- `IN_PROGRESS`: 转录中\n- `SUCCESS`: 已完成\n- `FAILURE`: 失败\n\n任务完成后，转录结果位于 `data.data.result` 字段。\n",
+        "operationId": "getTranscriptionAsync",
+        "tags": [
+          "语音转文字(STT异步)"
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "提交接口返回的网关任务 ID",
+            "required": true,
+            "example": "task_abcd1234efgh",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功获取任务状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/STTTaskResponse"
+                }
+              }
+            },
+            "headers": {}
+          },
+          "400": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             },
@@ -3886,6 +4009,342 @@
             "minimum": 0.25,
             "maximum": 4,
             "default": 1
+          }
+        }
+      },
+      "STTAsyncRequest": {
+        "type": "object",
+        "description": "异步语音转录任务提交请求。音频来源在 audio_url 与 audio_base64 之间二选一。",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "转录模型名称",
+            "example": "amux-stt-v1"
+          },
+          "audio_url": {
+            "type": "string",
+            "description": "公开可访问的音频文件 URL(与 audio_base64 二选一)",
+            "example": "https://example.com/audio.mp3"
+          },
+          "audio_base64": {
+            "type": "string",
+            "description": "Base64 编码的音频内容(与 audio_url 二选一)。使用时必须同时提供 audio_filename。"
+          },
+          "audio_filename": {
+            "type": "string",
+            "description": "音频文件名。使用 audio_url 时可选(用于任务列表显示)；使用 audio_base64 时必填(用于确定文件扩展名)。",
+            "example": "episode.mp3"
+          },
+          "options": {
+            "$ref": "#/components/schemas/STTOptions"
+          },
+          "batch_mode": {
+            "type": "boolean",
+            "description": "批量模式。设为 true 时进入批量队列，处理可能延迟最多 24 小时。",
+            "default": false,
+            "example": false
+          },
+          "callback_url": {
+            "type": "string",
+            "description": "回调地址(可选)。任务进入终态后向该地址 POST 回调。",
+            "example": "https://your-server.com/webhook"
+          },
+          "callback_secret": {
+            "type": "string",
+            "description": "回调签名密钥(可选)。设置后回调请求会附带 HMAC-SHA256 签名。",
+            "example": "your-hmac-secret"
+          },
+          "priority": {
+            "type": "integer",
+            "description": "调度优先级 0–9，数字越小越优先。仅管理员密钥有效，普通用户忽略此字段。",
+            "minimum": 0,
+            "maximum": 9,
+            "example": 3
+          }
+        }
+      },
+      "STTOptions": {
+        "type": "object",
+        "description": "转录选项。所有字段均有默认值，可只传需修改的字段。",
+        "properties": {
+          "enable_asr": {
+            "type": "boolean",
+            "description": "语音转写(含自动语音段切分)",
+            "default": true
+          },
+          "enable_diarize": {
+            "type": "boolean",
+            "description": "说话人分离(需同时启用 ASR)",
+            "default": true
+          },
+          "enable_audio_events": {
+            "type": "boolean",
+            "description": "声音事件检测(521 类)",
+            "default": true
+          },
+          "asr_language": {
+            "type": "string",
+            "nullable": true,
+            "description": "ASR 语言。null=自动检测；或指定如 \"zh\"、\"en\"、\"ja\"。",
+            "default": null,
+            "example": "zh"
+          },
+          "asr_beam_size": {
+            "type": "integer",
+            "description": "Beam Search 宽度，越大越准但越慢",
+            "default": 5
+          },
+          "asr_temperature": {
+            "type": "number",
+            "description": "解码温度，0=贪心解码，>0 启用采样",
+            "default": 0.0
+          },
+          "hotwords": {
+            "type": "array",
+            "nullable": true,
+            "description": "热词列表，如 [\"产品名\", \"人名\"]，提升识别率",
+            "default": null,
+            "items": {
+              "type": "string"
+            }
+          },
+          "initial_prompt": {
+            "type": "string",
+            "nullable": true,
+            "description": "初始提示文本，可引导转写风格",
+            "default": null
+          },
+          "vad_threshold": {
+            "type": "number",
+            "description": "语音概率阈值(0-1)，越低越灵敏",
+            "default": 0.35
+          },
+          "vad_min_speech_ms": {
+            "type": "integer",
+            "description": "最短语音段时长(毫秒)，短于此被忽略",
+            "default": 250
+          },
+          "vad_min_silence_ms": {
+            "type": "integer",
+            "description": "最短静音间隔(毫秒)，短于此不切断",
+            "default": 100
+          },
+          "vad_speech_pad_ms": {
+            "type": "integer",
+            "description": "语音段前后填充时长(毫秒)",
+            "default": 30
+          },
+          "no_speech_threshold": {
+            "type": "number",
+            "description": "无语音概率阈值，高于此丢弃片段",
+            "default": 0.6
+          },
+          "num_speakers": {
+            "type": "integer",
+            "nullable": true,
+            "description": "说话人数。null=自动检测；或指定固定说话人数(整数)。",
+            "default": null
+          },
+          "min_speakers": {
+            "type": "integer",
+            "description": "自动检测时最少说话人数",
+            "default": 1
+          },
+          "max_speakers": {
+            "type": "integer",
+            "description": "自动检测时最多说话人数",
+            "default": 10
+          },
+          "diarize_min_segment_sec": {
+            "type": "number",
+            "description": "提取声纹所需最短段时长(秒)",
+            "default": 0.5
+          },
+          "diarize_single_speaker_threshold": {
+            "type": "number",
+            "description": "Silhouette Score 低于此值判为单说话人",
+            "default": 0.05
+          },
+          "audio_events_threshold": {
+            "type": "number",
+            "description": "声音事件置信度阈值，超过此值才输出",
+            "default": 0.3
+          },
+          "audio_events_classes": {
+            "type": "array",
+            "nullable": true,
+            "description": "声音事件类别。null=检测全部 521 类；或指定如 [\"Cough\",\"Music\"]。",
+            "default": null,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "STTSubmitResponse": {
+        "type": "object",
+        "description": "异步语音转录任务提交响应",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "网关任务 ID，用于后续查询",
+            "example": "task_abcd1234efgh"
+          },
+          "status": {
+            "type": "string",
+            "description": "任务初始状态",
+            "example": "processing"
+          },
+          "error_message": {
+            "type": "string",
+            "description": "错误信息(仅失败时返回)"
+          }
+        }
+      },
+      "STTTaskResponse": {
+        "type": "object",
+        "description": "异步语音转录任务查询响应",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "结果码，成功为 success",
+            "example": "success"
+          },
+          "message": {
+            "type": "string",
+            "description": "提示信息"
+          },
+          "data": {
+            "$ref": "#/components/schemas/STTTaskData"
+          }
+        }
+      },
+      "STTTaskData": {
+        "type": "object",
+        "description": "转录任务详情",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "网关任务 ID",
+            "example": "task_abcd1234efgh"
+          },
+          "platform": {
+            "type": "string",
+            "description": "任务平台",
+            "example": "amux_stt"
+          },
+          "action": {
+            "type": "string",
+            "description": "任务动作"
+          },
+          "status": {
+            "type": "string",
+            "description": "任务状态",
+            "enum": [
+              "SUBMITTED",
+              "QUEUED",
+              "IN_PROGRESS",
+              "SUCCESS",
+              "FAILURE"
+            ],
+            "example": "SUCCESS"
+          },
+          "fail_reason": {
+            "type": "string",
+            "description": "失败原因(仅失败时返回)"
+          },
+          "progress": {
+            "type": "string",
+            "description": "任务进度",
+            "example": "100%"
+          },
+          "submit_time": {
+            "type": "integer",
+            "description": "提交时间戳"
+          },
+          "start_time": {
+            "type": "integer",
+            "description": "开始时间戳"
+          },
+          "finish_time": {
+            "type": "integer",
+            "description": "完成时间戳"
+          },
+          "data": {
+            "$ref": "#/components/schemas/STTRawData"
+          }
+        }
+      },
+      "STTRawData": {
+        "type": "object",
+        "description": "上游任务的原始数据快照(轮询合并后写入)。提交阶段仅含 id/status，完成后合并 result 字段。",
+        "additionalProperties": true,
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "上游任务 ID",
+            "example": "upstream-abc-123"
+          },
+          "status": {
+            "type": "string",
+            "description": "上游任务状态",
+            "enum": [
+              "processing",
+              "done",
+              "failed",
+              "abandoned"
+            ],
+            "example": "done"
+          },
+          "error_message": {
+            "type": "string",
+            "description": "上游错误信息(仅失败时返回)"
+          },
+          "result": {
+            "$ref": "#/components/schemas/STTResult"
+          }
+        }
+      },
+      "STTResult": {
+        "type": "object",
+        "description": "上游原样返回的转录结果，字段随上游而定，常见字段如下。",
+        "additionalProperties": true,
+        "properties": {
+          "audio_duration": {
+            "type": "number",
+            "description": "音频时长(秒)，用于差额结算",
+            "example": 315.5
+          },
+          "segments": {
+            "type": "array",
+            "description": "分段转录结果",
+            "items": {
+              "$ref": "#/components/schemas/STTSegment"
+            }
+          }
+        }
+      },
+      "STTSegment": {
+        "type": "object",
+        "description": "转录分段(结构随上游而定)",
+        "additionalProperties": true,
+        "properties": {
+          "start": {
+            "type": "number",
+            "description": "分段起始时间(秒)",
+            "example": 0
+          },
+          "end": {
+            "type": "number",
+            "description": "分段结束时间(秒)",
+            "example": 5.2
+          },
+          "text": {
+            "type": "string",
+            "description": "分段文本内容"
           }
         }
       },

@@ -108,8 +108,8 @@ func TestValidate_Base64MissingFilename(t *testing.T) {
 func TestEstimateBilling(t *testing.T) {
 	a := &TaskAdaptor{}
 	ratios := a.EstimateBilling(nil, nil)
-	if ratios["minutes"] != 30 {
-		t.Fatalf("expected 30 minutes, got %v", ratios["minutes"])
+	if ratios["hours"] != 1 {
+		t.Fatalf("expected 1 hour, got %v", ratios["hours"])
 	}
 }
 
@@ -117,19 +117,19 @@ func TestEstimateBilling(t *testing.T) {
 
 func TestAdjustBilling_DirectDuration(t *testing.T) {
 	a := &TaskAdaptor{}
-	// 5 min 15 sec = 315s → ceil(315/60) = 6 min
+	// 5 min 15 sec = 315s → ceil(315/60) = 6 min → 6/60 hour
 	data, _ := common.Marshal(map[string]any{"audio_duration": 315.0})
 	task := &model.Task{
 		Data: data,
 		PrivateData: model.TaskPrivateData{
 			BillingContext: &model.TaskBillingContext{
-				ModelPrice: 0.006, // $0.006/min
+				ModelPrice: 0.36, // $0.36/hour
 				GroupRatio: 1.0,
 			},
 		},
 	}
 	quota := a.AdjustBillingOnComplete(task, nil)
-	expected := int(0.006 * common.QuotaPerUnit * 1.0 * 6)
+	expected := int(0.36 * common.QuotaPerUnit * 1.0 * (6.0 / 60.0))
 	if quota != expected {
 		t.Fatalf("expected quota %d, got %d", expected, quota)
 	}
@@ -137,7 +137,7 @@ func TestAdjustBilling_DirectDuration(t *testing.T) {
 
 func TestAdjustBilling_WrappedResult(t *testing.T) {
 	a := &TaskAdaptor{}
-	// 90 sec → ceil(90/60) = 2 min
+	// 90 sec → ceil(90/60) = 2 min → 2/60 hour
 	data, _ := common.Marshal(map[string]any{
 		"result": map[string]any{"audio_duration": 90.0},
 	})
@@ -151,7 +151,7 @@ func TestAdjustBilling_WrappedResult(t *testing.T) {
 		},
 	}
 	quota := a.AdjustBillingOnComplete(task, nil)
-	expected := int(0.01 * common.QuotaPerUnit * 1.5 * 2)
+	expected := int(0.01 * common.QuotaPerUnit * 1.5 * (2.0 / 60.0))
 	if quota != expected {
 		t.Fatalf("expected quota %d, got %d", expected, quota)
 	}
@@ -159,7 +159,7 @@ func TestAdjustBilling_WrappedResult(t *testing.T) {
 
 func TestAdjustBilling_ShortAudio(t *testing.T) {
 	a := &TaskAdaptor{}
-	// 5 sec → ceil(5/60) = 1 min (minimum)
+	// 5 sec → ceil(5/60) = 1 min (minimum) → 1/60 hour
 	data, _ := common.Marshal(map[string]any{"audio_duration": 5.0})
 	task := &model.Task{
 		Data: data,
@@ -171,7 +171,7 @@ func TestAdjustBilling_ShortAudio(t *testing.T) {
 		},
 	}
 	quota := a.AdjustBillingOnComplete(task, nil)
-	expected := int(0.01 * common.QuotaPerUnit * 1.0 * 1)
+	expected := int(0.01 * common.QuotaPerUnit * 1.0 * (1.0 / 60.0))
 	if quota != expected {
 		t.Fatalf("expected quota %d (1 min), got %d", expected, quota)
 	}
@@ -211,13 +211,13 @@ func TestBuildRequestURL(t *testing.T) {
 // ── BuildRequestHeader ───────────────────────────────────────────────
 
 func TestBuildRequestHeader(t *testing.T) {
-	a := &TaskAdaptor{apiKey: "sk-test-123"}
+	a := &TaskAdaptor{apiKey: "asr_test-123"}
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	if err := a.BuildRequestHeader(nil, req, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := req.Header.Get("Authorization"); got != "Bearer sk-test-123" {
-		t.Errorf("auth header = %q", got)
+	if got := req.Header.Get("X-API-Key"); got != "asr_test-123" {
+		t.Errorf("api key header = %q", got)
 	}
 	if got := req.Header.Get("Content-Type"); got != "application/json" {
 		t.Errorf("content-type = %q", got)
@@ -270,23 +270,36 @@ func TestBuildRequestBody_StripsClientFields(t *testing.T) {
 
 func TestDoResponse_Success(t *testing.T) {
 	body, _ := common.Marshal(map[string]any{
-		"id":     "task-abc-123",
+		"id":     "upstream-abc-123",
 		"status": "processing",
 	})
 	resp := &http.Response{
 		StatusCode: http.StatusCreated,
 		Body:       io.NopCloser(io.Reader(io.NopCloser(jsonReader(body)))),
 	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_1"}}
+
 	a := &TaskAdaptor{}
-	id, data, taskErr := a.DoResponse(nil, resp, nil)
+	id, data, taskErr := a.DoResponse(c, resp, info)
 	if taskErr != nil {
 		t.Fatalf("unexpected error: %s", taskErr.Message)
 	}
-	if id != "task-abc-123" {
-		t.Errorf("expected id=task-abc-123, got %s", id)
+	// 返回值是上游真实 ID（供轮询用）
+	if id != "upstream-abc-123" {
+		t.Errorf("expected upstream id=upstream-abc-123, got %s", id)
 	}
 	if len(data) == 0 {
 		t.Error("expected non-empty taskData")
+	}
+	// 回写给客户端的是我们自己的公开 ID
+	var out map[string]any
+	if err := common.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("client response not valid json: %v", err)
+	}
+	if out["id"] != "task_public_1" {
+		t.Errorf("expected client id=task_public_1, got %v", out["id"])
 	}
 }
 
@@ -296,8 +309,12 @@ func TestDoResponse_EmptyID(t *testing.T) {
 		StatusCode: http.StatusCreated,
 		Body:       io.NopCloser(jsonReader(body)),
 	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public_1"}}
+
 	a := &TaskAdaptor{}
-	_, _, taskErr := a.DoResponse(nil, resp, nil)
+	_, _, taskErr := a.DoResponse(c, resp, info)
 	if taskErr == nil {
 		t.Fatal("expected error for empty ID")
 	}
@@ -465,21 +482,21 @@ func TestFetchTask_DoneMergesResult(t *testing.T) {
 func TestFetchTask_AuthHeader(t *testing.T) {
 	var gotAuth string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotAuth = r.Header.Get("Authorization")
+		gotAuth = r.Header.Get("X-API-Key")
 		w.Header().Set("Content-Type", "application/json")
 		writeJSON(w, map[string]any{"id": "t1", "status": "processing"})
 	}))
 	defer ts.Close()
 
 	a := &TaskAdaptor{}
-	resp, err := a.FetchTask(ts.URL, "my-secret-key", map[string]any{"task_id": "t1"}, "")
+	resp, err := a.FetchTask(ts.URL, "asr_my-secret-key", map[string]any{"task_id": "t1"}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	resp.Body.Close()
 
-	if gotAuth != "Bearer my-secret-key" {
-		t.Errorf("expected Bearer auth, got %q", gotAuth)
+	if gotAuth != "asr_my-secret-key" {
+		t.Errorf("expected X-API-Key auth, got %q", gotAuth)
 	}
 }
 
@@ -495,17 +512,18 @@ func TestFetchTask_InvalidTaskID(t *testing.T) {
 
 func TestBillingFlow_PreChargeVsActual(t *testing.T) {
 	a := &TaskAdaptor{}
-	modelPrice := 0.006 // $0.006/min
+	modelPrice := 0.36 // $0.36/hour
 	groupRatio := 1.0
 
-	// Pre-charge: 30 min
+	// Pre-charge: 1 hour
 	ratios := a.EstimateBilling(nil, nil)
-	preChargeMinutes := ratios["minutes"]
-	preChargeQuota := int(modelPrice * common.QuotaPerUnit * groupRatio * preChargeMinutes)
+	preChargeHours := ratios["hours"]
+	preChargeQuota := int(modelPrice * common.QuotaPerUnit * groupRatio * preChargeHours)
 
-	// Actual: 5 min 15 sec = 315s → 6 min
+	// Actual: 5 min 15 sec = 315s → ceil = 6 min → 6/60 hour
 	actualDuration := 315.0
 	actualMinutes := math.Ceil(actualDuration / 60.0)
+	actualHours := actualMinutes / 60.0
 	data, _ := common.Marshal(map[string]any{"audio_duration": actualDuration})
 	task := &model.Task{
 		Data: data,
@@ -517,7 +535,7 @@ func TestBillingFlow_PreChargeVsActual(t *testing.T) {
 		},
 	}
 	actualQuota := a.AdjustBillingOnComplete(task, nil)
-	expectedActual := int(modelPrice * common.QuotaPerUnit * groupRatio * actualMinutes)
+	expectedActual := int(modelPrice * common.QuotaPerUnit * groupRatio * actualHours)
 
 	if actualQuota != expectedActual {
 		t.Errorf("actual quota: expected %d, got %d", expectedActual, actualQuota)
@@ -530,8 +548,8 @@ func TestBillingFlow_PreChargeVsActual(t *testing.T) {
 	if refund <= 0 {
 		t.Error("expected positive refund")
 	}
-	t.Logf("pre-charge=%d, actual=%d, refund=%d (%.0f min pre / %.0f min actual)",
-		preChargeQuota, actualQuota, refund, preChargeMinutes, actualMinutes)
+	t.Logf("pre-charge=%d, actual=%d, refund=%d (%.2f h pre / %.2f h actual)",
+		preChargeQuota, actualQuota, refund, preChargeHours, actualHours)
 }
 
 // ── helpers ──────────────────────────────────────────────────────────
