@@ -114,6 +114,58 @@ func RecordQuotaLog(userId int, logType int, quotaDelta int, content string) {
 	}
 }
 
+// RecordLogWithAdminInfo 记录操作日志，并将管理员相关信息存入 Other.admin_info，
+// 使 formatUserLogs 对非管理员查看者剥离，避免操作管理员身份泄露给目标用户。
+func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo map[string]interface{}) {
+	if logType == LogTypeConsume && !common.LogConsumeEnabled {
+		return
+	}
+	username, _ := GetUsernameById(userId, false)
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      logType,
+		Content:   content,
+	}
+	if len(adminInfo) > 0 {
+		other := map[string]interface{}{
+			"admin_info": adminInfo,
+		}
+		log.Other = common.MapToJsonStr(other)
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record log: " + err.Error())
+	}
+}
+
+// RecordQuotaLogWithAdminInfo 同时写入结构化 quota delta 与 Other.admin_info，
+// 用于管理员手动调整用户额度：既保留按金额聚合的运营统计，又避免在用户可见的
+// 日志内容中泄露操作管理员身份。
+func RecordQuotaLogWithAdminInfo(userId int, logType int, quotaDelta int, content string, adminInfo map[string]interface{}) {
+	if logType == LogTypeConsume && !common.LogConsumeEnabled {
+		return
+	}
+	username, _ := GetUsernameById(userId, false)
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      logType,
+		Content:   content,
+		Quota:     quotaDelta,
+	}
+	if len(adminInfo) > 0 {
+		other := map[string]interface{}{
+			"admin_info": adminInfo,
+		}
+		log.Other = common.MapToJsonStr(other)
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record quota log: " + err.Error())
+	}
+}
+
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other map[string]interface{}) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
