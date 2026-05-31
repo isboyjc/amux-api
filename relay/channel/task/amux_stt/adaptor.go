@@ -102,14 +102,18 @@ func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, _ *relaycommon.RelayInfo) 
 
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.TaskInfo) int {
 	result := parseTaskResult(task.Data)
+	bc := task.PrivateData.BillingContext
 
-	// 优先使用上游返回的实际金额（RMB），按固定汇率折算 quota，不再乘 GroupRatio。
+	// 优先使用上游返回的实际金额（RMB），按固定汇率折算 quota，并乘以分组倍率（与预扣口径一致）。
 	if result.Billing != nil && result.Billing.Amount > 0 {
-		return int(result.Billing.Amount / rmbToUSDRate * common.QuotaPerUnit)
+		groupRatio := 1.0
+		if bc != nil {
+			groupRatio = bc.GroupRatio
+		}
+		return int(result.Billing.Amount / rmbToUSDRate * common.QuotaPerUnit * groupRatio)
 	}
 
 	// 回退：上游未返回 billing 时，按音频时长（分钟向上取整，最低 1 分钟）× ModelPrice($/小时) × GroupRatio 计费。
-	bc := task.PrivateData.BillingContext
 	if bc == nil || bc.ModelPrice <= 0 || result.AudioDuration <= 0 {
 		return 0
 	}
@@ -137,10 +141,10 @@ func parseTaskResult(data []byte) taskResultHeader {
 }
 
 // SanitizeResultForClient 调整对客户端返回的结果快照中的 billing 块：
-// 所有金额字段按固定汇率折算为网关单位（USD，与预扣/退款一致），移除上游账户余额
-// balance，保留 billable_minutes、mode 等非金额字段。
+// 所有金额字段按固定汇率折算为网关单位（USD）并乘以分组倍率 groupRatio（与实际扣费口径一致），
+// 移除上游账户余额 balance，保留 billable_minutes、mode 等非金额字段。
 // 不修改入参（DB 中保留上游原始数据），解析失败或无 billing 时原样返回。
-func SanitizeResultForClient(data []byte) []byte {
+func SanitizeResultForClient(data []byte, groupRatio float64) []byte {
 	if len(data) == 0 {
 		return data
 	}
@@ -152,7 +156,7 @@ func SanitizeResultForClient(data []byte) []byte {
 	if billing == nil {
 		return data
 	}
-	convertBilling(billing)
+	convertBilling(billing, groupRatio)
 	out, err := common.Marshal(root)
 	if err != nil {
 		return data
@@ -172,9 +176,9 @@ func locateBilling(root map[string]any) map[string]any {
 	return nil
 }
 
-// convertBilling 原地转换 billing 块：删除 balance，把金额字段按固定汇率折算到网关单位。
+// convertBilling 原地转换 billing 块：删除 balance，把金额字段按固定汇率折算到网关单位并乘以分组倍率。
 // billable_minutes（计数）与字符串字段（mode 等）保持不变；detail 内全部为金额，递归折算。
-func convertBilling(billing map[string]any) {
+func convertBilling(billing map[string]any, groupRatio float64) {
 	delete(billing, "balance")
 	for k, v := range billing {
 		switch k {
@@ -182,20 +186,20 @@ func convertBilling(billing map[string]any) {
 			continue
 		case "detail":
 			if detail, ok := v.(map[string]any); ok {
-				convertMoneyMap(detail)
+				convertMoneyMap(detail, groupRatio)
 			}
 		default:
 			if f, ok := v.(float64); ok {
-				billing[k] = f / rmbToUSDRate
+				billing[k] = f / rmbToUSDRate * groupRatio
 			}
 		}
 	}
 }
 
-func convertMoneyMap(m map[string]any) {
+func convertMoneyMap(m map[string]any, groupRatio float64) {
 	for k, v := range m {
 		if f, ok := v.(float64); ok {
-			m[k] = f / rmbToUSDRate
+			m[k] = f / rmbToUSDRate * groupRatio
 		}
 	}
 }

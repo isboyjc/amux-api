@@ -187,7 +187,7 @@ func TestAdjustBilling_NoBillingContext(t *testing.T) {
 
 func TestAdjustBilling_UpstreamAmount(t *testing.T) {
 	a := &TaskAdaptor{}
-	// 上游返回实际金额 0.20 RMB，应按 amount/6.9*QuotaPerUnit 折算，且不受 GroupRatio 影响。
+	// 上游返回实际金额 0.20 RMB，应按 amount/6.9*QuotaPerUnit*GroupRatio 折算。
 	data, _ := common.Marshal(map[string]any{
 		"result": map[string]any{
 			"audio_duration": 315.0,
@@ -199,14 +199,14 @@ func TestAdjustBilling_UpstreamAmount(t *testing.T) {
 		PrivateData: model.TaskPrivateData{
 			BillingContext: &model.TaskBillingContext{
 				ModelPrice: 0.36,
-				GroupRatio: 2.0, // 设非 1，验证未参与上游金额折算
+				GroupRatio: 2.0, // 验证参与上游金额折算
 			},
 		},
 	}
 	quota := a.AdjustBillingOnComplete(task, nil)
-	expected := int(0.20 / 6.9 * common.QuotaPerUnit)
+	expected := int(0.20 / 6.9 * common.QuotaPerUnit * 2.0)
 	if quota != expected {
-		t.Fatalf("expected quota %d (amount/6.9*QuotaPerUnit), got %d", expected, quota)
+		t.Fatalf("expected quota %d (amount/6.9*QuotaPerUnit*GroupRatio), got %d", expected, quota)
 	}
 }
 
@@ -284,7 +284,8 @@ func TestSanitizeResultForClient_ConvertsAndStrips(t *testing.T) {
 		},
 	})
 
-	out := SanitizeResultForClient(data)
+	const groupRatio = 1.5
+	out := SanitizeResultForClient(data, groupRatio)
 
 	var root map[string]any
 	if err := common.Unmarshal(out, &root); err != nil {
@@ -301,13 +302,13 @@ func TestSanitizeResultForClient_ConvertsAndStrips(t *testing.T) {
 	if got := billing["mode"].(string); got != "zh_lite" {
 		t.Errorf("mode should stay zh_lite, got %v", got)
 	}
-	assertClose(t, "amount", billing["amount"].(float64), 0.0558/rmbToUSDRate)
+	assertClose(t, "amount", billing["amount"].(float64), 0.0558/rmbToUSDRate*groupRatio)
 
 	detail := billing["detail"].(map[string]any)
-	assertClose(t, "detail.base_amount", detail["base_amount"].(float64), 0.0225/rmbToUSDRate)
-	assertClose(t, "detail.base_price_per_hour", detail["base_price_per_hour"].(float64), 0.27/rmbToUSDRate)
-	assertClose(t, "detail.diarize_amount", detail["diarize_amount"].(float64), 0.0333/rmbToUSDRate)
-	assertClose(t, "detail.total", detail["total"].(float64), 0.0558/rmbToUSDRate)
+	assertClose(t, "detail.base_amount", detail["base_amount"].(float64), 0.0225/rmbToUSDRate*groupRatio)
+	assertClose(t, "detail.base_price_per_hour", detail["base_price_per_hour"].(float64), 0.27/rmbToUSDRate*groupRatio)
+	assertClose(t, "detail.diarize_amount", detail["diarize_amount"].(float64), 0.0333/rmbToUSDRate*groupRatio)
+	assertClose(t, "detail.total", detail["total"].(float64), 0.0558/rmbToUSDRate*groupRatio)
 	if got := detail["mode"].(string); got != "zh_lite" {
 		t.Errorf("detail.mode should stay zh_lite, got %v", got)
 	}
@@ -319,7 +320,7 @@ func TestSanitizeResultForClient_NoBilling(t *testing.T) {
 		"status": "done",
 		"result": map[string]any{"audio_duration": 90.0},
 	})
-	out := SanitizeResultForClient(data)
+	out := SanitizeResultForClient(data, 1.0)
 	if string(out) != string(data) {
 		t.Errorf("expected unchanged data when no billing present")
 	}
