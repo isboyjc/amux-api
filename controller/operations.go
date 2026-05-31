@@ -716,7 +716,9 @@ func GetOperationsBalanceSnapshot(c *gin.Context) {
 		EnabledUsers    int64 `json:"enabled_users"`
 	}{}
 
+	// 用户余额总和排除管理员/超管（role >= RoleAdminUser），只统计普通用户的余额负债。
 	if err := model.DB.Table("users").
+		Where("role < ?", common.RoleAdminUser).
 		Select("COALESCE(SUM(quota), 0)").
 		Scan(&out.TotalQuota).Error; err != nil {
 		common.ApiError(c, err)

@@ -100,13 +100,12 @@ const RevenueTab = ({ data, loading, t }) => {
       label: { visible: true },
       tooltip: {
         mark: {
-          title: { value: (d) => d?.[0]?.datum?.type },
+          title: { value: (datum) => datum?.type },
           content: [
-            { key: t('用户数'), value: (d) => d?.datum?.value },
+            { key: t('用户数'), value: (datum) => datum?.value },
             {
               key: t('金额'),
-              value: (d) =>
-                Number(d?.datum?.amount || 0).toFixed(2),
+              value: (datum) => Number(datum?.amount || 0).toFixed(2),
             },
           ],
         },
