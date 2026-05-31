@@ -668,8 +668,12 @@ func sttFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto
 	}
 
 	taskDto := TaskModel2Dto(originTask)
-	// 对客户端隐藏上游原始 billing：金额折算为网关单位（与预扣/退款一致），并移除上游账户余额。
-	taskDto.Data = taskamuxstt.SanitizeResultForClient(originTask.Data)
+	// 对客户端隐藏上游原始 billing：金额折算为网关单位并乘以分组倍率（与实际扣费一致），并移除上游账户余额。
+	groupRatio := 1.0
+	if bc := originTask.PrivateData.BillingContext; bc != nil {
+		groupRatio = bc.GroupRatio
+	}
+	taskDto.Data = taskamuxstt.SanitizeResultForClient(originTask.Data, groupRatio)
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
 		Data: taskDto,
