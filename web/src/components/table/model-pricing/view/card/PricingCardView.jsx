@@ -267,6 +267,9 @@ const PricingCardView = ({
     if (model.billing_mode === 'tiered_expr' && model.billing_expr) {
       return null;
     }
+    if (model.billing_mode === 'per_hour') {
+      return <PlainChip accent>{t('按小时计费')}</PlainChip>;
+    }
     if (model.quota_type === 1) {
       return <PlainChip accent>{t('按次计费')}</PlainChip>;
     }
@@ -780,7 +783,7 @@ const PricingCardView = ({
                       )}
                     <span style={{ color: 'var(--semi-color-text-2)' }}>
                       {' '}
-                      / {t('次')}
+                      / {priceData.isPerHour ? t('小时') : t('次')}
                     </span>
                   </div>
                 )}

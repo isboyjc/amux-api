@@ -81,6 +81,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		if !isLegacy && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, reason)
 		}
+		NotifyTaskCallback(ctx, task)
 	}
 
 	if timedOutCount > 0 {
@@ -245,6 +246,8 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		err = task.Update()
 		if err != nil {
 			common.SysLog("UpdateSunoTask task error: " + err.Error())
+		} else if task.Status == model.TaskStatusFailure || task.Status == model.TaskStatusSuccess {
+			NotifyTaskCallback(ctx, task)
 		}
 	}
 	return nil
@@ -447,8 +450,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
 			// 经过管理员配置的前缀脱敏，避免把上游资源直链直接落到用户可见的 URL。
 			task.PrivateData.ResultURL = operation_setting.ApplyTaskURLRewrite(taskResult.Url)
-		} else {
-			// No URL from adaptor — construct proxy URL using public task ID
+		} else if ch.Type != constant.ChannelTypeAmux {
+			// No URL from adaptor — construct proxy URL using public task ID.
+			// 非媒体任务（如 Amux STT）结果内联在 data 字段，不生成视频代理 URL。
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
 		shouldSettle = true
@@ -498,6 +502,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)
+	}
+	if isDone && (shouldSettle || shouldRefund) {
+		NotifyTaskCallback(ctx, task)
 	}
 
 	return nil

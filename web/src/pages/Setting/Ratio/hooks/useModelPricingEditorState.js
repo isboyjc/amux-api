@@ -138,6 +138,17 @@ const buildModelState = (name, sourceMaps) => {
     };
   }
 
+  if (billingMode === 'per_hour') {
+    return {
+      ...EMPTY_MODEL,
+      name,
+      billingMode: 'per_hour',
+      fixedPrice: toNumericString(sourceMaps.ModelPrice[name]),
+      rawRatios: { ...EMPTY_MODEL.rawRatios },
+      hasConflict: false,
+    };
+  }
+
   const modelRatio = toNumericString(sourceMaps.ModelRatio[name]);
   const completionRatio = toNumericString(sourceMaps.CompletionRatio[name]);
   const completionRatioMeta = normalizeCompletionRatioMeta(
@@ -235,6 +246,9 @@ export const getModelWarnings = (model, t) => {
     return [];
   }
   const warnings = [];
+  if (model.billingMode === 'per_hour' && !hasValue(model.fixedPrice)) {
+    warnings.push(t('按小时计费需要填写每小时价格，否则不会计费。'));
+  }
   const hasDerivedPricing = [
     model.inputPrice,
     model.completionPrice,
@@ -303,6 +317,10 @@ export const buildSummaryText = (model, t) => {
     return `${t('阶梯计费')} (${tierCount} ${t('档')})${requestRuleSuffix}`;
   }
 
+  if (model.billingMode === 'per_hour' && hasValue(model.fixedPrice)) {
+    return `${t('按小时')} $${model.fixedPrice} / ${t('小时')}${requestRuleSuffix}`;
+  }
+
   if (model.billingMode === 'per-request' && hasValue(model.fixedPrice)) {
     return `${t('按次')} $${model.fixedPrice} / ${t('次')}${requestRuleSuffix}`;
   }
@@ -346,7 +364,7 @@ const serializeModel = (model, t) => {
     AudioCompletionRatio: null,
   };
 
-  if (model.billingMode === 'per-request') {
+  if (model.billingMode === 'per-request' || model.billingMode === 'per_hour') {
     if (hasValue(model.fixedPrice)) {
       result.ModelPrice = toNormalizedNumber(model.fixedPrice);
     }
@@ -487,7 +505,7 @@ export const buildPreviewRows = (model, t) => {
     return rows;
   }
 
-  if (model.billingMode === 'per-request') {
+  if (model.billingMode === 'per-request' || model.billingMode === 'per_hour') {
     const rows = [
       {
         key: 'ModelPrice',
@@ -1049,6 +1067,8 @@ export function useModelPricingEditorState({
             tieredOutput['billing_setting.billing_mode'][model.name] = 'tiered_expr';
             tieredOutput['billing_setting.billing_expr'][model.name] = finalBillingExpr;
           }
+        } else if (model.billingMode === 'per_hour') {
+          tieredOutput['billing_setting.billing_mode'][model.name] = 'per_hour';
         }
 
         // Always serialize ratio/price values for all models (including
