@@ -2206,6 +2206,7 @@
     "回调支付方式": "Méthode de paiement du rappel",
     "回调调用者IP": "IP de l'appelant du rappel",
     "服务器IP": "IP du serveur",
+    "节点名称": "Nom du nœud",
     "系统版本": "Version du système",
     "审计信息": "Informations d'audit",
     "该记录由旧版本实例写入，缺少审计信息，建议将实例升级至最新版本以便记录服务器IP、回调IP、支付方式与系统版本等审计字段。": "Cet enregistrement a été écrit par une ancienne version de l'instance et ne contient pas d'informations d'audit. Veuillez mettre à jour l'instance vers la dernière version afin d'enregistrer les champs d'audit tels que l'IP du serveur, l'IP de rappel, le mode de paiement et la version du système.",

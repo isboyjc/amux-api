@@ -2178,6 +2178,7 @@
     "回调支付方式": "Phương thức thanh toán callback",
     "回调调用者IP": "IP người gọi callback",
     "服务器IP": "IP máy chủ",
+    "节点名称": "Tên nút",
     "系统版本": "Phiên bản hệ thống",
     "审计信息": "Thông tin kiểm toán",
     "该记录由旧版本实例写入，缺少审计信息，建议将实例升级至最新版本以便记录服务器IP、回调IP、支付方式与系统版本等审计字段。": "Bản ghi này được ghi bởi phiên bản cũ của instance và thiếu thông tin kiểm toán. Khuyến nghị nâng cấp instance lên phiên bản mới nhất để ghi lại các trường kiểm toán như IP máy chủ, IP callback, phương thức thanh toán và phiên bản hệ thống.",

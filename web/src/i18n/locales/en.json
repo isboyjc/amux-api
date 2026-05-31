@@ -2224,6 +2224,7 @@
     "回调支付方式": "Callback Payment Method",
     "回调调用者IP": "Callback Caller IP",
     "服务器IP": "Server IP",
+    "节点名称": "Node Name",
     "系统版本": "System Version",
     "审计信息": "Audit Info",
     "该记录由旧版本实例写入，缺少审计信息，建议将实例升级至最新版本以便记录服务器IP、回调IP、支付方式与系统版本等审计字段。": "This record was written by an older instance and lacks audit info. Please upgrade the instance to the latest version so that server IP, callback IP, payment method, and system version audit fields are recorded.",

@@ -112,7 +112,8 @@ services:
       
       # 启用批量更新（提升数据库写入性能）
       - BATCH_UPDATE_ENABLED=true
-      
+      - NODE_NAME=new-api-node-1  # 节点名称，用于审计日志中标识节点身份；多节点/容器部署时建议设置 (Node name used in audit logs; recommended when running multiple instances or in containers)
+
       # 启用内存缓存（提升响应速度）
       - MEMORY_CACHE_ENABLED=true
       
