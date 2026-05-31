@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	taskamuxstt "github.com/QuantumNous/new-api/relay/channel/task/amux_stt"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -25,6 +26,12 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/sjson"
 )
+
+// taskSubmitStatusOK 判断上游任务提交响应是否成功。
+// 异步任务上游常返回非 200 的 2xx（如 201/202/204），均应视为提交成功。
+func taskSubmitStatusOK(statusCode int) bool {
+	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+}
 
 type TaskSubmitResult struct {
 	UpstreamTaskID string
@@ -225,7 +232,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
+	if resp != nil && !taskSubmitStatusOK(resp.StatusCode) {
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
@@ -660,9 +667,12 @@ func sttFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto
 		return
 	}
 
+	taskDto := TaskModel2Dto(originTask)
+	// 对客户端隐藏上游原始 billing：金额折算为网关单位（与预扣/退款一致），并移除上游账户余额。
+	taskDto.Data = taskamuxstt.SanitizeResultForClient(originTask.Data)
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
-		Data: TaskModel2Dto(originTask),
+		Data: taskDto,
 	})
 	return
 }

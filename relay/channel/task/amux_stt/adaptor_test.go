@@ -185,6 +185,153 @@ func TestAdjustBilling_NoBillingContext(t *testing.T) {
 	}
 }
 
+func TestAdjustBilling_UpstreamAmount(t *testing.T) {
+	a := &TaskAdaptor{}
+	// 上游返回实际金额 0.20 RMB，应按 amount/6.9*QuotaPerUnit 折算，且不受 GroupRatio 影响。
+	data, _ := common.Marshal(map[string]any{
+		"result": map[string]any{
+			"audio_duration": 315.0,
+			"billing":        map[string]any{"amount": 0.20},
+		},
+	})
+	task := &model.Task{
+		Data: data,
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice: 0.36,
+				GroupRatio: 2.0, // 设非 1，验证未参与上游金额折算
+			},
+		},
+	}
+	quota := a.AdjustBillingOnComplete(task, nil)
+	expected := int(0.20 / 6.9 * common.QuotaPerUnit)
+	if quota != expected {
+		t.Fatalf("expected quota %d (amount/6.9*QuotaPerUnit), got %d", expected, quota)
+	}
+}
+
+func TestAdjustBilling_NoUpstreamAmountFallsBack(t *testing.T) {
+	a := &TaskAdaptor{}
+	// 无 billing 字段时回退到 audio_duration 逻辑：90s → ceil = 2 min → 2/60 hour。
+	data, _ := common.Marshal(map[string]any{
+		"result": map[string]any{"audio_duration": 90.0},
+	})
+	task := &model.Task{
+		Data: data,
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice: 0.01,
+				GroupRatio: 1.5,
+			},
+		},
+	}
+	quota := a.AdjustBillingOnComplete(task, nil)
+	expected := int(0.01 * common.QuotaPerUnit * 1.5 * (2.0 / 60.0))
+	if quota != expected {
+		t.Fatalf("expected fallback quota %d, got %d", expected, quota)
+	}
+}
+
+func TestAdjustBilling_ZeroUpstreamAmountFallsBack(t *testing.T) {
+	a := &TaskAdaptor{}
+	// billing.amount == 0 时同样回退到 audio_duration 逻辑：90s → ceil = 2 min。
+	data, _ := common.Marshal(map[string]any{
+		"result": map[string]any{
+			"audio_duration": 90.0,
+			"billing":        map[string]any{"amount": 0.0},
+		},
+	})
+	task := &model.Task{
+		Data: data,
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice: 0.01,
+				GroupRatio: 1.5,
+			},
+		},
+	}
+	quota := a.AdjustBillingOnComplete(task, nil)
+	expected := int(0.01 * common.QuotaPerUnit * 1.5 * (2.0 / 60.0))
+	if quota != expected {
+		t.Fatalf("expected fallback quota %d, got %d", expected, quota)
+	}
+}
+
+// ── SanitizeResultForClient ──────────────────────────────────────────
+
+func TestSanitizeResultForClient_ConvertsAndStrips(t *testing.T) {
+	// 真实上游样例：amount/detail 为 RMB，含 balance（上游账户余额）。
+	data, _ := common.Marshal(map[string]any{
+		"id":     "t1",
+		"status": "done",
+		"result": map[string]any{
+			"audio_duration": 273.975,
+			"billing": map[string]any{
+				"amount":           0.0558,
+				"balance":          4.7042,
+				"billable_minutes": 5,
+				"mode":             "zh_lite",
+				"detail": map[string]any{
+					"base_amount":          0.0225,
+					"base_price_per_hour":  0.27,
+					"diarize_amount":       0.0333,
+					"diarize_price_per_hour": 0.4,
+					"subtotal":             0.0558,
+					"total":                0.0558,
+					"mode":                 "zh_lite",
+				},
+			},
+		},
+	})
+
+	out := SanitizeResultForClient(data)
+
+	var root map[string]any
+	if err := common.Unmarshal(out, &root); err != nil {
+		t.Fatalf("output not valid json: %v", err)
+	}
+	billing := root["result"].(map[string]any)["billing"].(map[string]any)
+
+	if _, ok := billing["balance"]; ok {
+		t.Error("balance should be removed from client billing")
+	}
+	if got := billing["billable_minutes"].(float64); got != 5 {
+		t.Errorf("billable_minutes should stay 5, got %v", got)
+	}
+	if got := billing["mode"].(string); got != "zh_lite" {
+		t.Errorf("mode should stay zh_lite, got %v", got)
+	}
+	assertClose(t, "amount", billing["amount"].(float64), 0.0558/rmbToUSDRate)
+
+	detail := billing["detail"].(map[string]any)
+	assertClose(t, "detail.base_amount", detail["base_amount"].(float64), 0.0225/rmbToUSDRate)
+	assertClose(t, "detail.base_price_per_hour", detail["base_price_per_hour"].(float64), 0.27/rmbToUSDRate)
+	assertClose(t, "detail.diarize_amount", detail["diarize_amount"].(float64), 0.0333/rmbToUSDRate)
+	assertClose(t, "detail.total", detail["total"].(float64), 0.0558/rmbToUSDRate)
+	if got := detail["mode"].(string); got != "zh_lite" {
+		t.Errorf("detail.mode should stay zh_lite, got %v", got)
+	}
+}
+
+func TestSanitizeResultForClient_NoBilling(t *testing.T) {
+	data, _ := common.Marshal(map[string]any{
+		"id":     "t1",
+		"status": "done",
+		"result": map[string]any{"audio_duration": 90.0},
+	})
+	out := SanitizeResultForClient(data)
+	if string(out) != string(data) {
+		t.Errorf("expected unchanged data when no billing present")
+	}
+}
+
+func assertClose(t *testing.T, name string, got, want float64) {
+	t.Helper()
+	if math.Abs(got-want) > 1e-9 {
+		t.Errorf("%s: got %v, want %v", name, got, want)
+	}
+}
+
 // ── BuildRequestURL ──────────────────────────────────────────────────
 
 func TestBuildRequestURL(t *testing.T) {

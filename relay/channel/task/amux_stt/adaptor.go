@@ -51,9 +51,17 @@ type mergedFetchResponse struct {
 	Result json.RawMessage `json:"result,omitempty"`
 }
 
-type taskResultHeader struct {
-	AudioDuration float64 `json:"audio_duration"`
+type sttBilling struct {
+	Amount float64 `json:"amount"`
 }
+
+type taskResultHeader struct {
+	AudioDuration float64     `json:"audio_duration"`
+	Billing       *sttBilling `json:"billing"`
+}
+
+// 上游 billing.amount 单位为 RMB，按固定汇率折算为 quota：amount / rmbToUSDRate × QuotaPerUnit。
+const rmbToUSDRate = 6.9
 
 // ── Adaptor ──────────────────────────────────────────────────────────
 
@@ -93,30 +101,103 @@ func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, _ *relaycommon.RelayInfo) 
 }
 
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.TaskInfo) int {
+	result := parseTaskResult(task.Data)
+
+	// 优先使用上游返回的实际金额（RMB），按固定汇率折算 quota，不再乘 GroupRatio。
+	if result.Billing != nil && result.Billing.Amount > 0 {
+		return int(result.Billing.Amount / rmbToUSDRate * common.QuotaPerUnit)
+	}
+
+	// 回退：上游未返回 billing 时，按音频时长（分钟向上取整，最低 1 分钟）× ModelPrice($/小时) × GroupRatio 计费。
 	bc := task.PrivateData.BillingContext
-	if bc == nil || bc.ModelPrice <= 0 {
+	if bc == nil || bc.ModelPrice <= 0 || result.AudioDuration <= 0 {
 		return 0
 	}
-
-	var result taskResultHeader
-	if err := common.Unmarshal(task.Data, &result); err != nil || result.AudioDuration <= 0 {
-		// result may be wrapped in a "result" field from our merged fetch response
-		var wrapped struct {
-			Result taskResultHeader `json:"result"`
-		}
-		if err2 := common.Unmarshal(task.Data, &wrapped); err2 != nil || wrapped.Result.AudioDuration <= 0 {
-			return 0
-		}
-		result = wrapped.Result
-	}
-
-	// ModelPrice 是 $/小时；音频时长按分钟向上取整（最低 1 分钟）后换算成小时计费。
 	actualMinutes := math.Ceil(result.AudioDuration / 60.0)
 	if actualMinutes < 1 {
 		actualMinutes = 1
 	}
 	actualHours := actualMinutes / 60.0
 	return int(bc.ModelPrice * common.QuotaPerUnit * bc.GroupRatio * actualHours)
+}
+
+// parseTaskResult 解析任务结果头，兼容两种存储形态：task.Data 直接是 result，或包在 "result" 字段下（轮询合并的 mergedFetchResponse）。
+func parseTaskResult(data []byte) taskResultHeader {
+	var result taskResultHeader
+	if err := common.Unmarshal(data, &result); err == nil && (result.AudioDuration > 0 || result.Billing != nil) {
+		return result
+	}
+	var wrapped struct {
+		Result taskResultHeader `json:"result"`
+	}
+	if err := common.Unmarshal(data, &wrapped); err == nil {
+		return wrapped.Result
+	}
+	return taskResultHeader{}
+}
+
+// SanitizeResultForClient 调整对客户端返回的结果快照中的 billing 块：
+// 所有金额字段按固定汇率折算为网关单位（USD，与预扣/退款一致），移除上游账户余额
+// balance，保留 billable_minutes、mode 等非金额字段。
+// 不修改入参（DB 中保留上游原始数据），解析失败或无 billing 时原样返回。
+func SanitizeResultForClient(data []byte) []byte {
+	if len(data) == 0 {
+		return data
+	}
+	var root map[string]any
+	if err := common.Unmarshal(data, &root); err != nil {
+		return data
+	}
+	billing := locateBilling(root)
+	if billing == nil {
+		return data
+	}
+	convertBilling(billing)
+	out, err := common.Marshal(root)
+	if err != nil {
+		return data
+	}
+	return out
+}
+
+func locateBilling(root map[string]any) map[string]any {
+	if result, ok := root["result"].(map[string]any); ok {
+		if billing, ok := result["billing"].(map[string]any); ok {
+			return billing
+		}
+	}
+	if billing, ok := root["billing"].(map[string]any); ok {
+		return billing
+	}
+	return nil
+}
+
+// convertBilling 原地转换 billing 块：删除 balance，把金额字段按固定汇率折算到网关单位。
+// billable_minutes（计数）与字符串字段（mode 等）保持不变；detail 内全部为金额，递归折算。
+func convertBilling(billing map[string]any) {
+	delete(billing, "balance")
+	for k, v := range billing {
+		switch k {
+		case "billable_minutes":
+			continue
+		case "detail":
+			if detail, ok := v.(map[string]any); ok {
+				convertMoneyMap(detail)
+			}
+		default:
+			if f, ok := v.(float64); ok {
+				billing[k] = f / rmbToUSDRate
+			}
+		}
+	}
+}
+
+func convertMoneyMap(m map[string]any) {
+	for k, v := range m {
+		if f, ok := v.(float64); ok {
+			m[k] = f / rmbToUSDRate
+		}
+	}
 }
 
 // ── Request Building ─────────────────────────────────────────────────
