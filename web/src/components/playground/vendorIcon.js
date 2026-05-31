@@ -67,6 +67,8 @@ const VENDOR_RULES = [
   // lobe-icons 未收录的小米品牌图标，由前端 CUSTOM_BRAND_ICONS 提供 fallback
   ['mimo', 'Xiaomi', 'Xiaomi'],
   ['xiaomi', 'Xiaomi', 'Xiaomi'],
+  // 站点自有品牌，图标复用站点 logo（CUSTOM_BRAND_ICONS.Amux 提供）
+  ['amux', 'Amux', 'Amux'],
 ];
 
 const FALLBACK = { name: 'Other', iconKey: 'Layers' };

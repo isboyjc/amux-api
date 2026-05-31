@@ -41,6 +41,7 @@ var defaultVendorRules = map[string]string{
 	"vidu":     "Vidu",
 	"mimo":     "Xiaomi",
 	"xiaomi":   "Xiaomi",
+	"amux":     "Amux",
 }
 
 // 供应商默认图标映射
@@ -72,6 +73,7 @@ var defaultVendorIcons = map[string]string{
 	"Microsoft":  "AzureAI",
 	"Azure":      "AzureAI",
 	"Xiaomi":     "Xiaomi",
+	"Amux":       "Amux",
 }
 
 // initDefaultVendorMapping 简化的默认供应商映射

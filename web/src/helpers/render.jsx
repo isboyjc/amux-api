@@ -123,8 +123,26 @@ import {
 // @lobehub/icons 没有收录的厂商品牌图标兜底表。优先使用 lobe-icons，
 // 查不到再 fallback 到这里；最后才落到首字母 Avatar。
 // 新增一个未被 lobe-icons 覆盖的厂商时，在这里追加一行即可。
+// 站点自有品牌 Amux 的图标（lobe-icons 未收录），复用站点 logo。
+const AmuxLogo = ({ size = 14, ...rest }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox='0 0 128 128'
+    fill='none'
+    xmlns='http://www.w3.org/2000/svg'
+    {...rest}
+  >
+    <path
+      d='M4 96 C4 96, 24 12, 64 12 C104 12, 124 96, 124 96 Q124 102, 118 102 C94 102, 92 64, 64 64 C36 64, 34 102, 10 102 Q4 102, 4 96 Z'
+      fill='currentColor'
+    />
+  </svg>
+);
+
 const CUSTOM_BRAND_ICONS = {
   Xiaomi: SiXiaomi,
+  Amux: AmuxLogo,
 };
 
 // 获取侧边栏Lucide图标组件
@@ -430,6 +448,8 @@ export function getChannelIcon(channelType) {
       return <Doubao.Color size={iconSize} />;
     case 56: // Replicate
       return <Replicate size={iconSize} />;
+    case 58: // Amux（使用站点 logo）
+      return <AmuxLogo size={iconSize} />;
     case 8: // 自定义渠道
     case 22: // 知识库：FastGPT
       return <FastGPT.Color size={iconSize} />;
