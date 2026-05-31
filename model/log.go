@@ -65,6 +65,12 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "stream_status")
 			logs[i].Other = common.MapToJsonStr(otherMap)
 		}
+		// 充值日志的顶层 Ip 存的是回调来源/管理员补单时的调用方 IP（同样保存在
+		// admin_info.caller_ip，仅管理员可见）。非管理员视图必须剥离，避免把管理员
+		// 或网关 IP 泄露给充值用户本人。
+		if logs[i].Type == LogTypeTopup {
+			logs[i].Ip = ""
+		}
 		logs[i].Id = startIdx + i + 1
 	}
 }
