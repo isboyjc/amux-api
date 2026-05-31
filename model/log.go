@@ -114,6 +114,36 @@ func RecordQuotaLog(userId int, logType int, quotaDelta int, content string) {
 	}
 }
 
+// RecordTopupLog 记录充值日志，并把支付审计信息（服务器/调用者 IP、下单与回调
+// 支付方式、系统版本）写入 Other.admin_info，仅管理员可见（formatUserLogs 会对
+// 非管理员剥离）。
+func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
+	username, _ := GetUsernameById(userId, false)
+	adminInfo := map[string]interface{}{
+		"server_ip":               common.GetIp(),
+		"caller_ip":               callerIp,
+		"payment_method":          paymentMethod,
+		"callback_payment_method": callbackPaymentMethod,
+		"version":                 common.Version,
+	}
+	other := map[string]interface{}{
+		"admin_info": adminInfo,
+	}
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeTopup,
+		Content:   content,
+		Ip:        callerIp,
+		Other:     common.MapToJsonStr(other),
+	}
+	err := LOG_DB.Create(log).Error
+	if err != nil {
+		common.SysLog("failed to record topup log: " + err.Error())
+	}
+}
+
 // RecordLogWithAdminInfo 记录操作日志，并将管理员相关信息存入 Other.admin_info，
 // 使 formatUserLogs 对非管理员查看者剥离，避免操作管理员身份泄露给目标用户。
 func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo map[string]interface{}) {
