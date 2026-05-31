@@ -276,8 +276,8 @@ const Hero = ({ t }) => {
           <div className='flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8'>
             <div>
               <h1
-                className='text-white font-bold tracking-tight leading-none whitespace-normal md:whitespace-nowrap'
-                style={{ fontSize: 'clamp(2.5rem, 6vw, 5rem)' }}
+                className='font-bold tracking-tight leading-none whitespace-normal md:whitespace-nowrap'
+                style={{ fontSize: 'clamp(2.5rem, 6vw, 5rem)', color: '#fff' }}
               >
                 Seedance 2.0 for Amux
               </h1>

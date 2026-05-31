@@ -1,5 +1,5 @@
 /* ==================== Tailwind CSS 配置 ==================== */
-@layer tailwind-base, semi, tailwind-components, tailwind-utils;
+@layer seedance-nav, tailwind-base, semi, tailwind-components, tailwind-utils;
 
 @layer tailwind-base {
   @tailwind base;
@@ -1748,32 +1748,58 @@ html.dark .lp-badge {
   display: none;
 }
 
-/* Seedance 落地页：导航触顶透明（露出全屏 hero 视频），文字/图标转白保证可读 */
-header.sd-nav-transparent {
-  background: transparent !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
+/* Seedance 落地页：导航悬浮在 hero 上时透明（露出全屏 hero 视频），文字/图标统一转白。
+ *
+ * 必须放进最早声明的 seedance-nav 级联层（见文件顶部 @layer 顺序）：本项目 Tailwind 的
+ * base/components/utilities 都包在原生 @layer 里，而 CSS 级联层规则中——对 !important 声明，
+ * 「有层」优先于「无层」，且越早声明的层优先级越高。若把这些覆盖写成无层规则，会被
+ * tailwind-utils 层里 Semi Typography 上的 !text-* / dark:!text-* 等 !important 工具类压过
+ * （典型表现：已登录昵称带 dark:!text-gray-300，暗色主题下不会变白）。放进最早的层即可稳定取胜。
+ *
+ * 注意：用户下拉菜单由 Semi 通过 portal 渲染在 <header> 之外，不受这些选择器影响，
+ * 仍按正常明/暗色展示。 */
+@layer seedance-nav {
+  header.sd-nav-transparent {
+    background: transparent !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 
-header.sd-nav-transparent::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent);
-}
+  header.sd-nav-transparent::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.5), transparent);
+  }
 
-header.sd-nav-transparent,
-header.sd-nav-transparent a,
-header.sd-nav-transparent span,
-header.sd-nav-transparent button {
-  color: #fff !important;
-}
+  header.sd-nav-transparent,
+  header.sd-nav-transparent a,
+  header.sd-nav-transparent span,
+  header.sd-nav-transparent button {
+    color: #fff !important;
+  }
 
-header.sd-nav-transparent svg {
-  color: #fff !important;
-  stroke: currentColor;
+  /* Logo 右侧站名与右侧用户昵称是 Semi Typography（渲染为 h4/span.semi-typography），
+   * 自带 var(--semi-color-text-*) 颜色或 !text-* 工具类，这里统一覆盖为白。 */
+  header.sd-nav-transparent .semi-typography {
+    color: #fff !important;
+  }
+
+  header.sd-nav-transparent svg {
+    color: #fff !important;
+    stroke: currentColor;
+  }
+
+  /* 用户昵称下拉浮层用 getPopupContainer 挂在 header 内（非 body portal），会被上面的
+   * 转白规则误伤——亮色主题下浮层是白底，文字也被转白就成了「白底白字」。这里用
+   * revert-layer 让浮层内所有元素回退到 seedance-nav 层之外的取值（即各 Dropdown.Item
+   * 自身的 !text-semi-color-text-0 / dark:!text-zinc-200 等工具类），从而正常按明/暗色展示。 */
+  header.sd-nav-transparent .semi-dropdown,
+  header.sd-nav-transparent .semi-dropdown * {
+    color: revert-layer !important;
+  }
 }
 
 /* Seedance 落地页：Hero 底部滚动提示动画 */

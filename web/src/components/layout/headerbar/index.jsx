@@ -77,24 +77,27 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
 
   const { mainNavLinks } = useNavigation(t, docsLink, headerNavModules);
 
-  // Seedance 落地页触顶时让导航透明，以便露出全屏 hero 视频；滚动后恢复背景。
+  // Seedance 落地页：导航处于 hero 区域内时保持暗色透明展示（hero 视频多为暗色，
+  // 白字白图标可读），滚出 hero 后恢复正常亮/暗背景。hero 高度为 100dvh（最小 640），
+  // 导航条高 64（h-16），故滚动超过 heroH - navH 即视为离开 hero。
   const location = useLocation();
-  const [atTop, setAtTop] = useState(true);
+  const [inHero, setInHero] = useState(true);
   useEffect(() => {
     // 桌面端页面实际滚动发生在内层 overflow:auto 容器，而非 window。
-    // 用 capture 捕获任意后代滚动事件，并读取其 scrollTop 判断是否触顶。
+    // 用 capture 捕获任意后代滚动事件，并读取其 scrollTop 判断是否仍在 hero 区域内。
     const onScroll = (e) => {
       const tgt = e && e.target;
       const st =
         tgt && typeof tgt.scrollTop === 'number'
           ? tgt.scrollTop
           : window.scrollY || document.documentElement.scrollTop || 0;
-      setAtTop(st < 8);
+      const heroH = Math.max(window.innerHeight || 0, 640);
+      setInHero(st < heroH - 64);
     };
     window.addEventListener('scroll', onScroll, true);
     return () => window.removeEventListener('scroll', onScroll, true);
   }, []);
-  const navTransparent = location.pathname === '/seedance2.0' && atTop;
+  const navTransparent = location.pathname === '/seedance2.0' && inHero;
 
   // 顶部 Bell 红点 = 三类未读之和：站内公告 + 系统公告（announcement
   // timeline）+ 工单。
