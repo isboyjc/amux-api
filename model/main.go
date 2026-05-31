@@ -304,7 +304,11 @@ func migrateDB() error {
 			return err
 		}
 	}
-	
+	// 一次性迁移：重建 logs 表 idx_created_at_id 列序。单库场景 LOG_DB==DB，
+	// 真实日志表就在主库；独立日志库场景这里作用于主库的空影子表（无害），
+	// 真正的重建由 migrateLOGDB 用独立 flag 负责。详见 rebuildLogCreatedAtIDIndex。
+	rebuildLogCreatedAtIDIndex(DB, "migrated_db_idx_created_at_id_order")
+
 	// 历史默认表用中文「字节跳动」，统一为英文 "ByteDance"。
 	// 必须在 EnsureCommonVendors 之前跑，否则 EnsureCommonVendors 会再建一条新行。
 	RenameBytedanceVendor()
@@ -404,7 +408,7 @@ func migrateDBFast() error {
 			return err
 		}
 	}
-	
+
 	common.SysLog("database migrated")
 	return nil
 }
@@ -414,7 +418,46 @@ func migrateLOGDB() error {
 	if err = LOG_DB.AutoMigrate(&Log{}); err != nil {
 		return err
 	}
+	// 独立日志库场景：重建 idx_created_at_id 列序（详见 rebuildLogCreatedAtIDIndex）。
+	rebuildLogCreatedAtIDIndex(LOG_DB, "migrated_logdb_idx_created_at_id_order")
 	return nil
+}
+
+// rebuildLogCreatedAtIDIndex 一次性迁移：把 logs 表的复合索引 idx_created_at_id
+// 重建为 (created_at, id) 列序。
+//
+// 背景：早期版本该索引建成 (id, created_at)，按 created_at 排序的后台日志查询
+// 无法命中前导列。struct tag 已改为正确的 priority，但 GORM AutoMigrate 不会
+// 重排已存在的同名索引，故存量库需手动 drop 后重建。
+//
+// gdb 为索引所在的库句柄（单库=DB，独立日志库=LOG_DB）；flagKey 是写在主库
+// Option 表里的一次性标记，避免每次启动都 drop/建索引（大日志表代价很高）。
+// 任何一步失败都不写标记，下次启动自动重试；若中途 drop 成功而建索引失败，
+// 下次 AutoMigrate 也会补建缺失索引，不会卡死。
+func rebuildLogCreatedAtIDIndex(gdb *gorm.DB, flagKey string) {
+	var opt Option
+	if err := DB.Where(Option{Key: flagKey}).First(&opt).Error; err == nil {
+		return // 已迁移
+	}
+	m := gdb.Migrator()
+	if !m.HasTable(&Log{}) {
+		return
+	}
+	if m.HasIndex(&Log{}, "idx_created_at_id") {
+		if err := m.DropIndex(&Log{}, "idx_created_at_id"); err != nil {
+			common.SysLog("rebuild idx_created_at_id: drop failed: " + err.Error())
+			return
+		}
+	}
+	if err := m.CreateIndex(&Log{}, "idx_created_at_id"); err != nil {
+		common.SysLog("rebuild idx_created_at_id: create failed: " + err.Error())
+		return
+	}
+	if err := DB.Save(&Option{Key: flagKey, Value: "1"}).Error; err != nil {
+		common.SysLog("rebuild idx_created_at_id: save flag failed: " + err.Error())
+		return
+	}
+	common.SysLog("rebuilt idx_created_at_id on logs table with (created_at, id) column order")
 }
 
 type sqliteColumnDef struct {
