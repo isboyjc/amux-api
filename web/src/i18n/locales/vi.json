@@ -4976,6 +4976,7 @@
     "阶梯计费": "Tính phí theo bậc",
     "阶梯计费 {{tier}} 档位": "Tính phí theo bậc — bậc {{tier}}",
     "阶梯计费（表达式解析失败）": "Tính phí theo bậc (phân tích biểu thức thất bại)",
+    "阶梯计费（未匹配到对应阶梯）": "Tính phí theo bậc (không khớp bậc tương ứng)",
     "附件": "Đính kèm",
     "附件上传失败": "Tải tệp đính kèm thất bại",
     "附加条件": "Điều kiện bổ sung",

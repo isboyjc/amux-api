@@ -4456,6 +4456,7 @@
     "阶梯计费": "Tarification par paliers",
     "阶梯计费 {{tier}} 档位": "Tarification par paliers — palier {{tier}}",
     "阶梯计费（表达式解析失败）": "Tarification par paliers (échec d'analyse)",
+    "阶梯计费（未匹配到对应阶梯）": "Tarification par paliers (aucun palier correspondant)",
     "附件": "Pièces jointes",
     "附件上传失败": "Échec du téléversement de la pièce jointe",
     "附加条件": "Conditions supplémentaires",

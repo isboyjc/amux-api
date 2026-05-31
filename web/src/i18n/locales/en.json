@@ -4544,6 +4544,7 @@
     "阶梯计费": "Tiered Billing",
     "阶梯计费 {{tier}} 档位": "Tiered Billing — tier {{tier}}",
     "阶梯计费（表达式解析失败）": "Tiered billing (expression parse failed)",
+    "阶梯计费（未匹配到对应阶梯）": "Tiered billing (no matching tier)",
     "阶梯计费详情": "Tiered Billing Details",
     "阶梯配置摘要": "Tier Config Summary",
     "附件": "Attachments",

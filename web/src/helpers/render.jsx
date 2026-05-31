@@ -2534,6 +2534,42 @@ function formatRuleMultiplierFactor(firing, effectiveMultiplier) {
   return `${tieredRuleKindLabel(firing.kind)}(${firing.desc}) ${Number(firing.multiplier.toFixed(4))}`;
 }
 
+// decodeTieredExprB64 解码后端写入日志的 base64 计费表达式。普通 atob 只能处理
+// Latin-1，遇到含中文等非拉丁字符的档位标签（如 tier("标准", ...)）会得到乱码，
+// 导致 parseTiersFromExpr 解析出的 label 与日志 matched_tier 对不上。这里按
+// UTF-8 还原字节，修复非拉丁档位标签的解码。
+const decodeTieredExprB64 = (b64) => {
+  if (!b64) return '';
+  const binary = atob(b64);
+  const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+  return new TextDecoder('utf-8').decode(bytes);
+};
+
+// normalizeTierLabel 归一化档位标签，消除全/半角、`<=`/`≤`/`<` 写法差异与空格
+// 大小写差异，保证日志 matched_tier 能与表达式档位标签稳定匹配。
+const normalizeTierLabel = (label) => {
+  if (!label) return '';
+  return String(label)
+    .replace(/<[=＝]?|≤|＜[=＝]?/g, '<')
+    .replace(/>[=＝]?|≥|＞[=＝]?/g, '>')
+    .replace(/\s+/g, '')
+    .toLowerCase();
+};
+
+// findMatchedTier 按归一化标签匹配命中的档位。匹配不上时不再默认退化为第一档
+// （会向用户展示猜测出的错误单价），而是返回 null —— 唯一例外是单档表达式：只有
+// 一个档位不存在歧义，展示它并非猜测。
+const findMatchedTier = (tiers, matchedTier) => {
+  const target = normalizeTierLabel(matchedTier);
+  const found = tiers.find((t) => {
+    const l = normalizeTierLabel(t.label);
+    return l !== '' && l === target;
+  });
+  if (found) return found;
+  if (tiers.length === 1) return tiers[0];
+  return null;
+};
+
 export function renderTieredModelPrice(opts) {
   const {
     prompt_tokens: inputTokens = 0,
@@ -2550,13 +2586,16 @@ export function renderTieredModelPrice(opts) {
     tiered_quota_per_unit: tieredQuotaPerUnit,
   } = opts;
   let exprStr = '';
-  try { exprStr = atob(exprB64); } catch { /* ignore */ }
+  try { exprStr = decodeTieredExprB64(exprB64); } catch { /* ignore */ }
   const tiers = parseTiersFromExpr(exprStr);
   if (tiers.length === 0) {
     return i18next.t('阶梯计费（表达式解析失败）');
   }
 
-  const tier = tiers.find((t) => t.label === matchedTier) || tiers[0];
+  const tier = findMatchedTier(tiers, matchedTier);
+  if (!tier) {
+    return i18next.t('阶梯计费（未匹配到对应阶梯）');
+  }
   const { symbol, rate } = getCurrencyConfig();
   const { ratio: effectiveGroupRatio, label: ratioLabel } = getEffectiveRatio(
     groupRatio,
@@ -2658,13 +2697,16 @@ export function renderTieredLogContent(opts) {
     tiered_quota_per_unit: tieredQuotaPerUnit,
   } = opts;
   let exprStr = '';
-  try { exprStr = atob(exprB64); } catch { /* ignore */ }
+  try { exprStr = decodeTieredExprB64(exprB64); } catch { /* ignore */ }
   const tiers = parseTiersFromExpr(exprStr);
   if (tiers.length === 0) {
     return i18next.t('阶梯计费（表达式解析失败）');
   }
 
-  const tier = tiers.find((t) => t.label === matchedTier) || tiers[0];
+  const tier = findMatchedTier(tiers, matchedTier);
+  if (!tier) {
+    return i18next.t('阶梯计费（未匹配到对应阶梯）');
+  }
   const { symbol, rate } = getCurrencyConfig();
   const tokensByVar = getTieredEffectiveTokens(opts, exprStr);
   const pricedVars = BILLING_PRICING_VARS.filter(
@@ -2743,9 +2785,9 @@ export function renderTieredModelPriceSimple(opts) {
     outputMode = 'segments',
   } = opts;
   let exprStr = '';
-  try { exprStr = atob(exprB64); } catch { /* ignore */ }
+  try { exprStr = decodeTieredExprB64(exprB64); } catch { /* ignore */ }
   const tiers = parseTiersFromExpr(exprStr);
-  const tier = tiers.find((t) => t.label === matchedTier) || tiers[0];
+  const tier = findMatchedTier(tiers, matchedTier);
 
   if (outputMode === 'segments') {
     const segments = [
@@ -2754,6 +2796,14 @@ export function renderTieredModelPriceSimple(opts) {
         text: getGroupRatioText(groupRatio, user_group_ratio),
       },
     ];
+
+    // 多档表达式匹配不上时，明确提示而非沉默展示空价格（单档已由 findMatchedTier 兜底）。
+    if (!tier && tiers.length > 0) {
+      segments.push({
+        tone: 'secondary',
+        text: i18next.t('阶梯计费（未匹配到对应阶梯）'),
+      });
+    }
 
     // Derive the effective rule multiplier from backend-reported quota and
     // tier coefficients × actual tokens, then surface it as a primary segment
