@@ -24,6 +24,9 @@ import { Typography } from '@douyinfe/semi-ui';
 import { getFooterHTML, getLogo, getSystemName } from '../../helpers';
 import { StatusContext } from '../../context/Status';
 
+// 页尾「模型」栏的独立模型详情页入口；后续新增模型详情页在此追加即可。
+const FOOTER_MODELS = [{ label: 'Seedance 2.0', to: '/seedance2.0' }];
+
 const DefaultSvgLogo = () => (
   <svg
     width='128'
@@ -61,7 +64,7 @@ const FooterBar = () => {
   const customFooter = useMemo(
     () => (
       <footer className='w-full border-t border-semi-color-border'>
-        <div className='max-w-6xl mx-auto px-6 md:px-12 py-12 md:py-16'>
+        <div className='max-w-[88rem] mx-auto px-6 py-14 md:py-16'>
           <div className='flex flex-col md:flex-row justify-between gap-10 md:gap-16'>
             {/* 左侧：Logo + 标语 */}
             <div className='flex flex-col gap-3 md:max-w-xs'>
@@ -85,7 +88,7 @@ const FooterBar = () => {
             </div>
 
             {/* 右侧：链接列 */}
-            <div className='grid grid-cols-2 sm:grid-cols-3 gap-8 md:gap-12'>
+            <div className='grid grid-cols-2 sm:grid-cols-4 gap-8 md:gap-12'>
               {/* 产品 */}
               <div>
                 <p className='text-sm font-semibold text-semi-color-text-0 mb-4'>
@@ -114,6 +117,24 @@ const FooterBar = () => {
                       {t('文档')}
                     </a>
                   )}
+                </div>
+              </div>
+
+              {/* 模型 */}
+              <div>
+                <p className='text-sm font-semibold text-semi-color-text-0 mb-4'>
+                  {t('模型')}
+                </p>
+                <div className='flex flex-col gap-2.5'>
+                  {FOOTER_MODELS.map((m) => (
+                    <Link
+                      key={m.to}
+                      to={m.to}
+                      className='text-sm text-semi-color-text-2 hover:text-semi-color-text-0 transition-colors'
+                    >
+                      {m.label}
+                    </Link>
+                  ))}
                 </div>
               </div>
 

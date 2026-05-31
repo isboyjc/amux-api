@@ -56,6 +56,7 @@ import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
 
 const Home = lazy(() => import('./pages/Home'));
+const Seedance = lazy(() => import('./pages/Seedance'));
 const DesktopAuthorize = lazy(() => import('./pages/DesktopAuthorize'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
@@ -101,6 +102,14 @@ function App() {
           element={
             <Suspense fallback={<Loading></Loading>} key={location.pathname}>
               <Home />
+            </Suspense>
+          }
+        />
+        <Route
+          path='/seedance2.0'
+          element={
+            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+              <Seedance />
             </Suspense>
           }
         />

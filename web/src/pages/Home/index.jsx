@@ -54,6 +54,10 @@ import {
   Code2,
   FileText,
   Search,
+  Sparkles,
+  Boxes,
+  Globe,
+  Gauge,
 } from 'lucide-react';
 import {
   Moonshot,
@@ -116,6 +120,68 @@ const useInView = (options = {}) => {
   return [ref, inView];
 };
 
+// 小标题眉标：上下短线 + 主色文字
+const Eyebrow = ({ children }) => (
+  <span
+    className='inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] mb-4'
+    style={{ color: 'var(--semi-color-primary)' }}
+  >
+    <span
+      className='inline-block w-5 h-px'
+      style={{ background: 'var(--semi-color-primary)', opacity: 0.5 }}
+    />
+    {children}
+  </span>
+);
+
+const StatsSection = ({ t }) => {
+  const [ref, inView] = useInView();
+  const stats = [
+    { icon: <Boxes size={22} />, value: '40', suffix: '+', label: t('homepage_stats_providers') },
+    { icon: <Globe size={22} />, value: '13', suffix: '', label: t('homepage_stats_endpoints') },
+    { icon: <Zap size={22} />, value: '7×24', suffix: '', label: t('homepage_stats_failover') },
+    { icon: <Gauge size={22} />, value: '99.9', suffix: '%', label: t('homepage_stats_uptime') },
+  ];
+
+  return (
+    <section ref={ref} className='px-4 pt-10 md:pt-16 relative z-10'>
+      <div className='max-w-5xl mx-auto'>
+        <div className='lp-glass grid grid-cols-2 lg:grid-cols-4 gap-px overflow-hidden p-0'>
+          {stats.map((s, i) => (
+            <div
+              key={i}
+              className='flex flex-col items-center justify-center text-center py-8 px-4 transition-all duration-700'
+              style={{
+                transitionDelay: `${i * 90}ms`,
+                opacity: inView ? 1 : 0,
+                transform: inView ? 'translateY(0)' : 'translateY(20px)',
+              }}
+            >
+              <span
+                className='mb-3'
+                style={{ color: 'var(--semi-color-primary)' }}
+              >
+                {s.icon}
+              </span>
+              <div className='flex items-baseline gap-0.5'>
+                <span className='lp-stat-number text-3xl md:text-4xl font-bold leading-none'>
+                  {s.value}
+                </span>
+                <span className='lp-stat-number text-xl md:text-2xl font-bold'>
+                  {s.suffix}
+                </span>
+              </div>
+              <span className='text-sm text-semi-color-text-2 mt-2.5'>
+                {s.label}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+};
+
 const FeaturesSection = ({ t }) => {
   const [ref, inView] = useInView();
   const features = [
@@ -158,13 +224,14 @@ const FeaturesSection = ({ t }) => {
   ];
 
   return (
-    <section ref={ref} className='py-20 md:py-32 px-4'>
-      <div className='max-w-6xl mx-auto'>
-        <div className={`text-center mb-16 transition-all duration-700 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+    <section ref={ref} className='py-20 md:py-28 px-4'>
+      <div className='max-w-[88rem] mx-auto px-2'>
+        <div className={`mb-16 transition-all duration-700 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+          <Eyebrow>{t('homepage_eyebrow_features')}</Eyebrow>
           <h2 className='text-3xl md:text-4xl font-bold text-semi-color-text-0 mb-4'>
             {t('为什么选择我们')}
           </h2>
-          <p className='text-semi-color-text-2 text-lg max-w-2xl mx-auto'>
+          <p className='text-semi-color-text-2 text-lg max-w-2xl'>
             {t('homepage_features_subtitle')}
           </p>
         </div>
@@ -172,15 +239,14 @@ const FeaturesSection = ({ t }) => {
           {features.map((f, i) => (
             <div
               key={i}
-              className='group relative rounded-2xl p-6 md:p-8 transition-all duration-700 cursor-default hover:scale-[1.02]'
+              className='lp-glass lp-glass-hover group p-6 md:p-8 cursor-default'
               style={{
-                background: 'var(--semi-color-fill-0)',
                 transitionDelay: `${i * 80}ms`,
                 opacity: inView ? 1 : 0,
                 transform: inView ? 'translateY(0)' : 'translateY(32px)',
               }}
             >
-              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center text-white mb-5 group-hover:scale-110 transition-transform duration-300`}>
+              <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${f.color} flex items-center justify-center text-white mb-5 shadow-lg group-hover:scale-110 group-hover:-rotate-3 transition-transform duration-300`}>
                 {f.icon}
               </div>
               <h3 className='text-xl font-semibold text-semi-color-text-0 mb-3'>
@@ -232,13 +298,14 @@ const EndpointsSection = ({ t }) => {
   ];
 
   return (
-    <section ref={ref} className='py-20 md:py-32 px-4'>
-      <div className='max-w-6xl mx-auto'>
-        <div className={`text-center mb-16 transition-all duration-700 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+    <section ref={ref} className='py-20 md:py-28 px-4'>
+      <div className='max-w-[88rem] mx-auto px-2'>
+        <div className={`mb-16 transition-all duration-700 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+          <Eyebrow>{t('homepage_eyebrow_endpoints')}</Eyebrow>
           <h2 className='text-3xl md:text-4xl font-bold text-semi-color-text-0 mb-4'>
             {t('覆盖主流 API 端点')}
           </h2>
-          <p className='text-semi-color-text-2 text-lg max-w-2xl mx-auto'>
+          <p className='text-semi-color-text-2 text-lg max-w-2xl'>
             {t('homepage_endpoints_subtitle')}
           </p>
         </div>
@@ -249,7 +316,7 @@ const EndpointsSection = ({ t }) => {
           style={{ transitionDelay: '100ms' }}
         >
           <div className='flex items-center gap-2 mb-4'>
-            <span className='text-xs font-medium px-2.5 py-1 rounded-full bg-gradient-to-r from-violet-500 to-purple-600 text-white'>
+            <span className='text-xs font-medium px-2.5 py-1 rounded-full bg-gradient-to-r from-violet-500 to-purple-600 text-white shadow-sm'>
               OpenAI
             </span>
             <span className='text-sm text-semi-color-text-2'>{t('homepage_unified_format')}</span>
@@ -258,16 +325,15 @@ const EndpointsSection = ({ t }) => {
             {unified.map((g, i) => (
               <div
                 key={i}
-                className='rounded-xl p-5 transition-all duration-700'
+                className='lp-glass lp-glass-hover p-5'
                 style={{
-                  background: 'var(--semi-color-fill-0)',
                   transitionDelay: `${150 + i * 80}ms`,
                   opacity: inView ? 1 : 0,
                   transform: inView ? 'translateY(0)' : 'translateY(24px)',
                 }}
               >
                 <div className='flex items-center gap-2 mb-3'>
-                  <span className='text-semi-color-text-2'>{g.icon}</span>
+                  <span style={{ color: 'var(--semi-color-primary)' }}>{g.icon}</span>
                   <span className='font-semibold text-sm text-semi-color-text-0'>{g.label}</span>
                 </div>
                 <div className='space-y-1.5'>
@@ -292,7 +358,7 @@ const EndpointsSection = ({ t }) => {
           style={{ transitionDelay: '500ms' }}
         >
           <div className='flex items-center gap-2 mb-4'>
-            <span className='text-xs font-medium px-2.5 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white'>
+            <span className='text-xs font-medium px-2.5 py-1 rounded-full bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-sm'>
               Native
             </span>
             <span className='text-sm text-semi-color-text-2'>{t('homepage_native_format')}</span>
@@ -301,9 +367,8 @@ const EndpointsSection = ({ t }) => {
             {nativeFormats.map((n, i) => (
               <div
                 key={i}
-                className='flex items-center gap-3 rounded-xl px-5 py-3 transition-all duration-700'
+                className='lp-glass lp-glass-hover flex items-center gap-3 px-5 py-3'
                 style={{
-                  background: 'var(--semi-color-fill-0)',
                   transitionDelay: `${550 + i * 60}ms`,
                   opacity: inView ? 1 : 0,
                   transform: inView ? 'translateY(0)' : 'translateY(16px)',
@@ -340,38 +405,60 @@ const CodeSection = ({ t, serverAddress }) => {
   };
 
   return (
-    <section ref={ref} className='py-20 md:py-32 px-4'>
-      <div className='max-w-4xl mx-auto'>
-        <div className={`text-center mb-12 transition-all duration-700 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-          <h2 className='text-3xl md:text-4xl font-bold text-semi-color-text-0 mb-4'>
-            {t('几行代码即可接入')}
-          </h2>
-          <p className='text-semi-color-text-2 text-lg'>
-            {t('homepage_code_subtitle')}
-          </p>
-        </div>
-        <div
-          className={`relative rounded-2xl overflow-hidden transition-all duration-700 delay-200 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}
-          style={{ background: 'var(--semi-color-fill-0)' }}
-        >
-          <div className='flex items-center justify-between px-5 py-3' style={{ borderBottom: '1px solid var(--semi-color-border)' }}>
-            <div className='flex items-center gap-2'>
-              <Code2 size={16} className='text-semi-color-text-2' />
-              <span className='text-sm font-medium text-semi-color-text-2'>cURL</span>
-            </div>
-            <button
-              onClick={handleCopyCode}
-              className='p-1.5 rounded-lg transition-colors duration-150 hover:opacity-80'
-              style={{ background: 'var(--semi-color-fill-1)', color: 'var(--semi-color-text-2)' }}
-            >
-              <IconCopy size='small' />
-            </button>
+    <section ref={ref} className='py-20 md:py-28 px-4'>
+      <div className='max-w-[88rem] mx-auto px-2'>
+        <div className='grid lg:grid-cols-2 gap-10 lg:gap-16 items-center'>
+          {/* 左：说明 + 按钮 */}
+          <div className={`transition-all duration-700 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+            <Eyebrow>{t('homepage_eyebrow_code')}</Eyebrow>
+            <h2 className='text-3xl md:text-4xl font-bold text-semi-color-text-0 mb-4'>
+              {t('几行代码即可接入')}
+            </h2>
+            <p className='text-semi-color-text-2 text-lg mb-8'>
+              {t('homepage_code_subtitle')}
+            </p>
+            <Link to='/console'>
+              <Button
+                theme='solid'
+                type='primary'
+                size='large'
+                className='px-7'
+                icon={<ArrowRight size={18} />}
+                iconPosition='right'
+              >
+                {t('获取密钥')}
+              </Button>
+            </Link>
           </div>
-          <pre className='p-5 md:p-6 overflow-x-auto text-sm leading-relaxed'>
-            <code className='text-semi-color-text-1 font-mono whitespace-pre'>
-              {codeExample}
-            </code>
-          </pre>
+
+          {/* 右：代码块 */}
+          <div
+            className={`lp-glass relative overflow-hidden transition-all duration-700 delay-200 ${inView ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}
+          >
+            <div className='flex items-center justify-between px-5 py-3' style={{ borderBottom: '1px solid var(--semi-color-border)' }}>
+              <div className='flex items-center gap-2'>
+                <span className='flex items-center gap-1.5 mr-1'>
+                  <span className='w-3 h-3 rounded-full' style={{ background: '#ff5f57' }} />
+                  <span className='w-3 h-3 rounded-full' style={{ background: '#febc2e' }} />
+                  <span className='w-3 h-3 rounded-full' style={{ background: '#28c840' }} />
+                </span>
+                <Code2 size={16} className='text-semi-color-text-2' />
+                <span className='text-sm font-medium text-semi-color-text-2'>cURL</span>
+              </div>
+              <button
+                onClick={handleCopyCode}
+                className='w-8 h-8 shrink-0 rounded-lg flex items-center justify-center transition-colors duration-150 hover:opacity-80'
+                style={{ background: 'var(--semi-color-fill-1)', color: 'var(--semi-color-text-2)' }}
+              >
+                <IconCopy size='small' />
+              </button>
+            </div>
+            <pre className='p-5 md:p-6 overflow-x-auto text-sm leading-relaxed'>
+              <code className='text-semi-color-text-1 font-mono whitespace-pre'>
+                {codeExample}
+              </code>
+            </pre>
+          </div>
         </div>
       </div>
     </section>
@@ -382,11 +469,20 @@ const CTASection = ({ t, docsLink }) => {
   const [ref, inView] = useInView();
 
   return (
-    <section ref={ref} className='py-20 md:py-32 px-4'>
+    <section ref={ref} className='py-20 md:py-28 px-4'>
       <div
-        className={`max-w-4xl mx-auto text-center rounded-3xl py-16 md:py-20 px-6 relative overflow-hidden transition-all duration-700 ${inView ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
-        style={{ background: 'var(--semi-color-fill-0)' }}
+        className={`lp-glass max-w-4xl mx-auto text-center py-16 md:py-20 px-6 relative overflow-hidden transition-all duration-700 ${inView ? 'opacity-100 scale-100' : 'opacity-0 scale-95'}`}
       >
+        {/* 顶部主色光晕 */}
+        <div
+          className='absolute inset-0 -z-10 pointer-events-none'
+          style={{
+            background:
+              'radial-gradient(ellipse 55% 70% at 50% 0%, var(--semi-color-primary-light-default), transparent 70%)',
+            opacity: 0.5,
+          }}
+        />
+        <Eyebrow>{t('homepage_eyebrow_cta')}</Eyebrow>
         <h2 className='text-3xl md:text-4xl font-bold text-semi-color-text-0 mb-4'>
           {t('准备好开始了吗？')}
         </h2>
@@ -550,7 +646,7 @@ const Home = () => {
       {homePageContentLoaded && homePageContent === '' ? (
         <div className='w-full overflow-x-hidden'>
           {/* 首屏 Hero —— 全屏高度（减去导航栏 64px） */}
-          <div className='w-full relative overflow-hidden flex flex-col' style={{ height: '100dvh', minHeight: '600px' }}>
+          <div className='lp-hero-grid w-full relative overflow-hidden flex flex-col' style={{ height: '100dvh', minHeight: '640px' }}>
             {/* 背景模糊晕染球 */}
             <div className='blur-ball blur-ball-indigo' />
             <div className='blur-ball blur-ball-teal' />
@@ -558,6 +654,22 @@ const Home = () => {
             {/* 主内容：垂直居中 */}
             <div className='flex-1 flex items-center justify-center px-4'>
               <div className='flex flex-col items-center justify-center text-center max-w-5xl mx-auto'>
+                {/* Seedance 2.0 入口 */}
+                <div className='flex justify-center mb-7 md:mb-8'>
+                  <Link
+                    to='/seedance2.0'
+                    className='lp-badge transition-transform hover:scale-105'
+                    style={{ background: '#d1fe17', borderColor: '#d1fe17', color: '#0a0a0a' }}
+                  >
+                    <span
+                      className='inline-flex w-1.5 h-1.5 rounded-full'
+                      style={{ background: '#0a0a0a' }}
+                    />
+                    <span>{t('homepage_seedance_entry')}</span>
+                    <ArrowRight size={13} style={{ color: '#0a0a0a' }} />
+                  </Link>
+                </div>
+
                 <h1
                   className={`text-4xl md:text-5xl lg:text-6xl xl:text-7xl font-bold text-semi-color-text-0 leading-tight ${isChinese ? 'tracking-wide md:tracking-wider' : ''}`}
                 >
@@ -566,12 +678,12 @@ const Home = () => {
                   <span className='shine-text'>{t('企业级大模型接口网关')}</span>
                 </h1>
 
-                <p className='text-base md:text-lg lg:text-xl text-semi-color-text-2 mt-6 md:mt-8 max-w-3xl'>
-                  {t('为个人与企业用户提供更优价格与企业级稳定性，只需替换模型基址即可接入')}
+                <p className='text-base md:text-lg lg:text-xl text-semi-color-text-2 mt-6 md:mt-8 max-w-3xl leading-relaxed'>
+                  {t('homepage_hero_subtitle')}
                 </p>
 
                 {/* BASE URL */}
-                <div className='flex items-center justify-center w-full mt-6 md:mt-8 max-w-lg'>
+                <div className='flex items-center justify-center w-full mt-7 md:mt-9 max-w-lg'>
                   <Input
                     readonly
                     value={serverAddress}
@@ -722,6 +834,9 @@ const Home = () => {
               </div>
             </div>
           </div>
+
+          {/* 数据/信任统计板块 —— 上移与 Hero 衔接 */}
+          <StatsSection t={t} />
 
           {/* 核心优势 */}
           <FeaturesSection t={t} />

@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useHeaderBar } from '../../../hooks/common/useHeaderBar';
 import { useNotifications } from '../../../hooks/common/useNotifications';
 import { useTicketUnread } from '../../../hooks/common/useTicketUnread';
@@ -76,6 +77,25 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
 
   const { mainNavLinks } = useNavigation(t, docsLink, headerNavModules);
 
+  // Seedance 落地页触顶时让导航透明，以便露出全屏 hero 视频；滚动后恢复背景。
+  const location = useLocation();
+  const [atTop, setAtTop] = useState(true);
+  useEffect(() => {
+    // 桌面端页面实际滚动发生在内层 overflow:auto 容器，而非 window。
+    // 用 capture 捕获任意后代滚动事件，并读取其 scrollTop 判断是否触顶。
+    const onScroll = (e) => {
+      const tgt = e && e.target;
+      const st =
+        tgt && typeof tgt.scrollTop === 'number'
+          ? tgt.scrollTop
+          : window.scrollY || document.documentElement.scrollTop || 0;
+      setAtTop(st < 8);
+    };
+    window.addEventListener('scroll', onScroll, true);
+    return () => window.removeEventListener('scroll', onScroll, true);
+  }, []);
+  const navTransparent = location.pathname === '/seedance2.0' && atTop;
+
   // 顶部 Bell 红点 = 三类未读之和：站内公告 + 系统公告（announcement
   // timeline）+ 工单。
   const totalUnread = (unreadCount || 0) + (noticeUnread || 0) + (ticketUnread || 0);
@@ -95,7 +115,13 @@ const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
           : 'inApp';
 
   return (
-    <header className='text-semi-color-text-0 sticky top-0 z-50 transition-colors duration-300 bg-white/75 dark:bg-zinc-900/75 backdrop-blur-lg'>
+    <header
+      className={`text-semi-color-text-0 sticky top-0 z-50 transition-colors duration-300 ${
+        navTransparent
+          ? 'sd-nav-transparent'
+          : 'bg-white/75 dark:bg-zinc-900/75 backdrop-blur-lg'
+      }`}
+    >
       <NoticeModal
         visible={noticeVisible}
         onClose={handleNoticeClose}
