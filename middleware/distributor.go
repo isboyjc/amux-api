@@ -124,10 +124,14 @@ func Distribute() func(c *gin.Context) {
 						} else if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetUserAutoGroup(userGroup)
-							for _, g := range autoGroups {
+							for gi, g := range autoGroups {
 								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
 									selectGroup = g
 									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+									// Record the chosen group index so a later relay retry resumes the
+									// auto cross-group fallback from here instead of restarting at 0.
+									// 记录命中的分组索引，使后续 relay 重试从此处继续跨分组回退，而非从 0 重新开始。
+									common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, gi)
 									channel = preferred
 									service.MarkChannelAffinityUsed(c, g, preferred.Id)
 									break

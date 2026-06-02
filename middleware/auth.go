@@ -392,10 +392,17 @@ func TokenAuth() func(c *gin.Context) {
 		userGroup := userCache.Group
 		tokenGroup := token.Group
 		if tokenGroup != "" {
-			// check common.UserUsableGroups[userGroup]
-			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
-				return
+			// "auto" is not a real channel group; its usability is resolved per-group later by
+			// service.GetUserAutoGroup (which already intersects with the user's usable groups),
+			// so skip the direct usable-group membership check for it to avoid a spurious 403.
+			// "auto" 不是真实渠道分组，其可用性由后续 service.GetUserAutoGroup 逐组校验（已与用户可用分组求交集），
+			// 因此此处对 "auto" 跳过可用分组成员检查，避免误报 403。
+			if tokenGroup != "auto" {
+				// check common.UserUsableGroups[userGroup]
+				if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
+					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
+					return
+				}
 			}
 			// check group in common.GroupRatio
 			if !ratio_setting.ContainsGroupRatio(tokenGroup) {

@@ -186,7 +186,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	// crossGroupFallback: when the token uses the "auto" group with cross-group retry enabled,
+	// a failed group should fall through to the next configured auto group (智能熔断), independent
+	// of the in-group retry status-code gate (shouldRetry).
+	// 当令牌使用 "auto" 分组且开启跨分组重试时，某个分组失败后应顺序切到下一个自动分组（智能熔断），
+	// 这一回退独立于组内重试的状态码闸门（shouldRetry）。
+	crossGroupFallback := relayInfo.TokenGroup == "auto" &&
+		common.GetContextKeyBool(c, constant.ContextKeyTokenCrossGroupRetry)
+
+	for {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
@@ -229,9 +237,28 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
-			break
+		// ① In-group retry: same group, next priority level. Hard-bounded by RetryTimes so a
+		// persistent channel error (shouldRetry returns true unconditionally for IsChannelError)
+		// cannot loop forever now that the loop has no fixed upper bound.
+		// ① 组内重试：同一分组、更高优先级。用 RetryTimes 硬约束，避免持续性渠道错误
+		// （IsChannelError 会让 shouldRetry 无条件返回 true）在无固定上界的循环里死循环。
+		if retryParam.GetRetry() < common.RetryTimes &&
+			shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+			retryParam.IncreaseRetry()
+			continue
 		}
+		// ② In-group budget exhausted or error not in-group-retryable: if the token allows
+		// cross-group fallback and the error warrants it, advance to the next auto group and
+		// restart the in-group counter. Otherwise stop.
+		// ② 组内已耗尽或错误不可组内重试：若令牌允许跨分组回退且该错误应回退，则切到下一个自动分组
+		// 并重置组内计数；否则终止。
+		if crossGroupFallback &&
+			service.CrossGroupShouldFallback(c, newAPIError) &&
+			service.AdvanceToNextAutoGroup(c) {
+			retryParam.SetRetry(0)
+			continue
+		}
+		break
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
