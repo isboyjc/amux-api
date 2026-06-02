@@ -318,11 +318,15 @@ func UpdateTicketAfterReply(tx *gorm.DB, ticketId int, senderRole int, replyAt i
 	}
 	// 用户回复时：resolved/closed → 自动 reopen 为 open；其它情况 → pending
 	if senderRole == TicketSenderRoleUser {
-		updates["status"] = gorm.Expr(
-			"CASE WHEN status IN (?, ?) THEN ? ELSE ? END",
+		// 状态值内联为整型字面量，不走 bind 参数：PostgreSQL 无法从 CASE 分支
+		// 内的占位符推断类型，会默认成 text，再赋给 bigint 的 status 列即报
+		// "column status is of type bigint but expression is of type text"。
+		// 这些值均为内部 int 常量，直接拼接安全且跨三库兼容。
+		updates["status"] = gorm.Expr(fmt.Sprintf(
+			"CASE WHEN status IN (%d, %d) THEN %d ELSE %d END",
 			TicketStatusResolved, TicketStatusClosed,
 			TicketStatusOpen, TicketStatusPending,
-		)
+		))
 		updates["closed_at"] = 0
 	} else if senderRole == TicketSenderRoleAdmin {
 		// 管理员回复 → pending（等用户回应）；不主动 close
