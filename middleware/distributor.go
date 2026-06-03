@@ -124,10 +124,21 @@ func Distribute() func(c *gin.Context) {
 						} else if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetUserAutoGroup(userGroup)
-							for _, g := range autoGroups {
+							for idx, g := range autoGroups {
 								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
 									selectGroup = g
 									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
+									// Pin the auto-group iterator to this group so subsequent
+									// retries in the relay controller continue from the
+									// affinity-selected group, instead of restarting from
+									// index 0 (which would re-walk the auto-group chain
+									// and possibly skip the affinity-preferred group).
+									// 将 auto-group 迭代器钉在当前亲和分组,这样后续
+									// relay controller 的重试从亲和分组继续,而不是
+									// 从 index 0 重新遍历 auto-group 链(可能再次跳过
+									// 亲和偏好分组)。
+									common.SetContextKey(c, constant.ContextKeyAutoGroupIndex, idx)
+									common.SetContextKey(c, constant.ContextKeyAutoGroupRetryIndex, 0)
 									channel = preferred
 									service.MarkChannelAffinityUsed(c, g, preferred.Id)
 									break
