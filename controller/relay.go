@@ -230,6 +230,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+			// When cross-group retry is enabled and using auto group,
+			// check if there are more auto groups to try before giving up.
+			// This ensures that even with RetryTimes=0, the fallback mechanism
+			// can still try all configured auto groups.
+			if hasMoreAutoGroupsToTry(c, relayInfo) {
+				logger.LogInfo(c, fmt.Sprintf("Cross-group fallback: trying next auto group after channel error (status: %d)", newAPIError.StatusCode))
+				continue
+			}
 			break
 		}
 	}
@@ -553,6 +561,12 @@ func RelayTask(c *gin.Context) {
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+			// When cross-group retry is enabled and using auto group,
+			// check if there are more auto groups to try before giving up.
+			if hasMoreAutoGroupsToTry(c, relayInfo) {
+				logger.LogInfo(c, fmt.Sprintf("Cross-group fallback (task): trying next auto group after channel error (status: %d)", taskErr.StatusCode))
+				continue
+			}
 			break
 		}
 	}
@@ -653,4 +667,40 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 		return false
 	}
 	return true
+}
+
+// hasMoreAutoGroupsToTry checks if there are more auto groups to try
+// when cross-group retry is enabled. This is used to allow the retry loop
+// to continue trying different auto groups even when shouldRetry returns false
+// (e.g., when RetryTimes=0).
+//
+// It returns true only when CacheGetRandomSatisfiedChannel has prepared a group
+// switch (stored in context via ContextKeyAutoGroupPendingSwitch) AND there are
+// still more groups available. This avoids infinite loops when the current
+// group's channel fails with a non-retryable error but the group hasn't been
+// exhausted yet.
+func hasMoreAutoGroupsToTry(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if info == nil || info.TokenGroup != "auto" {
+		return false
+	}
+	// Only continue if CacheGetRandomSatisfiedChannel has prepared a group switch.
+	// This flag is set in the context (not RetryParam) so it persists across
+	// Distribute() and Relay() which use different RetryParam instances.
+	pendingSwitch := common.GetContextKeyBool(c, constant.ContextKeyAutoGroupPendingSwitch)
+	if !pendingSwitch {
+		return false
+	}
+	// Clear the flag after checking to prevent infinite loops
+	common.SetContextKey(c, constant.ContextKeyAutoGroupPendingSwitch, false)
+	autoGroupIndex, exists := common.GetContextKey(c, constant.ContextKeyAutoGroupIndex)
+	if !exists {
+		return false
+	}
+	idx, ok := autoGroupIndex.(int)
+	if !ok {
+		return false
+	}
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	autoGroups := service.GetUserAutoGroup(userGroup)
+	return idx < len(autoGroups)
 }

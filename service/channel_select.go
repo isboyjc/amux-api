@@ -45,6 +45,13 @@ func (p *RetryParam) ResetRetryNextTry() {
 	p.resetNextTry = true
 }
 
+// HasPendingReset returns true if a group switch has been prepared by
+// CacheGetRandomSatisfiedChannel (via ResetRetryNextTry). This is used
+// by the retry loop to know whether to continue trying more auto groups.
+func (p *RetryParam) HasPendingReset() bool {
+	return p.resetNextTry
+}
+
 // CacheGetRandomSatisfiedChannel tries to get a random channel that satisfies the requirements.
 // 尝试获取一个满足要求的随机渠道。
 //
@@ -141,6 +148,9 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				// 本次请求仍使用当前分组，但下次重试将使用下一个分组
 				logger.LogDebug(param.Ctx, "Current group %s retries exhausted (priorityRetry=%d >= RetryTimes=%d), preparing switch to next group for next retry", autoGroup, priorityRetry, common.RetryTimes)
 				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupIndex, i+1)
+				// Store pending switch flag in context so it persists across
+				// Distribute() and Relay() which use different RetryParam instances.
+				common.SetContextKey(param.Ctx, constant.ContextKeyAutoGroupPendingSwitch, true)
 				// Reset retry counter so outer loop can continue for next group
 				// 重置重试计数器，以便外层循环可以为下一个分组继续
 				param.SetRetry(0)

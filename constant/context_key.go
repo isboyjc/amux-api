@@ -38,9 +38,10 @@ const (
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
 
-	ContextKeyAutoGroup           ContextKey = "auto_group"
-	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
-	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"
+	ContextKeyAutoGroup            ContextKey = "auto_group"
+	ContextKeyAutoGroupIndex       ContextKey = "auto_group_index"
+	ContextKeyAutoGroupRetryIndex  ContextKey = "auto_group_retry_index"
+	ContextKeyAutoGroupPendingSwitch ContextKey = "auto_group_pending_switch"
 
 	/* user related keys */
 	ContextKeyUserId      ContextKey = "id"
