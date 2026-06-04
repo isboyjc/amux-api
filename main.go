@@ -165,6 +165,9 @@ func main() {
 	controller.StartChannelUpstreamModelUpdateTask()
 
 	if common.IsMasterNode && constant.UpdateTask {
+		// 视频结果 R2 归档 worker 池：把大视频的下载+上传从轮询循环里搬出来，
+		// 避免阻塞轮询。仅主节点启动（轮询本身也只在主节点跑）。
+		service.StartVideoArchiveWorkers(0)
 		gopool.Go(func() {
 			controller.UpdateMidjourneyTaskBulk()
 		})

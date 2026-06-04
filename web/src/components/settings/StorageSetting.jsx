@@ -54,6 +54,7 @@ const STORAGE_KEYS = {
   r2Region: 'storage.r2_region',
   r2PublicBaseUrl: 'storage.r2_public_base_url',
   imageTransformEnabled: 'storage.image_transform_enabled',
+  videoArchiveEnabled: 'storage.video_archive_enabled',
 };
 
 // 当前支持的 provider 选项；后续接入新提供方时直接在这里追加。
@@ -80,6 +81,7 @@ const defaultInputs = () => ({
   [STORAGE_KEYS.r2Region]: 'auto',
   [STORAGE_KEYS.r2PublicBaseUrl]: '',
   [STORAGE_KEYS.imageTransformEnabled]: false,
+  [STORAGE_KEYS.videoArchiveEnabled]: false,
 });
 
 const StorageSetting = () => {
@@ -124,6 +126,7 @@ const StorageSetting = () => {
       const boolKeys = new Set([
         STORAGE_KEYS.enabled,
         STORAGE_KEYS.imageTransformEnabled,
+        STORAGE_KEYS.videoArchiveEnabled,
       ]);
       data.forEach((item) => {
         if (!item || !Object.values(STORAGE_KEYS).includes(item.key)) return;
@@ -184,7 +187,8 @@ const StorageSetting = () => {
       }
       if (
         key === STORAGE_KEYS.enabled ||
-        key === STORAGE_KEYS.imageTransformEnabled
+        key === STORAGE_KEYS.imageTransformEnabled ||
+        key === STORAGE_KEYS.videoArchiveEnabled
       ) {
         // bool → 'true'/'false' 字符串：option 表统一字符串存储；
         // 后端 LoadFromDB 时再反序列化回 bool
@@ -376,6 +380,18 @@ const StorageSetting = () => {
                           )}
                           extraText={t(
                             '前端拼接对象 URL 用。R2 桶私有时浏览器访问 404，必须配置此项',
+                          )}
+                        />
+                      </Col>
+                    </Row>
+
+                    <Row gutter={16}>
+                      <Col xs={24}>
+                        <Form.Switch
+                          field={ff(STORAGE_KEYS.videoArchiveEnabled)}
+                          label={t('启用视频结果转存 R2')}
+                          extraText={t(
+                            '开启后，异步视频任务成功时会先把上游视频下载并转存到 R2，再把任务标记为成功，返回给用户的是自有 R2 地址——彻底与上游解耦（上游链接过期也不怕），可走国内 CDN。需先填齐 R2 凭证并打开上面的「启用对象存储」。失败会自动降级回原上游代理地址，不影响用户拿到视频。',
                           )}
                         />
                       </Col>

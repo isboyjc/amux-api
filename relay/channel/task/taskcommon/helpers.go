@@ -71,7 +71,11 @@ const (
 	ProgressSubmitted  = "10%"
 	ProgressQueued     = "20%"
 	ProgressInProgress = "30%"
-	ProgressComplete   = "100%"
+	// ProgressArchiving 表示上游已生成成功、正在把结果视频归档到对象存储（R2）。
+	// 必须 != ProgressComplete("100%")，否则 GetAllUnFinishSyncTasks（按
+	// progress != '100%' 过滤）会漏捞，导致主节点重启后归档无法自愈续传。
+	ProgressArchiving = "99%"
+	ProgressComplete  = "100%"
 )
 
 // ---------------------------------------------------------------------------

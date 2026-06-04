@@ -42,6 +42,18 @@ type StorageSettings struct {
 	// 必须开 r2.dev subdomain 或绑定自定义域名才能直链
 	R2PublicBaseURL string `json:"r2_public_base_url"`
 
+	// VideoArchiveEnabled 是否把异步视频任务的结果转存到 R2（自有永久副本）。
+	//
+	// 打开后：任务轮询拿到上游视频直链时，不再直接把（脱敏后的）上游 URL 落给
+	// 用户，而是先由后台 worker 下载并上传到 R2，成功后才把任务翻成 SUCCESS、
+	// 结果 URL 指向 R2 公网地址。彻底与上游解耦（上游链接过期也不怕），且可走
+	// 国内优化的 CDN 分发。
+	//
+	// 前置条件：Enabled=true 且 R2 凭证 + R2PublicBaseURL 都已配齐
+	// （storage.IsEnabled() 为真）。默认 false——不打开则维持原有"代理上游"行为，
+	// 不给现有部署带来任何隐式变化。
+	VideoArchiveEnabled bool `json:"video_archive_enabled"`
+
 	// ImageTransformEnabled 是否启用 Cloudflare Image Resizing 优化显示。
 	//
 	// 打开后前端在「显示用」的 <img src> 处拼一层 /cdn-cgi/image/...，让 CF

@@ -425,6 +425,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	shouldRefund := false
 	shouldSettle := false
+	archiving := false
 	quota := task.Quota
 
 	task.Status = model.TaskStatus(taskResult.Status)
@@ -439,6 +440,19 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			task.StartTime = now
 		}
 	case model.TaskStatusSuccess:
+		// R2 归档：若开启且结果是可下载的 http(s) 直链，先不落终态——交给后台
+		// worker 下载并上传 R2，成功后由 worker 翻 SUCCESS（见 video_archive_worker.go）。
+		// 这样用户只会看到 R2 地址，从不暴露上游、也不存在"先返回再异步换 URL"。
+		if ShouldArchiveVideo(taskResult.Url) {
+			// 入队 best-effort：主节点正常入队归档；队列满则本轮不落终态、保持
+			// IN_PROGRESS，下一轮轮询重试入队。绝不用上游 URL 落终态。
+			TryEnqueueVideoArchive(task.TaskID, ch.Id, task.Platform, taskResult.Url, taskResult)
+			archiving = true
+			if task.StartTime == 0 {
+				task.StartTime = now
+			}
+			break
+		}
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
 			task.FinishTime = now
@@ -474,6 +488,15 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 	if taskResult.Progress != "" {
 		task.Progress = taskResult.Progress
+	}
+
+	if archiving {
+		// 归档进行中：把状态压回"处理中 + 99%"。务必覆盖上面可能被 taskResult
+		// 写成 100%/SUCCESS 的值——否则 isDone 会误判终态触发结算，或 progress
+		// 变成 100% 导致 GetAllUnFinishSyncTasks 漏捞、主节点重启后无法续传。
+		task.Status = model.TaskStatusInProgress
+		task.Progress = taskcommon.ProgressArchiving
+		task.FinishTime = 0
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure

@@ -3,7 +3,7 @@
 //
 //   - 配置入库：admin 面板把 R2 凭证写到 system_setting.StorageSettings，
 //     运行时按需热重建 client；env 变量作为部署兜底，DB 优先于 env
-//   - 上传 key 强制走 {pathPrefix}/{userID}/{YYYY/MM/DD}/{uuid}{ext} 格式，
+//   - 上传 key 强制走 {pathPrefix}/{userID}/{YYYYMMDD}/{uuid}{ext} 格式，
 //     按业务域 + 用户 + 日期分目录隔离，便于回溯 / 清理 / 配额统计
 //   - pathPrefix 由调用方（controller）按白名单决定，禁止任何用户输入；
 //     防止越权写到别的目录
@@ -292,12 +292,15 @@ func extFromContentType(contentType, filename string) string {
 // BuildObjectKey 拼出最终的对象 key。导出是为了让调用方能在 dry-run /
 // 调试时预览 key 结构，不强制使用。
 //
-// 格式：{pathPrefix}/{userID}/{YYYY/MM/DD}/{uuid}{ext}
+// 格式：{pathPrefix}/{userID}/{YYYYMMDD}/{uuid}{ext}
+//
+// 日期用扁平的 YYYYMMDD（不带斜杠），与视频归档 key 风格统一，控制台里一个
+// 用户目录下所有日期平铺、点一下即进当天，比 YYYY/MM/DD 逐层点开更省事。
 //
 // pathPrefix 由 controller 决定（如 "playground/video/image"、
 // "user-upload/image"），用户输入不可达；这里只做防御性 sanitize。
 //
-// 例：playground/video/image/123/2026/04/26/4f3e...d.png
+// 例：playground/video/image/123/20260426/4f3e...d.png
 func BuildObjectKey(pathPrefix string, userID int, contentType, filename string) string {
 	pathPrefix = sanitizePathPrefix(pathPrefix)
 	uid := strconv.Itoa(userID)
@@ -305,7 +308,7 @@ func BuildObjectKey(pathPrefix string, userID int, contentType, filename string)
 		uid = "anonymous"
 	}
 	now := time.Now().UTC()
-	datePart := now.Format("2006/01/02")
+	datePart := now.Format("20060102")
 	id := strings.ReplaceAll(uuid.NewString(), "-", "")
 	ext := extFromContentType(contentType, filename)
 	return fmt.Sprintf("%s/%s/%s/%s%s", pathPrefix, uid, datePart, id, ext)

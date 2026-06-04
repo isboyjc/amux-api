@@ -516,16 +516,34 @@ func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 	if ti.Reason != "" {
 		task.FailReason = ti.Reason
 	}
-	if strings.HasPrefix(ti.Url, "data:") {
-		// data: URI — kept in Data, not ResultURL
-	} else if ti.Url != "" {
-		// 对上游直链做一次前缀脱敏（见 operation_setting.TaskURLRewriteSetting）。
-		// 管理员可以把 https://resource.xxx.com/... 映射为自家反向代理域名，
-		// 避免把上游资源地址暴露给终端用户。功能默认关闭，未命中规则时等价于原值。
-		task.PrivateData.ResultURL = operation_setting.ApplyTaskURLRewrite(ti.Url)
-	} else if task.Status == model.TaskStatusSuccess {
-		// No URL from adaptor — construct proxy URL using public task ID
-		task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+	// 只在"首次进入成功态"(snap 还不是 SUCCESS)时计算结果 URL / 决定归档。
+	// 已经成功的任务（含已归档到 R2 的）直接保留库里的结果，绝不重算或覆盖——
+	// 否则操练场反复 3s 轮询会把已归档任务的 R2 地址又改回上游代理地址，甚至用
+	// CAS from SUCCESS 把已终态任务打回 IN_PROGRESS、触发重复归档 + 重复结算。
+	freshSuccess := task.Status == model.TaskStatusSuccess && snap.Status != model.TaskStatusSuccess
+
+	// R2 归档：是否归档只看 ShouldArchiveVideo；入队是 best-effort——
+	// 主节点有 worker 直接入队归档；从节点没有 worker 入不了队，但仍把任务挂在
+	// IN_PROGRESS（不落终态），留给主节点的轮询循环捞到后归档。这样无论用户被
+	// 路由到主/从哪个节点，最终拿到的都是 R2 地址，绝不会有一条路径用上游 URL
+	// 落终态。两条路径都靠 UpdateWithStatus 的 CAS 保证只有一次终态转换触发结算。
+	if freshSuccess && service.ShouldArchiveVideo(ti.Url) {
+		service.TryEnqueueVideoArchive(task.TaskID, task.ChannelId, task.Platform, ti.Url, ti)
+		// 压回处理中 + 99%，不设 ResultURL/FinishTime；worker 负责收尾与结算。
+		task.Status = model.TaskStatusInProgress
+		task.Progress = taskcommon.ProgressArchiving
+	} else if freshSuccess {
+		if strings.HasPrefix(ti.Url, "data:") {
+			// data: URI — kept in Data, not ResultURL
+		} else if ti.Url != "" {
+			// 对上游直链做一次前缀脱敏（见 operation_setting.TaskURLRewriteSetting）。
+			// 管理员可以把 https://resource.xxx.com/... 映射为自家反向代理域名，
+			// 避免把上游资源地址暴露给终端用户。功能默认关闭，未命中规则时等价于原值。
+			task.PrivateData.ResultURL = operation_setting.ApplyTaskURLRewrite(ti.Url)
+		} else {
+			// No URL from adaptor — construct proxy URL using public task ID
+			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
 	}
 
 	// 把上游原始响应体写回 task.Data。否则 ConvertToOpenAIVideo（及其它
