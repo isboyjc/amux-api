@@ -40,7 +40,7 @@ import {
 } from 'lucide-react';
 
 import SystemSetting from '../../components/settings/SystemSetting';
-import { isRoot } from '../../helpers';
+import { isAdmin } from '../../helpers';
 import OtherSetting from '../../components/settings/OtherSetting';
 import OperationSetting from '../../components/settings/OperationSetting';
 import RateLimitSetting from '../../components/settings/RateLimitSetting';
@@ -63,7 +63,7 @@ const Setting = () => {
   const [tabActiveKey, setTabActiveKey] = useState('1');
   let panes = [];
 
-  if (isRoot()) {
+  if (isAdmin()) {
     panes.push({
       tab: (
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>

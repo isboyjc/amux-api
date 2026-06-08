@@ -25,7 +25,7 @@ import { getLucideIcon } from '../../helpers/render';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
-import { isAdmin, isRoot, showError } from '../../helpers';
+import { isAdmin, showError } from '../../helpers';
 import SkeletonWrapper from './components/SkeletonWrapper';
 import SidebarCarousel from './SidebarCarousel';
 
@@ -233,7 +233,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('系统设置'),
         itemKey: 'setting',
         to: '/setting',
-        className: isRoot() ? '' : 'tableHiddle',
+        className: isAdmin() ? '' : 'tableHiddle',
       },
     ];
 
@@ -244,7 +244,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     });
 
     return filteredItems;
-  }, [isAdmin(), isRoot(), t, isModuleVisible]);
+  }, [isAdmin(), t, isModuleVisible]);
 
   const chatMenuItems = useMemo(() => {
     const items = [
