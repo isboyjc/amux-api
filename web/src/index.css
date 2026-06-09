@@ -95,6 +95,15 @@ body[theme-mode='dark'] {
 
   /* 主色前景色 */
   --semi-color-primary-foreground: #18181b;
+
+  /* 背景色层级 - 中性偏冷的 zinc 近黑色阶（比 Semi 默认更黑、更高级，非纯黑） */
+  --semi-color-bg-0: rgba(10, 10, 12, 1);    /* 页面底色 / body */
+  --semi-color-bg-1: rgba(20, 20, 23, 1);    /* 卡片 / 容器 */
+  --semi-color-bg-2: rgba(28, 28, 32, 1);    /* 弹层 / 下拉 / Modal */
+  --semi-color-bg-3: rgba(38, 38, 43, 1);    /* 更高层级 */
+  --semi-color-bg-4: rgba(48, 48, 54, 1);    /* 最高层级 */
+  --semi-color-nav-bg: rgba(20, 20, 23, 1);  /* 侧边栏 / 导航，跟随 bg-1 */
+  --semi-color-overlay-bg: rgba(0, 0, 0, 0.6); /* 模态遮罩 */
 }
 
 /* ---- 暗色模式：主色背景上的前景色修正 ---- */
@@ -2092,7 +2101,7 @@ html.dark .with-pastel-balls::before {
 }
 
 html.dark .semi-dropdown-wrapper {
-  background: #1c1c1e !important;
+  background: #1c1c20 !important;
   border: 1px solid rgba(255, 255, 255, 0.08) !important;
 }
 
