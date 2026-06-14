@@ -33,6 +33,7 @@ import DeleteUserModal from './modals/DeleteUserModal';
 import ResetPasskeyModal from './modals/ResetPasskeyModal';
 import ResetTwoFAModal from './modals/ResetTwoFAModal';
 import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
+import AffiliateRelationModal from './modals/AffiliateRelationModal';
 
 const UsersTable = (usersData) => {
   const {
@@ -64,6 +65,8 @@ const UsersTable = (usersData) => {
   const [showResetPasskeyModal, setShowResetPasskeyModal] = useState(false);
   const [showResetTwoFAModal, setShowResetTwoFAModal] = useState(false);
   const [showUserSubscriptionsModal, setShowUserSubscriptionsModal] =
+    useState(false);
+  const [showAffiliateRelationModal, setShowAffiliateRelationModal] =
     useState(false);
   const [statusState] = useContext(StatusContext);
   const currencySymbol =
@@ -106,6 +109,11 @@ const UsersTable = (usersData) => {
     setShowUserSubscriptionsModal(true);
   };
 
+  const showAffiliateRelationUserModal = (user) => {
+    setModalUser(user);
+    setShowAffiliateRelationModal(true);
+  };
+
   // Modal confirm handlers
   const handlePromoteConfirm = () => {
     manageUser(modalUser.id, 'promote', modalUser);
@@ -146,6 +154,7 @@ const UsersTable = (usersData) => {
       showResetPasskeyModal: showResetPasskeyUserModal,
       showResetTwoFAModal: showResetTwoFAUserModal,
       showUserSubscriptionsModal: showUserSubscriptionsUserModal,
+      showAffiliateRelationModal: showAffiliateRelationUserModal,
     });
   }, [
     t,
@@ -159,18 +168,19 @@ const UsersTable = (usersData) => {
     showResetPasskeyUserModal,
     showResetTwoFAUserModal,
     showUserSubscriptionsUserModal,
+    showAffiliateRelationUserModal,
   ]);
 
   // Handle compact mode by removing fixed positioning
   const tableColumns = useMemo(() => {
     return compactMode
       ? columns.map((col) => {
-          if (col.dataIndex === 'operate') {
-            const { fixed, ...rest } = col;
-            return rest;
-          }
-          return col;
-        })
+        if (col.dataIndex === 'operate') {
+          const { fixed, ...rest } = col;
+          return rest;
+        }
+        return col;
+      })
       : columns;
   }, [compactMode, columns]);
 
@@ -265,6 +275,13 @@ const UsersTable = (usersData) => {
         user={modalUser}
         t={t}
         onSuccess={() => refresh?.()}
+      />
+
+      <AffiliateRelationModal
+        visible={showAffiliateRelationModal}
+        onCancel={() => setShowAffiliateRelationModal(false)}
+        user={modalUser}
+        t={t}
       />
     </>
   );

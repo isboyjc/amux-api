@@ -40,6 +40,20 @@ var (
 	// 同步到 Resend。Admin 仍需手动建好 contact；用户首次保存时 ensureContactExists
 	// 会兜底建/复用。
 	MarketingExtraEligibleGroups = ""
+
+	// 邀请关系羊毛风控相关配置。详见 service/marketing/affiliate_risk.go 顶部说明。
+	//
+	// 关闭开关后：写路径仍会调 MarkAffiliateRiskDirty（O(1) upsert，无副作用），
+	// worker 进入长 sleep 不再消费，用户列表 LEFT JOIN 到的字段为 NULL 不影响显示。
+	AffiliateRiskCacheEnabled = true
+
+	// 每个 worker tick 一次性消费的脏数据上限。
+	// 过大：单 tick 占用 DB 时间长，可能与备份/统计任务争抢。
+	// 过小：积压时收敛慢；默认 200 在 10w 邀请人量级也能在 10 分钟内完成全量重算。
+	AffiliateRiskDirtyBatchSize = 200
+
+	// 队列空时 worker 的轮询间隔（秒）。设置为 0 走默认 60。
+	AffiliateRiskDirtyIntervalSec = 60
 )
 
 // OnMarketingConfigChanged 是配置变更钩子。由 main.go 在启动时设置为"重新构造

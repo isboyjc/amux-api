@@ -146,6 +146,14 @@ func main() {
 	operation_setting.OnMarketingConfigChanged = rebuildMarketingProvider
 	rebuildMarketingProvider()
 
+	// 邀请关系羊毛风控后台 worker：消费 affiliate_risk_dirty 表，按批重算缓存。
+	// 单进程一个 worker；多实例部署时各实例并行跑，由 UpsertAffiliateRiskCache 的
+	// ON CONFLICT 保证幂等。开关由 operation_setting.AffiliateRiskCacheEnabled 控制，
+	// 关闭时 worker 进入长 sleep，业务零影响。
+	gopool.Go(func() {
+		marketing.RunAffiliateRiskWorker(context.Background())
+	})
+
 	// Desktop auth session cleanup task
 	service.StartDesktopAuthCleanupTask()
 

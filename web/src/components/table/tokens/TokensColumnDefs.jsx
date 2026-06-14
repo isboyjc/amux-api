@@ -39,6 +39,7 @@ import {
   renderQuota,
   getModelCategories,
   showError,
+  stringToColor,
 } from '../../../helpers';
 import {
   IconTreeTriangleDown,
@@ -87,33 +88,213 @@ const renderStatus = (text, record, t) => {
   );
 };
 
-// Render group column
-const renderGroupColumn = (text, record, t, groupRatios = {}) => {
-  if (text === 'auto') {
+// Render group column - merged into a single tag (group + ratio),
+// with a clickable Dropdown to switch the token's group inline.
+const renderGroupColumn = (
+  text,
+  record,
+  t,
+  groupRatios = {},
+  groupOptions = [],
+  updateTokenGroup,
+  groupModelsCache = {},
+  fetchGroupModels,
+) => {
+  const tagColors = {
+    vip: 'yellow',
+    pro: 'yellow',
+    svip: 'red',
+    premium: 'red',
+  };
+
+  // Render the model preview block shown inside the Tooltip of each menu item.
+  // States: idle (not yet requested) / loading / loaded (with or without models) / error.
+  // Models are rendered as wrap-able tags with a max height so a group with hundreds
+  // of models won't blow up the tooltip.
+  const renderModelsPreview = (groupKey) => {
+    const cache = groupModelsCache[groupKey];
+    if (!cache || cache.status === 'loading') {
+      return (
+        <div className='text-xs opacity-70'>{t('加载中...')}</div>
+      );
+    }
+    if (cache.status === 'error') {
+      return (
+        <div className='text-xs' style={{ color: 'var(--semi-color-danger)' }}>
+          {cache.error || t('加载失败')}
+        </div>
+      );
+    }
+    const models = cache.models || [];
+    if (models.length === 0) {
+      return (
+        <div className='text-xs opacity-70'>{t('该分组下暂无可用模型')}</div>
+      );
+    }
+    const MAX_VISIBLE = 60;
+    const visible = models.slice(0, MAX_VISIBLE);
+    const extra = models.length - visible.length;
     return (
+      <div
+        className='flex flex-wrap gap-1 overflow-auto'
+        style={{ maxHeight: 180, maxWidth: 320 }}
+      >
+        {visible.map((m) => (
+          <Tag key={m} size='small' shape='circle' color='white'>
+            {m}
+          </Tag>
+        ))}
+        {extra > 0 && (
+          <Tag size='small' shape='circle'>
+            +{extra}
+          </Tag>
+        )}
+      </div>
+    );
+  };
+
+  // Build dropdown menu (skip current value, mark disabled when modelCount === 0)
+  // Note: opt.label (group desc) can be quite long. We:
+  //  - cap the item width so a long desc cannot stretch the menu indefinitely;
+  //  - truncate desc to a single line (min-w-0 is required so truncate works inside a flex child);
+  //  - hovering an item shows a Tooltip with ONLY the available model list
+  //    (group name / desc / count are already visible in the menu item itself,
+  //    so we keep the popover minimal and focused).
+  // Hovering an item also triggers a lazy (cached) request for that group's models.
+  const buildItemNode = (opt) => {
+    const showDesc = opt.label && opt.label !== opt.value;
+    const modelCount = opt.modelCount;
+
+    const labelBlock = (
+      <span
+        className='flex flex-col min-w-0 flex-1'
+        onMouseEnter={() => {
+          if (typeof fetchGroupModels === 'function') {
+            fetchGroupModels(opt.value);
+          }
+        }}
+      >
+        <span className='font-medium truncate'>{opt.value}</span>
+        {showDesc && (
+          <span className='text-xs text-[var(--semi-color-text-2)] truncate'>
+            {opt.label}
+          </span>
+        )}
+      </span>
+    );
+
+    const tooltipContent = (
+      <div className='max-w-[340px]'>{renderModelsPreview(opt.value)}</div>
+    );
+
+    return (
+      <Tooltip
+        content={tooltipContent}
+        position='right'
+        mouseEnterDelay={300}
+        trigger='hover'
+      >
+        <span className='flex items-center justify-between gap-2 min-w-[220px] max-w-[320px]'>
+          {labelBlock}
+          <span className='flex items-center gap-1 flex-shrink-0'>
+            {typeof modelCount === 'number' && (
+              <Tag size='small' color='cyan' shape='circle'>
+                {modelCount}
+              </Tag>
+            )}
+            {typeof opt.ratio === 'number' && (
+              <Tag size='small' color='green' shape='circle'>
+                {opt.ratio}x
+              </Tag>
+            )}
+          </span>
+        </span>
+      </Tooltip>
+    );
+  };
+
+  const menu = (groupOptions || []).map((opt) => ({
+    node: 'item',
+    name: buildItemNode(opt),
+    disabled: opt.disabled || opt.value === text,
+    active: opt.value === text,
+    onClick: () => {
+      if (opt.disabled || opt.value === text) return;
+      if (typeof updateTokenGroup === 'function') {
+        updateTokenGroup(record, opt.value);
+      }
+    },
+  }));
+
+  const canChange =
+    typeof updateTokenGroup === 'function' && (groupOptions || []).length > 0;
+
+  // Render the merged tag content
+  let tagContent;
+  if (text === 'auto') {
+    tagContent = (
       <Tooltip
         content={t(
           '当前分组为 auto，会自动选择最优分组，当一个组不可用时自动降级到下一个组（熔断机制）',
         )}
         position='top'
       >
-        <Tag color='white' shape='circle'>
-          {t('智能熔断')}
-          {record && record.cross_group_retry ? `(${t('跨分组')})` : ''}
+        <Tag
+          color='white'
+          shape='circle'
+          style={canChange ? { cursor: 'pointer' } : undefined}
+        >
+          <span className='flex items-center gap-1'>
+            {t('智能熔断')}
+            {record && record.cross_group_retry ? `(${t('跨分组')})` : ''}
+            {canChange && <IconTreeTriangleDown style={{ fontSize: 10 }} />}
+          </span>
         </Tag>
       </Tooltip>
     );
+  } else {
+    const ratio = groupRatios[text];
+    const displayName = text === '' ? t('用户分组') : text;
+    const color = text === '' ? 'white' : tagColors[text] || stringToColor(text);
+    tagContent = (
+      <Tag
+        color={color}
+        shape='circle'
+        style={canChange ? { cursor: 'pointer' } : undefined}
+      >
+        <span className='flex items-center gap-1'>
+          <span>{displayName}</span>
+          {ratio !== undefined && (
+            <span className='opacity-80'>· {ratio}x</span>
+          )}
+          {canChange && <IconTreeTriangleDown style={{ fontSize: 10 }} />}
+        </span>
+      </Tag>
+    );
   }
-  const ratio = groupRatios[text];
+
+  if (!canChange) {
+    // Fallback: keep original non-interactive rendering using shared helper
+    if (text === 'auto') return tagContent;
+    return (
+      <span className='flex items-center gap-1'>{renderGroup(text)}</span>
+    );
+  }
+
   return (
-    <span className='flex items-center gap-1'>
-      {renderGroup(text)}
-      {ratio !== undefined && (
-        <Tag size='small' color='green' shape='circle'>
-          {ratio}x
-        </Tag>
-      )}
-    </span>
+    <Dropdown
+      trigger='click'
+      position='bottomLeft'
+      clickToHide
+      menu={menu}
+    >
+      <span
+        className='inline-flex'
+        onClick={(e) => e.stopPropagation()}
+      >
+        {tagContent}
+      </span>
+    </Dropdown>
   );
 };
 
@@ -480,6 +661,10 @@ export const getTokensColumns = ({
   setShowEdit,
   refresh,
   groupRatios = {},
+  groupOptions = [],
+  updateTokenGroup,
+  groupModelsCache = {},
+  fetchGroupModels,
 }) => {
   return [
     {
@@ -501,7 +686,17 @@ export const getTokensColumns = ({
       title: t('分组'),
       dataIndex: 'group',
       key: 'group',
-      render: (text, record) => renderGroupColumn(text, record, t, groupRatios),
+      render: (text, record) =>
+        renderGroupColumn(
+          text,
+          record,
+          t,
+          groupRatios,
+          groupOptions,
+          updateTokenGroup,
+          groupModelsCache,
+          fetchGroupModels,
+        ),
     },
     {
       title: t('密钥'),

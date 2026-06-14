@@ -50,6 +50,10 @@ const TokensTable = (tokensData) => {
     setShowEdit,
     refresh,
     groupRatios,
+    groupOptions,
+    updateTokenGroup,
+    groupModelsCache,
+    fetchGroupModels,
     t,
   } = tokensData;
 
@@ -69,6 +73,10 @@ const TokensTable = (tokensData) => {
       setShowEdit,
       refresh,
       groupRatios,
+      groupOptions,
+      updateTokenGroup,
+      groupModelsCache,
+      fetchGroupModels,
     });
   }, [
     t,
@@ -84,18 +92,22 @@ const TokensTable = (tokensData) => {
     setShowEdit,
     refresh,
     groupRatios,
+    groupOptions,
+    updateTokenGroup,
+    groupModelsCache,
+    fetchGroupModels,
   ]);
 
   // Handle compact mode by removing fixed positioning
   const tableColumns = useMemo(() => {
     return compactMode
       ? columns.map((col) => {
-          if (col.dataIndex === 'operate') {
-            const { fixed, ...rest } = col;
-            return rest;
-          }
-          return col;
-        })
+        if (col.dataIndex === 'operate') {
+          const { fixed, ...rest } = col;
+          return rest;
+        }
+        return col;
+      })
       : columns;
   }, [compactMode, columns]);
 

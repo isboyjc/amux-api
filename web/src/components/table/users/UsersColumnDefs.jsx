@@ -36,6 +36,20 @@ import {
   timestamp2string,
 } from '../../../helpers';
 
+const AFF_RISK_REASON_LABELS = {
+  invites_24h: '24h邀请数异常',
+  invites_7d: '7天邀请数偏高',
+  disposable_ratio: '一次性邮箱占比高',
+  activation_ratio: '被邀者活跃率低',
+  banned_ratio: '被邀者封禁率高',
+  email_pattern: '邮箱前缀批量特征',
+};
+
+const parseRiskReason = (raw) => {
+  const key = raw.split(':')[0];
+  return AFF_RISK_REASON_LABELS[key] || raw;
+};
+
 const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
 
 /**
@@ -197,12 +211,66 @@ const renderTopupInfo = (text, record, currencySymbol, t) => {
 };
 
 /**
+ * Render affiliate risk badge
+ */
+const renderAffRiskBadge = (record, t) => {
+  const level = record.aff_risk_level;
+  if (!level || record.aff_count === 0) return null;
+
+  const config = {
+    normal: { color: 'green', label: '正常' },
+    suspect: { color: 'orange', label: '可疑' },
+    danger: { color: 'red', label: '高危' },
+  };
+  const { color, label } = config[level] || config.normal;
+
+  let reasons = [];
+  if (record.aff_risk_reasons) {
+    try {
+      const parsed =
+        typeof record.aff_risk_reasons === 'string'
+          ? JSON.parse(record.aff_risk_reasons)
+          : record.aff_risk_reasons;
+      if (Array.isArray(parsed)) reasons = parsed;
+    } catch {
+      // ignore
+    }
+  }
+
+  const tooltipLines = reasons.map((r) => t(parseRiskReason(r))).join('、');
+  const computedAt = record.aff_risk_computed_at
+    ? timestamp2string(record.aff_risk_computed_at)
+    : null;
+
+  const tooltipContent = (
+    <div className='text-xs' style={{ maxWidth: 280 }}>
+      {tooltipLines && <div>{tooltipLines}</div>}
+      {computedAt && (
+        <div className='opacity-70 mt-1'>
+          {t('评估时间')}: {computedAt}
+        </div>
+      )}
+      {!tooltipLines && !computedAt && <div>{t('无风险信号')}</div>}
+    </div>
+  );
+
+  return (
+    <Tooltip content={tooltipContent} position='top'>
+      <Tag color={color} shape='circle' className='!text-xs'>
+        {t(label)}
+      </Tag>
+    </Tooltip>
+  );
+};
+
+/**
  * Render invite information
  */
-const renderInviteInfo = (text, record, t) => {
+const renderInviteInfo = (text, record, t, showAffiliateRelationModal) => {
+  const riskBadge = renderAffRiskBadge(record, t);
   return (
-    <div>
-      <Space spacing={1}>
+    <div className='flex flex-col gap-0.5'>
+      <Space spacing={1} wrap>
         <Tag color='white' shape='circle' className='!text-xs'>
           {t('邀请')}: {renderNumber(record.aff_count)}
         </Tag>
@@ -214,6 +282,18 @@ const renderInviteInfo = (text, record, t) => {
             ? t('无邀请人')
             : `${t('邀请人')}: ${record.inviter_id}`}
         </Tag>
+        {riskBadge}
+        {typeof showAffiliateRelationModal === 'function' && (
+          <Button
+            theme='borderless'
+            type='primary'
+            size='small'
+            className='!px-1.5 !py-0 !h-5 !text-xs'
+            onClick={() => showAffiliateRelationModal(record)}
+          >
+            {t('邀请关系')}
+          </Button>
+        )}
       </Space>
     </div>
   );
@@ -336,6 +416,7 @@ export const getUsersColumns = ({
   showResetPasskeyModal,
   showResetTwoFAModal,
   showUserSubscriptionsModal,
+  showAffiliateRelationModal,
 }) => {
   return [
     {
@@ -386,7 +467,8 @@ export const getUsersColumns = ({
     {
       title: t('邀请信息'),
       dataIndex: 'invite',
-      render: (text, record, index) => renderInviteInfo(text, record, t),
+      render: (text, record, index) =>
+        renderInviteInfo(text, record, t, showAffiliateRelationModal),
     },
     {
       title: t('注册时间'),

@@ -43,6 +43,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   const [tokens, setTokens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [groupRatios, setGroupRatios] = useState({});
+  const [groupOptions, setGroupOptions] = useState([]);
   const [activePage, setActivePage] = useState(1);
   const [tokenCount, setTokenCount] = useState(0);
   const [pageSize, setPageSize] = useState(ITEMS_PER_PAGE);
@@ -64,6 +65,12 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   const [resolvedTokenKeys, setResolvedTokenKeys] = useState({});
   const [loadingTokenKeys, setLoadingTokenKeys] = useState({});
   const keyRequestsRef = useRef({});
+
+  // Cache of group -> { status: 'loading' | 'loaded' | 'error', models: string[], error?: string }
+  // Used by the inline group dropdown so users can preview models of a group on hover
+  // without triggering N parallel requests when the dropdown opens.
+  const [groupModelsCache, setGroupModelsCache] = useState({});
+  const groupModelsRequestsRef = useRef({});
 
   // Form state
   const [formApi, setFormApi] = useState(null);
@@ -293,6 +300,101 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     setLoading(false);
   };
 
+  // Inline update token group (and cross_group_retry when switching to/from auto)
+  const updateTokenGroup = async (record, newGroup) => {
+    if (!record || !record.id) return;
+    if (record.group === newGroup) return;
+    const payload = {
+      id: record.id,
+      name: record.name,
+      remain_quota: record.remain_quota,
+      unlimited_quota: record.unlimited_quota,
+      expired_time: record.expired_time,
+      model_limits_enabled: record.model_limits_enabled,
+      model_limits: record.model_limits || '',
+      allow_ips: record.allow_ips || '',
+      group: newGroup,
+      cross_group_retry:
+        newGroup === 'auto' ? record.cross_group_retry : false,
+    };
+    try {
+      const res = await API.put('/api/token/', payload);
+      const { success, message, data } = res.data;
+      if (success) {
+        showSuccess(t('分组已更新'));
+        setTokens((prev) =>
+          prev.map((tk) =>
+            tk.id === record.id
+              ? { ...tk, group: data?.group ?? newGroup, cross_group_retry: data?.cross_group_retry ?? payload.cross_group_retry }
+              : tk,
+          ),
+        );
+      } else {
+        showError(message);
+      }
+    } catch (e) {
+      showError(e?.message || t('更新分组失败'));
+    }
+  };
+
+  // Lazily fetch the available models of a group (cached, dedup-ed by group key).
+  // Returns the cached entry immediately when present; otherwise triggers a request
+  // and updates groupModelsCache as it progresses. Designed for hover-preview use,
+  // so callers should NOT await this for critical UI paths.
+  const fetchGroupModels = (group) => {
+    if (group === undefined || group === null) return;
+    const cached = groupModelsCache[group];
+    if (cached && cached.status !== 'error') return cached;
+    if (groupModelsRequestsRef.current[group]) return cached;
+
+    setGroupModelsCache((prev) => ({
+      ...prev,
+      [group]: { status: 'loading', models: [] },
+    }));
+
+    const params =
+      group && group !== 'auto'
+        ? `?group=${encodeURIComponent(group)}`
+        : '';
+    const req = API.get(`/api/user/models${params}`)
+      .then((res) => {
+        const { success, message, data } = res.data || {};
+        if (success) {
+          setGroupModelsCache((prev) => ({
+            ...prev,
+            [group]: {
+              status: 'loaded',
+              models: Array.isArray(data) ? data : [],
+            },
+          }));
+        } else {
+          setGroupModelsCache((prev) => ({
+            ...prev,
+            [group]: {
+              status: 'error',
+              models: [],
+              error: message || t('加载失败'),
+            },
+          }));
+        }
+      })
+      .catch((e) => {
+        setGroupModelsCache((prev) => ({
+          ...prev,
+          [group]: {
+            status: 'error',
+            models: [],
+            error: e?.message || t('加载失败'),
+          },
+        }));
+      })
+      .finally(() => {
+        delete groupModelsRequestsRef.current[group];
+      });
+    groupModelsRequestsRef.current[group] = req;
+    return undefined;
+  };
+
   // Search tokens function
   const searchTokens = async (page = 1, size = pageSize) => {
     const normalizedPage = Number.isInteger(page) && page > 0 ? page : 1;
@@ -354,8 +456,8 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
 
   // Row selection handlers
   const rowSelection = {
-    onSelect: (record, selected) => {},
-    onSelectAll: (selected, selectedRows) => {},
+    onSelect: (record, selected) => { },
+    onSelectAll: (selected, selectedRows) => { },
     onChange: (selectedRowKeys, selectedRows) => {
       setSelectedKeys(selectedRows);
     },
@@ -442,13 +544,23 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       .then((res) => {
         if (res.data.success && res.data.data) {
           const ratios = {};
+          const options = [];
           for (const [name, info] of Object.entries(res.data.data)) {
             ratios[name] = info.ratio;
+            options.push({
+              label: info.desc,
+              value: name,
+              ratio: info.ratio,
+              modelCount: info.model_count,
+              disabled: info.model_count === 0,
+            });
           }
+          options.sort((a, b) => (a.value === 'auto' ? -1 : b.value === 'auto' ? 1 : 0));
           setGroupRatios(ratios);
+          setGroupOptions(options);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [pageSize]);
 
   return {
@@ -460,6 +572,8 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     pageSize,
     searching,
     groupRatios,
+    groupOptions,
+    groupModelsCache,
 
     // Selection state
     selectedKeys,
@@ -496,6 +610,8 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     copyTokenConnectionString,
     onOpenLink,
     manageToken,
+    updateTokenGroup,
+    fetchGroupModels,
     searchTokens,
     sortToken,
     handlePageChange,

@@ -88,6 +88,27 @@ const UsersFilters = ({
             size='small'
           />
         </div>
+        <div className='w-full md:w-44'>
+          <Form.Select
+            field='searchRisk'
+            placeholder={t('邀请风险等级')}
+            optionList={[
+              { label: t('正常（含未邀请用户）'), value: 'normal' },
+              { label: t('可疑'), value: 'suspect' },
+              { label: t('高危'), value: 'danger' },
+              { label: t('未评估（邀请人）'), value: 'unrated' },
+            ]}
+            onChange={() => {
+              setTimeout(() => {
+                searchUsers(1, pageSize);
+              }, 100);
+            }}
+            className='w-full'
+            showClear
+            pure
+            size='small'
+          />
+        </div>
         <div className='flex gap-2 w-full md:w-auto'>
           <Button
             type='tertiary'

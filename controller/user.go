@@ -248,7 +248,8 @@ func Register(c *gin.Context) {
 
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.GetAllUsers(pageInfo)
+	riskLevel := c.Query("risk")
+	users, total, err := model.GetAllUsersFiltered(pageInfo, riskLevel)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -264,8 +265,9 @@ func GetAllUsers(c *gin.Context) {
 func SearchUsers(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")
+	riskLevel := c.Query("risk")
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.SearchUsers(keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	users, total, err := model.SearchUsersFiltered(keyword, group, riskLevel, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -338,6 +340,55 @@ func GetUser(c *gin.Context) {
 		"data":    user,
 	})
 	return
+}
+
+// GetUserAffiliateRelation 管理员查看指定用户的邀请关系详情（含风险摘要）。
+//
+// 路径：GET /api/user/:id/affiliate?page=&page_size=
+// 鉴权：AdminAuth；并复用 GetUser 的同级保护逻辑，不允许越权查看更高/同级管理员。
+//
+// 性能：聚合查询委托给 model.GetAffiliateRelationView——单次主键查找 + 单次分页 + 单条 IN
+// 拉风险等级；不做全表扫描。pageSize 在此处做硬上限保护，防止滥用。
+func GetUserAffiliateRelation(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	target, err := model.GetUserById(id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	myRole := c.GetInt("role")
+	if myRole <= target.Role && myRole != common.RoleRootUser {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
+		return
+	}
+
+	page, _ := strconv.Atoi(c.Query("page"))
+	if page <= 0 {
+		page = 1
+	}
+	pageSize, _ := strconv.Atoi(c.Query("page_size"))
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	view, err := model.GetAffiliateRelationView(id, page, pageSize)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data":    view,
+	})
 }
 
 // GenerateAccessToken 是旧 GET /api/user/token 端点的后向兼容入口。

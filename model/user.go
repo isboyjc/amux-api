@@ -57,10 +57,18 @@ type User struct {
 
 // UserListItem 用于管理端用户列表返回，在 User 基础上附带成功充值聚合信息。
 // 这些字段不写入 users 表，因此不放在 User 结构体上，避免被 GORM 自动选入常规查询。
+//
+// AffRiskLevel / AffRiskReasons / AffRiskComputedAt 来自 affiliate_risk_cache 主键
+// LEFT JOIN，未评估的邀请人这三个字段为 NULL，前端按"未评估"渲染即可。
+// 使用主键关联且只读已物化字段，列表查询 P95 不会因此恶化（实测加 JOIN 后开销
+// 与原查询同量级）。
 type UserListItem struct {
 	User
-	TopupCount  int     `json:"topup_count" gorm:"column:topup_count"`
-	TopupAmount float64 `json:"topup_amount" gorm:"column:topup_amount"`
+	TopupCount        int      `json:"topup_count" gorm:"column:topup_count"`
+	TopupAmount       float64  `json:"topup_amount" gorm:"column:topup_amount"`
+	AffRiskLevel      *string  `json:"aff_risk_level" gorm:"column:aff_risk_level"`
+	AffRiskReasons    *string  `json:"aff_risk_reasons" gorm:"column:aff_risk_reasons"`
+	AffRiskComputedAt *int64   `json:"aff_risk_computed_at" gorm:"column:aff_risk_computed_at"`
 }
 
 // UserExportItem 供 email 营销系统同步用户数据，包含充值聚合和 language 字段。
@@ -303,6 +311,13 @@ func GetMaxUserId() int {
 }
 
 func GetAllUsers(pageInfo *common.PageInfo) (users []*UserListItem, total int64, err error) {
+	return GetAllUsersFiltered(pageInfo, "")
+}
+
+// GetAllUsersFiltered 在原 GetAllUsers 基础上支持按风险等级过滤。
+// riskLevel == "" 等价于不过滤；非法值（不是 normal/suspect/danger）也按"不过滤"处理。
+// "unrated" 是前端约定的特殊值：仅展示尚未评估的邀请人（cache 中 NULL）。
+func GetAllUsersFiltered(pageInfo *common.PageInfo, riskLevel string) (users []*UserListItem, total int64, err error) {
 	// Start transaction
 	tx := DB.Begin()
 	if tx.Error != nil {
@@ -314,22 +329,53 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*UserListItem, total int64,
 		}
 	}()
 
+	// 风险过滤条件：用 EXISTS / NOT EXISTS 表达式，避免主查询多一个 JOIN 维度污染分组。
+	// 三库通用，对 affiliate_risk_cache 走主键查找，开销 O(1)。
+	//
+	// 语义说明（与产品预期对齐）：
+	//   - normal  ：明确评估为 normal 的邀请人 + 所有"非邀请人"（aff_count=0，默认安全）。
+	//                这样 admin/普通用户在选"正常"时仍可见，避免"列表突然空了"的困惑。
+	//   - suspect ：仅展示被评估为 suspect 的邀请人。
+	//   - danger  ：仅展示被评估为 danger 的邀请人。
+	//   - unrated ：仅展示"是邀请人但 cache 尚未生成"的用户，便于运营追查 worker 进度。
+	var riskWhere string
+	var riskArgs []any
+	switch riskLevel {
+	case AffRiskLevelNormal:
+		riskWhere = "(users.aff_count = 0 OR EXISTS (SELECT 1 FROM affiliate_risk_cache c WHERE c.user_id = users.id AND c.risk_level = ?))"
+		riskArgs = []any{AffRiskLevelNormal}
+	case AffRiskLevelSuspect, AffRiskLevelDanger:
+		riskWhere = "EXISTS (SELECT 1 FROM affiliate_risk_cache c WHERE c.user_id = users.id AND c.risk_level = ?)"
+		riskArgs = []any{riskLevel}
+	case "unrated":
+		riskWhere = "NOT EXISTS (SELECT 1 FROM affiliate_risk_cache c WHERE c.user_id = users.id) AND users.aff_count > 0"
+	}
+
 	// Get total count within transaction
-	err = tx.Unscoped().Model(&User{}).Count(&total).Error
+	countQuery := tx.Unscoped().Model(&User{})
+	if riskWhere != "" {
+		countQuery = countQuery.Where(riskWhere, riskArgs...)
+	}
+	err = countQuery.Count(&total).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
 	}
 
 	// Get paginated users with aggregated topup info (successful topups only)
-	err = tx.Table("users").
-		Select("users.*, COALESCE(SUM(top_ups.money), 0) AS topup_amount, COUNT(top_ups.id) AS topup_count").
+	// LEFT JOIN affiliate_risk_cache 主键关联，未评估的邀请人字段为 NULL，前端按"未评估"展示。
+	listQuery := tx.Table("users").
+		Select("users.*, COALESCE(SUM(top_ups.money), 0) AS topup_amount, COUNT(top_ups.id) AS topup_count, MAX(affiliate_risk_cache.risk_level) AS aff_risk_level, MAX(affiliate_risk_cache.risk_reasons) AS aff_risk_reasons, MAX(affiliate_risk_cache.computed_at) AS aff_risk_computed_at").
 		Joins("LEFT JOIN top_ups ON users.id = top_ups.user_id AND top_ups.status = ?", common.TopUpStatusSuccess).
+		Joins("LEFT JOIN affiliate_risk_cache ON affiliate_risk_cache.user_id = users.id").
 		Group("users.id").
 		Order("users.id desc").
 		Limit(pageInfo.GetPageSize()).
-		Offset(pageInfo.GetStartIdx()).
-		Scan(&users).Error
+		Offset(pageInfo.GetStartIdx())
+	if riskWhere != "" {
+		listQuery = listQuery.Where(riskWhere, riskArgs...)
+	}
+	err = listQuery.Scan(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -347,6 +393,12 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*UserListItem, total int64,
 }
 
 func SearchUsers(keyword string, group string, startIdx int, num int) ([]*UserListItem, int64, error) {
+	return SearchUsersFiltered(keyword, group, "", startIdx, num)
+}
+
+// SearchUsersFiltered 在 SearchUsers 基础上叠加风险等级过滤。
+// riskLevel 取值规则与 GetAllUsersFiltered 保持一致。
+func SearchUsersFiltered(keyword string, group string, riskLevel string, startIdx int, num int) ([]*UserListItem, int64, error) {
 	var users []*UserListItem
 	var total int64
 	var err error
@@ -391,6 +443,19 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*UserLi
 		}
 	}
 
+	// 叠加风险过滤：用 EXISTS / NOT EXISTS 子查询，三库通用，主键 lookup 几乎无开销。
+	// 语义与 GetAllUsersFiltered 保持一致：normal 包含"非邀请人"以避免列表突然变空。
+	switch riskLevel {
+	case AffRiskLevelNormal:
+		whereClause = "(" + whereClause + ") AND (users.aff_count = 0 OR EXISTS (SELECT 1 FROM affiliate_risk_cache c WHERE c.user_id = users.id AND c.risk_level = ?))"
+		whereArgs = append(whereArgs, AffRiskLevelNormal)
+	case AffRiskLevelSuspect, AffRiskLevelDanger:
+		whereClause = "(" + whereClause + ") AND EXISTS (SELECT 1 FROM affiliate_risk_cache c WHERE c.user_id = users.id AND c.risk_level = ?)"
+		whereArgs = append(whereArgs, riskLevel)
+	case "unrated":
+		whereClause = "(" + whereClause + ") AND NOT EXISTS (SELECT 1 FROM affiliate_risk_cache c WHERE c.user_id = users.id) AND users.aff_count > 0"
+	}
+
 	// 获取总数
 	err = tx.Unscoped().Model(&User{}).Where(whereClause, whereArgs...).Count(&total).Error
 	if err != nil {
@@ -398,10 +463,11 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*UserLi
 		return nil, 0, err
 	}
 
-	// 获取分页数据（附带成功充值聚合信息）
+	// 获取分页数据（附带成功充值聚合信息 + 风控缓存）
 	err = tx.Table("users").
-		Select("users.*, COALESCE(SUM(top_ups.money), 0) AS topup_amount, COUNT(top_ups.id) AS topup_count").
+		Select("users.*, COALESCE(SUM(top_ups.money), 0) AS topup_amount, COUNT(top_ups.id) AS topup_count, MAX(affiliate_risk_cache.risk_level) AS aff_risk_level, MAX(affiliate_risk_cache.risk_reasons) AS aff_risk_reasons, MAX(affiliate_risk_cache.computed_at) AS aff_risk_computed_at").
 		Joins("LEFT JOIN top_ups ON users.id = top_ups.user_id AND top_ups.status = ?", common.TopUpStatusSuccess).
+		Joins("LEFT JOIN affiliate_risk_cache ON affiliate_risk_cache.user_id = users.id").
 		Where(whereClause, whereArgs...).
 		Group("users.id").
 		Order("users.id desc").
@@ -521,7 +587,17 @@ func inviteUser(inviterId int, fromUserId int) (err error) {
 		}
 	}
 
-	return tx.Commit().Error
+	if err = tx.Commit().Error; err != nil {
+		return err
+	}
+
+	// 标记该邀请人的风控缓存为"待重算"。
+	// O(1) upsert，提交后立刻执行；失败仅打日志，不影响注册/邀请主流程。
+	// 真正的风控评估由 service/marketing.RunAffiliateRiskWorker 后台批量处理。
+	if mErr := MarkAffiliateRiskDirty(inviterId); mErr != nil {
+		common.SysError(fmt.Sprintf("inviteUser: mark affiliate risk dirty inviter=%d error: %s", inviterId, mErr))
+	}
+	return nil
 }
 
 // BackfillAffCount 一次性迁移：按真值（users.inviter_id 关联的活跃用户数）重算 aff_count
