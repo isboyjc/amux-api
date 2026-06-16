@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Modal, Typography, Card, Skeleton } from '@douyinfe/semi-ui';
-import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si';
+import { SiAlipay, SiWechat } from 'react-icons/si';
 import { CreditCard } from 'lucide-react';
 
 const { Text } = Typography;
@@ -112,6 +112,8 @@ const PaymentConfirmModal = ({
                 </div>
               </>
             )}
+            {/* 仅 stripe 一个通道时无需展示「支付方式」，避免出现 "Stripe" 让用户困惑 */}
+            {payWay !== 'stripe' && (
             <div className='flex justify-between items-center'>
               <Text strong className='text-slate-700 dark:text-slate-200'>
                 {t('支付方式')}：
@@ -137,11 +139,11 @@ const PaymentConfirmModal = ({
                             color='#07C160'
                           />
                         ) : payMethod.type === 'stripe' ? (
-                          <SiStripe
-                            className='mr-2'
-                            size={16}
-                            color='#635BFF'
-                          />
+                          <span className='mr-2 flex items-center gap-1'>
+                            <CreditCard size={16} color='#635BFF' />
+                            <SiAlipay size={16} color='#1677FF' />
+                            <SiWechat size={16} color='#07C160' />
+                          </span>
                         ) : (
                           <CreditCard
                             className='mr-2'
@@ -152,7 +154,9 @@ const PaymentConfirmModal = ({
                           />
                         )}
                         <Text className='text-slate-900 dark:text-slate-100'>
-                          {payMethod.name}
+                          {payMethod.type === 'stripe'
+                            ? t('信用卡 / 支付宝 / 微信 等')
+                            : payMethod.name}
                         </Text>
                       </>
                     );
@@ -174,13 +178,13 @@ const PaymentConfirmModal = ({
                     } else if (payWay === 'stripe') {
                       return (
                         <>
-                          <SiStripe
-                            className='mr-2'
-                            size={16}
-                            color='#635BFF'
-                          />
+                          <span className='mr-2 flex items-center gap-1'>
+                            <CreditCard size={16} color='#635BFF' />
+                            <SiAlipay size={16} color='#1677FF' />
+                            <SiWechat size={16} color='#07C160' />
+                          </span>
                           <Text className='text-slate-900 dark:text-slate-100'>
-                            Stripe
+                            {t('信用卡 / 支付宝 / 微信 等')}
                           </Text>
                         </>
                       );
@@ -202,6 +206,7 @@ const PaymentConfirmModal = ({
                 })()}
               </div>
             </div>
+            )}
           </div>
         </Card>
       </div>
