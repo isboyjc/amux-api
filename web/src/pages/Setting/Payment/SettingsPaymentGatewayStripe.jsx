@@ -346,18 +346,8 @@ export default function SettingsPaymentGateway(props) {
                 )}
               />
             </Col>
-            <Col xs={24} sm={24} md={8} lg={8} xl={8}>
-              <Form.Switch
-                field='StripeDisableAdaptivePricing'
-                size='default'
-                checkedText='｜'
-                uncheckedText='〇'
-                label={t('禁用多货币展示')}
-                extraText={t(
-                  '开启后用户只能用配置的货币支付，不显示其他货币选项',
-                )}
-              />
-            </Col>
+            {/* 「禁用多货币展示」开关已隐藏：开启发票功能(invoice_creation)后，
+                Adaptive Pricing 与之互斥被代码强制关闭，该开关已无实际作用。 */}
             <Col xs={24} sm={24} md={8} lg={8} xl={8}>
               <Form.Switch
                 field='StripePromotionCodesEnabled'

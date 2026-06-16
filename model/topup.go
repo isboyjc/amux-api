@@ -28,6 +28,9 @@ type TopUp struct {
 	CreateTime      int64  `json:"create_time"`
 	CompleteTime    int64  `json:"complete_time"`
 	Status          string `json:"status" gorm:"index:idx_user_status,priority:2"`
+	// StripeSessionId 保存 Stripe Checkout Session ID，用于支付成功后反查发票/收据链接。
+	// 仅 Stripe 通道下单时写入，历史订单为空。
+	StripeSessionId string `json:"stripe_session_id" gorm:"type:varchar(255);index"`
 }
 
 // TopupListItem 管理员账单列表项，携带用户名、邮箱及该用户的成功充值序次/累计金额
@@ -194,14 +197,6 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	return nil
 }
 
-// topUpQueryWindowSeconds 限制充值记录查询的时间窗口（秒）。
-const topUpQueryWindowSeconds int64 = 30 * 24 * 60 * 60
-
-// topUpQueryCutoff 返回允许查询的最早 create_time（秒级 Unix 时间戳）。
-func topUpQueryCutoff() int64 {
-	return common.GetTimestamp() - topUpQueryWindowSeconds
-}
-
 // GetUserTopUps 列出某用户的充值记录，按 id desc 排序。
 // status 非空时按订单状态精确过滤（如 "success"），空串表示不过滤。
 // 调用方负责把状态字符串收敛到 common.TopUpStatus* 白名单内。
@@ -217,9 +212,7 @@ func GetUserTopUps(userId int, status string, pageInfo *common.PageInfo) (topups
 		}
 	}()
 
-	cutoff := topUpQueryCutoff()
-
-	q := tx.Model(&TopUp{}).Where("user_id = ? AND create_time >= ?", userId, cutoff)
+	q := tx.Model(&TopUp{}).Where("user_id = ?", userId)
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
@@ -307,7 +300,7 @@ func SearchUserTopUps(userId int, keyword string, status string, pageInfo *commo
 		}
 	}()
 
-	query := tx.Model(&TopUp{}).Where("user_id = ? AND create_time >= ?", userId, topUpQueryCutoff())
+	query := tx.Model(&TopUp{}).Where("user_id = ?", userId)
 	if keyword != "" {
 		pattern, perr := sanitizeLikePattern(keyword)
 		if perr != nil {

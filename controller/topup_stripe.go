@@ -106,7 +106,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
 
-	payLink, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, group, req.SuccessURL, req.CancelURL)
+	payLink, sessionId, err := genStripeLink(referenceId, user.StripeCustomer, user.Email, req.Amount, group, req.SuccessURL, req.CancelURL)
 	if err != nil {
 		log.Println("获取Stripe Checkout支付链接失败", err)
 		c.JSON(200, gin.H{"message": "error", "data": "拉起支付失败"})
@@ -122,6 +122,7 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		PaymentProvider: model.PaymentProviderStripe,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
+		StripeSessionId: sessionId,
 	}
 	err = topUp.Insert()
 	if err != nil {
@@ -196,6 +197,62 @@ func StripeWebhook(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// topUpInvoiceData 返回给前端的发票/收据链接，均为 Stripe 托管页面/直链。
+type topUpInvoiceData struct {
+	HostedInvoiceURL string `json:"hosted_invoice_url"` // 发票托管页（可在线查看并下载 PDF）
+	InvoicePDF       string `json:"invoice_pdf"`        // 发票 PDF 直链
+	ReceiptURL       string `json:"receipt_url"`        // 收据托管页
+}
+
+// GetTopUpInvoice 反查某笔成功充值订单的 Stripe 发票与收据链接。
+// 通过下单时保存的 Checkout Session ID 实时向 Stripe 拉取最新链接，
+// 避免落库的链接过期。仅限本人、已成功、Stripe 渠道且存在 session_id 的订单。
+func GetTopUpInvoice(c *gin.Context) {
+	userId := c.GetInt("id")
+	role := c.GetInt("role")
+	tradeNo := c.Param("trade_no")
+
+	topUp := model.GetTopUpByTradeNo(tradeNo)
+	// 管理员可查看任意用户的发票/收据；普通用户仅限本人订单。
+	isAdmin := role >= common.RoleAdminUser
+	if topUp == nil ||
+		(!isAdmin && topUp.UserId != userId) ||
+		topUp.Status != common.TopUpStatusSuccess ||
+		!topUp.MatchesPaymentProvider(model.PaymentProviderStripe) ||
+		topUp.StripeSessionId == "" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无可用账单"})
+		return
+	}
+
+	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "支付网关未配置"})
+		return
+	}
+	stripe.Key = setting.StripeApiSecret
+
+	params := &stripe.CheckoutSessionParams{}
+	params.AddExpand("invoice")                      // 发票
+	params.AddExpand("payment_intent")               // 支付意图
+	params.AddExpand("payment_intent.latest_charge") // Charge -> receipt_url
+	s, err := session.Get(topUp.StripeSessionId, params)
+	if err != nil {
+		log.Printf("获取Stripe发票失败: %v, trade_no: %s", err, tradeNo)
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取账单失败"})
+		return
+	}
+
+	data := topUpInvoiceData{}
+	if s.Invoice != nil {
+		data.HostedInvoiceURL = s.Invoice.HostedInvoiceURL
+		data.InvoicePDF = s.Invoice.InvoicePDF
+	}
+	if s.PaymentIntent != nil && s.PaymentIntent.LatestCharge != nil {
+		data.ReceiptURL = s.PaymentIntent.LatestCharge.ReceiptURL
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": data})
 }
 
 func sessionCompleted(event stripe.Event, callerIp string) {
@@ -352,10 +409,10 @@ func sessionExpired(event stripe.Event) {
 //   - successURL: custom URL to redirect after successful payment (empty for default)
 //   - cancelURL: custom URL to redirect when payment is canceled (empty for default)
 //
-// Returns the checkout session URL or an error if the session creation fails.
-func genStripeLink(referenceId string, customerId string, email string, amount int64, group string, successURL string, cancelURL string) (string, error) {
+// Returns the checkout session URL, the Stripe Checkout Session ID, or an error if the session creation fails.
+func genStripeLink(referenceId string, customerId string, email string, amount int64, group string, successURL string, cancelURL string) (string, string, error) {
 	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
-		return "", fmt.Errorf("无效的Stripe API密钥")
+		return "", "", fmt.Errorf("无效的Stripe API密钥")
 	}
 
 	stripe.Key = setting.StripeApiSecret
@@ -376,10 +433,18 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 		AllowPromotionCodes: stripe.Bool(setting.StripePromotionCodesEnabled),
 	}
 
-	if setting.StripeDisableAdaptivePricing {
-		params.AdaptivePricing = &stripe.CheckoutSessionAdaptivePricingParams{
-			Enabled: stripe.Bool(false),
-		}
+	// 开启发票生成：支付完成后 Stripe 会自动生成一张正式 Invoice，
+	// 提供 hosted_invoice_url（托管页）与 invoice_pdf（PDF 直链），供用户下载。
+	params.InvoiceCreation = &stripe.CheckoutSessionInvoiceCreationParams{
+		Enabled: stripe.Bool(true),
+	}
+
+	// Adaptive Pricing（自动货币换算）与 invoice_creation 互斥：
+	// 同时开启会导致 session.New 报错。因为发票功能已全局开启，这里必须
+	// 始终关闭 Adaptive Pricing（动态价格模式本就因 custom amount 不生效，无影响；
+	// 固定价格模式会失去按客户本地货币展示的能力，属预期取舍）。
+	params.AdaptivePricing = &stripe.CheckoutSessionAdaptivePricingParams{
+		Enabled: stripe.Bool(false),
 	}
 
 	if setting.StripeUseDynamicPrice {
@@ -412,7 +477,7 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 		}
 	} else {
 		if setting.StripePriceId == "" {
-			return "", fmt.Errorf("固定价格模式下必须配置商品价格 ID")
+			return "", "", fmt.Errorf("固定价格模式下必须配置商品价格 ID")
 		}
 		params.LineItems = []*stripe.CheckoutSessionLineItemParams{
 			{
@@ -426,18 +491,18 @@ func genStripeLink(referenceId string, customerId string, email string, amount i
 		if "" != email {
 			params.CustomerEmail = stripe.String(email)
 		}
-
-		params.CustomerCreation = stripe.String(string(stripe.CheckoutSessionCustomerCreationAlways))
+		// 注意：开启 InvoiceCreation 后 Stripe 会强制创建 Customer，
+		// 此时不能再设置 CustomerCreation，否则会报错（两者互斥）。
 	} else {
 		params.Customer = stripe.String(customerId)
 	}
 
 	result, err := session.New(params)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	return result.URL, nil
+	return result.URL, result.ID, nil
 }
 
 func getStripePayMoney(amount float64, group string) float64 {
