@@ -38,7 +38,7 @@ func GetAllTask(c *gin.Context) {
 	items := model.TaskGetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.TaskCountAllTasks(queryParams)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(tasksToDto(items, true))
+	pageInfo.SetItems(tasksToDto(items, true, true))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -62,11 +62,14 @@ func GetUserTask(c *gin.Context) {
 	items := model.TaskGetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.TaskCountAllUserTask(userId, queryParams)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(tasksToDto(items, false))
+	pageInfo.SetItems(tasksToDto(items, false, false))
 	common.ApiSuccess(c, pageInfo)
 }
 
-func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
+// includeUpstream 控制是否返回上游相关字段（task.Data 原始响应、
+// properties.upstream_model_name）。仅管理端放开，用户端一律脱敏，
+// 避免泄露上游直链/聚合器身份（如 resource.zerocut.cn）和上游内部模型名。
+func tasksToDto(tasks []*model.Task, fillUser bool, includeUpstream bool) []*dto.TaskDto {
 	var userIdMap map[int]*model.UserBase
 	if fillUser {
 		userIdMap = make(map[int]*model.UserBase)
@@ -89,6 +92,15 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 			}
 		}
 		result[i] = relay.TaskModel2Dto(task)
+		if !includeUpstream {
+			// 上游原始响应整体不返回（含 resource.zerocut.cn 直链等）
+			result[i].Data = nil
+			// 抹掉上游内部模型名，仅保留对用户可见的 origin_model_name
+			if p, ok := result[i].Properties.(model.Properties); ok {
+				p.UpstreamModelName = ""
+				result[i].Properties = p
+			}
+		}
 	}
 	return result
 }

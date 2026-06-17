@@ -388,6 +388,9 @@ export const getTaskLogsColumns = ({
       fixed: 'right',
       render: (text, record, index) => {
         // Suno audio preview
+        // 注意：用户端（/api/task/self）出于脱敏会把 record.data 置空，因此
+        // 普通用户看不到这个预览入口；仅管理端（返回完整 data）可用。如需对
+        // 用户开放 Suno 预览，应在后端单独白名单暴露 audio_url，而非整段 data。
         const isSunoSuccess =
           record.platform === 'suno' &&
           record.status === 'SUCCESS' &&

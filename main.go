@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -56,6 +57,13 @@ func main() {
 	err := InitResources()
 	if err != nil {
 		common.FatalLog("failed to initialize resources: " + err.Error())
+		return
+	}
+
+	// 运维子命令：命中则执行完毕直接退出，不启动 Web 服务。
+	// flag.Parse() 在遇到第一个非 flag 参数（子命令）时停止，剩余参数进 flag.Args()。
+	if runMaintenance(flag.Args()) {
+		_ = model.CloseDB()
 		return
 	}
 

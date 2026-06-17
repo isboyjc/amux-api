@@ -170,7 +170,19 @@ const ContentModal = ({
       {isVideo ? (
         renderVideoContent()
       ) : (
-        <p style={{ whiteSpace: 'pre-line' }}>{modalContent}</p>
+        <pre
+          style={{
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            fontFamily:
+              'var(--semi-font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
+            fontSize: '12px',
+            lineHeight: '1.6',
+            margin: 0,
+          }}
+        >
+          {modalContent}
+        </pre>
       )}
     </Modal>
   );

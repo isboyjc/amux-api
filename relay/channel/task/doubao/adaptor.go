@@ -115,8 +115,9 @@ type zeroCutResponse struct {
 		Status string `json:"status"` // RUNNING, SUCCESS, FAILED, PENDING
 		Param  map[string]interface{} `json:"param"`
 		Output *struct {
-			URL            string `json:"url"`
-			Error          string `json:"error"` // Error message for failed tasks
+			URL            string `json:"url"`       // 老格式：视频直链
+			VideoURL       string `json:"video_url"` // 新格式：ZeroCut 升级后改用 video_url
+			Error          string `json:"error"`     // Error message for failed tasks
 			Ratio          string `json:"ratio"`
 			Duration       int    `json:"duration"`
 			Resolution     string `json:"resolution"`
@@ -676,7 +677,11 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Progress = "100%"
 			// Extract output data
 			if zeroCutResp.Data.Output != nil {
-				taskResult.Url = zeroCutResp.Data.Output.URL
+				// 兼容新老字段：优先 video_url（新格式），回退 url（老格式）
+				taskResult.Url = zeroCutResp.Data.Output.VideoURL
+				if taskResult.Url == "" {
+					taskResult.Url = zeroCutResp.Data.Output.URL
+				}
 				taskResult.CompletionTokens = zeroCutResp.Data.Output.Usage.CompletionTokens
 				taskResult.TotalTokens = zeroCutResp.Data.Output.Usage.TotalTokens
 			}
@@ -751,7 +756,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	// 尝试解析 task.Data 获取错误详情 / revised_prompt 等元数据。
 	// 两种上游格式都宽容处理：
 	//   1) 官方 Doubao：{status, content:{video_url}, error:{code,message}}
-	//   2) ZeroCut 聚合器：{code, data:{status, output:{url, error, revised_prompt}}}
+	//   2) ZeroCut 聚合器：{code, data:{status, output:{url|video_url, error, revised_prompt}}}
 	if len(originTask.Data) > 0 {
 		// 官方 Doubao 格式
 		var dResp responseTask
