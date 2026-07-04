@@ -269,7 +269,6 @@ export const useAudioTranscription = ({ onDebug } = {}) => {
       }
 
       // 上游要 JSON：{ audio_url | audio_base64, audio_filename }。其余可调
-      // 参数（language/prompt/... 由右栏 schema 面板提供）放 options。
       const payload = {
         model,
         group,
@@ -277,12 +276,22 @@ export const useAudioTranscription = ({ onDebug } = {}) => {
       };
       if (audioUrl) payload.audio_url = audioUrl;
       else payload.audio_base64 = audioBase64;
+
+      // 参数透传：amux_stt 的 options 是黑盒(网关原样转发上游)，所以把右栏
+      // schema 配的任意参数都塞进 options —— 上游认哪些由上游文档决定，前端
+      // 不写死。batch_mode / priority 是网关结构体里的顶层字段，单独抬上去。
       const options = {};
-      ['language', 'prompt', 'temperature', 'response_format'].forEach((k) => {
-        if (params[k] !== undefined && params[k] !== null && params[k] !== '') {
-          options[k] = params[k];
+      for (const [k, v] of Object.entries(params || {})) {
+        if (v === undefined || v === null || v === '') continue;
+        if (k === 'batch_mode') {
+          payload.batch_mode = v === true || v === 'true' || v === 1;
+        } else if (k === 'priority') {
+          const n = Number(v);
+          if (!Number.isNaN(n)) payload.priority = n;
+        } else {
+          options[k] = v;
         }
-      });
+      }
       if (Object.keys(options).length > 0) payload.options = options;
 
       const requestTs = new Date().toISOString();
