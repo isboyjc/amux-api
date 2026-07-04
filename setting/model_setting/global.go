@@ -105,6 +105,9 @@ var DefaultCustomModalityPatterns = map[string][]string{
 		// gemini-3-pro-image-preview 等
 		"flash-image",
 		"pro-image",
+		// flash-lite 变体名字里是 "flash-lite-image"，不含 "flash-image" 子串，
+		// 单列 "lite-image" 覆盖 gemini-3.1-flash-lite-image[-official/-preview] 等
+		"lite-image",
 		"prefix:imagen-", // imagen-3.0-*, imagen-4.0-*
 		// Black Forest Labs
 		"prefix:flux-",
