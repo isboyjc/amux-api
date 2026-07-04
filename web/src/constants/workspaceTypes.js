@@ -60,6 +60,7 @@ export const V1_ENABLED_WORKSPACES = new Set([
   WORKSPACE.CHAT,
   WORKSPACE.IMAGE,
   WORKSPACE.VIDEO,
+  WORKSPACE.AUDIO,
 ]);
 
 // "+新建会话"菜单里展示的顺序

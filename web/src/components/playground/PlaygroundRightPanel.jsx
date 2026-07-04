@@ -83,6 +83,11 @@ const PlaygroundRightPanel = ({
     currentModality === MODALITY.MULTIMODAL;
   const isChatWorkspace = isTextLike;
   const isImageWorkspace = currentModality === MODALITY.IMAGE;
+  // schema 驱动的参数面板：image 与 audio（TTS 的 voice/speed、STT 的
+  // language 等）都按当前模型 param_schema 动态渲染。管理员在模型管理里给
+  // 模型配了 schema 就自动出现在右栏。
+  const isSchemaWorkspace =
+    currentModality === MODALITY.IMAGE || currentModality === MODALITY.AUDIO;
   const isUnsupportedModality =
     !PLAYGROUND_SUPPORTED_MODALITIES.has(currentModality);
   const modalityLabel = getModalityShortLabel(t, currentModality);
@@ -98,8 +103,8 @@ const PlaygroundRightPanel = ({
         defaultPayload={previewPayload}
       />
 
-      {/* 不支持 modality 提示（image 已经支持，不会走到这里） */}
-      {isUnsupportedModality && !customRequestMode && !isImageWorkspace && (
+      {/* 不支持 modality 提示（image / audio 有 schema 面板，不会走到这里） */}
+      {isUnsupportedModality && !customRequestMode && !isSchemaWorkspace && (
         <Banner
           type='info'
           closeIcon={null}
@@ -110,8 +115,8 @@ const PlaygroundRightPanel = ({
         />
       )}
 
-      {/* 图片 workspace：按当前模型的 param_schema 动态渲染参数 */}
-      {isImageWorkspace && (
+      {/* 图片 / 音频 workspace：按当前模型的 param_schema 动态渲染参数 */}
+      {isSchemaWorkspace && (
         <div className={customRequestMode ? 'opacity-50 pointer-events-none' : ''}>
           <SchemaParamsRenderer
             schema={paramSchema}

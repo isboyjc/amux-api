@@ -398,6 +398,39 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			}
 		}
 	}
+	if strings.HasPrefix(c.Request.URL.Path, "/pg/audio/transcriptions/async") &&
+		c.Request.Method == http.MethodPost {
+		// 操练场异步 STT 提交：走 amux_stt 任务平台（提交 → 轮询）。
+		// 平台/relayMode 与对外 /v1/audio/transcriptions/async 保持一致。
+		if req, err := getModelFromRequest(c); err == nil && req != nil && req.Model != "" {
+			modelRequest.Model = req.Model
+		}
+		if modelRequest.Model == "" {
+			if m := strings.TrimSpace(c.Request.FormValue("model")); m != "" {
+				modelRequest.Model = m
+			}
+		}
+		c.Set("platform", string(constant.TaskPlatformAmuxSTT))
+		c.Set("relay_mode", relayconstant.RelayModeSTTAsyncSubmit)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/pg/audio/transcriptions/") &&
+		c.Request.Method == http.MethodGet {
+		// 操练场异步 STT 结果查询：按 task_id 查，不需要选渠道。
+		shouldSelectChannel = false
+		c.Set("relay_mode", relayconstant.RelayModeSTTAsyncFetchByID)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/pg/audio/") {
+		// 操练场同步音频入口：TTS(/pg/audio/speech, JSON) 与同步 STT
+		// (/pg/audio/transcriptions, multipart) 的 model 都在 body 里。上面的
+		// 「非 transcriptions 且非 multipart」兜底分支会跳过 multipart，而针对
+		// /v1/audio/* 的解析分支只认 /v1 前缀，导致读不到 model → 400。
+		if req, err := getModelFromRequest(c); err == nil && req != nil && req.Model != "" {
+			modelRequest.Model = req.Model
+		}
+		if modelRequest.Model == "" {
+			if m := strings.TrimSpace(c.Request.FormValue("model")); m != "" {
+				modelRequest.Model = m
+			}
+		}
+	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio/transcriptions/async") {
 		relayMode := relayconstant.RelayModeSTTAsyncSubmit
 		req, err := getModelFromRequest(c)

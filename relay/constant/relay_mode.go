@@ -79,13 +79,13 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeResponsesCompact
 	} else if strings.HasPrefix(path, "/v1/responses") {
 		relayMode = RelayModeResponses
-	} else if strings.HasPrefix(path, "/v1/audio/speech") {
+	} else if strings.HasPrefix(path, "/v1/audio/speech") || strings.HasPrefix(path, "/pg/audio/speech") {
 		relayMode = RelayModeAudioSpeech
-	} else if strings.HasPrefix(path, "/v1/audio/transcriptions/async") {
+	} else if strings.HasPrefix(path, "/v1/audio/transcriptions/async") || strings.HasPrefix(path, "/pg/audio/transcriptions/async") {
 		relayMode = RelayModeSTTAsyncSubmit
-	} else if strings.HasPrefix(path, "/v1/audio/transcriptions/") && !strings.HasSuffix(path, "/transcriptions/") {
+	} else if (strings.HasPrefix(path, "/v1/audio/transcriptions/") || strings.HasPrefix(path, "/pg/audio/transcriptions/")) && !strings.HasSuffix(path, "/transcriptions/") {
 		relayMode = RelayModeSTTAsyncFetchByID
-	} else if strings.HasPrefix(path, "/v1/audio/transcriptions") {
+	} else if strings.HasPrefix(path, "/v1/audio/transcriptions") || strings.HasPrefix(path, "/pg/audio/transcriptions") {
 		relayMode = RelayModeAudioTranscription
 	} else if strings.HasPrefix(path, "/v1/audio/translations") {
 		relayMode = RelayModeAudioTranslation

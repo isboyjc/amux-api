@@ -42,6 +42,7 @@ const ChatArea = ({
   showDebugPanel,
   roleInfo,
   onMessageSend,        // (text) => void  父层按当前 modality 分派
+  onTranscribeAudio,    // (file) => void  STT：音频上传按钮直接触发转写
   onMessageCopy,
   onMessageReset,
   onMessageDelete,
@@ -415,6 +416,7 @@ const ChatArea = ({
         onModelGroupChange={onModelGroupChange}
         loading={loading}
         onSubmit={onMessageSend}
+        onTranscribeAudio={onTranscribeAudio}
         onStop={onStopGenerator}
         paramSchema={paramSchema}
         paramValues={paramValues}

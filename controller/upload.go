@@ -59,6 +59,13 @@ var allowedUploadScopes = map[string]uploadScopeRule{
 		maxBytes:        30 * mb,
 		contentPrefixes: []string{"image/"},
 	},
+	// 操练场 TTS 合成的音频输出：前端拿到 mp3 blob 后直传 R2 换永久链接，
+	// 刷新不丢。仅接受 audio/*，30MB 足够覆盖单次语音合成。
+	"playground-audio-output": {
+		pathPrefix:      "playground/audio/output",
+		maxBytes:        30 * mb,
+		contentPrefixes: []string{"audio/"},
+	},
 
 	// ----- 对外统一上传（路由暴露后即可被 API key / 平台用户使用）-----
 	"user-upload-image": {

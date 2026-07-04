@@ -18,12 +18,19 @@ import (
 // playgroundRelayFormat 根据 /pg/* 具体子路径决定应该用哪种 RelayFormat
 // 去解析请求体。没匹配上就退到 chat（OpenAI）格式。
 //
-//	/pg/chat/completions     → RelayFormatOpenAI       （GeneralOpenAIRequest）
-//	/pg/images/generations   → RelayFormatOpenAIImage  （ImageRequest）
-//	/pg/images/edits         → RelayFormatOpenAIImage
+//	/pg/chat/completions        → RelayFormatOpenAI       （GeneralOpenAIRequest）
+//	/pg/images/generations      → RelayFormatOpenAIImage  （ImageRequest）
+//	/pg/images/edits            → RelayFormatOpenAIImage
+//	/pg/audio/speech            → RelayFormatOpenAIAudio  （AudioRequest, TTS）
+//	/pg/audio/transcriptions    → RelayFormatOpenAIAudio  （AudioRequest, STT）
 func playgroundRelayFormat(path string) types.RelayFormat {
 	if strings.HasPrefix(path, "/pg/images/") {
 		return types.RelayFormatOpenAIImage
+	}
+	if strings.HasPrefix(path, "/pg/audio/") {
+		// speech / transcriptions 的请求体都要按 AudioRequest 解析，否则会被
+		// 当成 chat 请求解析失败。
+		return types.RelayFormatOpenAIAudio
 	}
 	return types.RelayFormatOpenAI
 }

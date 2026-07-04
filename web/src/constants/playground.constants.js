@@ -154,6 +154,7 @@ export const PLAYGROUND_SUPPORTED_MODALITIES = new Set([
   MODALITY.MULTIMODAL,
   MODALITY.IMAGE,
   MODALITY.VIDEO,
+  MODALITY.AUDIO,
 ]);
 
 // 纯文本参数，仅 text / multimodal 模态下可见。

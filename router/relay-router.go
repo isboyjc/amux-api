@@ -67,6 +67,16 @@ func SetRelayRouter(router *gin.Engine) {
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 		playgroundRouter.POST("/images/generations", controller.Playground)
 		playgroundRouter.POST("/images/edits", controller.Playground)
+		// 语音合成（TTS）：同步返回音频二进制，和 /v1/audio/speech 走同一条
+		// relay，只是换成操练场专用路径 + UserAuth。
+		playgroundRouter.POST("/audio/speech", controller.Playground)
+		// 语音识别（STT，同步）：multipart 上传音频 → 直接返回转写文本，和
+		// /v1/audio/transcriptions 走同一条 relay。适用于 whisper 这类同步模型。
+		playgroundRouter.POST("/audio/transcriptions", controller.Playground)
+		// 语音识别（STT，异步任务）：amux_stt 这类模型单次耗时长，走"提交 →
+		// 轮询"任务流（和视频生成一样），避免同步阻塞被网关/上游 504。
+		playgroundRouter.POST("/audio/transcriptions/async", controller.PlaygroundTask)
+		playgroundRouter.GET("/audio/transcriptions/:task_id", controller.PlaygroundTaskFetch)
 		// 视频生成是异步任务：POST 提交 → 返回 task_id；GET 用 task_id 拉
 		// 当前状态/结果。对外 /v1/video/generations 的契约一致，只是换成
 		// 操练场专用的 /pg/video/generations，使用 UserAuth。

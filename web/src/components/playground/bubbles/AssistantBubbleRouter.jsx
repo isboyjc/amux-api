@@ -18,9 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { OptimizedMessageContent } from '../OptimizedComponents';
 import ImageBubble from './ImageBubble';
 import VideoBubble from './VideoBubble';
+import AudioBubble from './AudioBubble';
 import { inferMessageModality } from '../messageModality';
 import { MODALITY } from '../../../constants/playground.constants';
 
@@ -47,6 +49,7 @@ const AssistantBubbleRouter = ({
   onImageContinueEdit,
   imageSupportsContinueEdit,
 }) => {
+  const { t } = useTranslation();
   const modality = inferMessageModality(message);
   const isAssistant = message?.role === 'assistant';
 
@@ -67,6 +70,52 @@ const AssistantBubbleRouter = ({
       <div className={className}>
         <VideoBubble message={message} />
       </div>
+    );
+  }
+
+  if (isAssistant && modality === MODALITY.AUDIO) {
+    return (
+      <div className={className}>
+        <AudioBubble message={message} />
+      </div>
+    );
+  }
+
+  // STT 发送的音频：链接放在自定义字段 message.sttAudioUrl 上（不放进 content，
+  // 因为 Semi <Chat> 会把它不认识的 audio_url 从 content 数组里剥掉）。这里直接
+  // 用它渲染一个 <audio> 播放器，叠在文本气泡上方，右对齐。
+  if (!isAssistant && message?.sttAudioUrl) {
+    return (
+      <>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            marginBottom: 6,
+          }}
+        >
+          <audio
+            src={message.sttAudioUrl}
+            controls
+            preload='metadata'
+            style={{ width: 260, maxWidth: '100%', height: 36 }}
+          >
+            {t('浏览器不支持播放音频')}
+          </audio>
+        </div>
+        <OptimizedMessageContent
+          message={message}
+          className={className}
+          styleState={styleState}
+          onToggleReasoningExpansion={onToggleReasoningExpansion}
+          isEditing={isEditing}
+          onEditSave={onEditSave}
+          onEditCancel={onEditCancel}
+          editValue={editValue}
+          onEditValueChange={onEditValueChange}
+          onImageContinueEdit={onImageContinueEdit}
+        />
+      </>
     );
   }
 

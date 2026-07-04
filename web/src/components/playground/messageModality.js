@@ -36,6 +36,9 @@ export const inferMessageModality = (message) => {
     const hasVideo = c.some((p) => p?.type === 'video_url' && p.video_url?.url);
     if (hasVideo) return MODALITY.VIDEO;
 
+    const hasAudio = c.some((p) => p?.type === 'audio_url' && p.audio_url?.url);
+    if (hasAudio) return MODALITY.AUDIO;
+
     const imageParts = c.filter(
       (p) => p?.type === 'image_url' && p.image_url?.url,
     );
@@ -52,6 +55,20 @@ export const inferMessageModality = (message) => {
   }
 
   return MODALITY.TEXT;
+};
+
+// audio modality 同时涵盖 TTS（文字→语音）与 STT（语音→文字）两类模型，
+// 但它们的操练场交互相反：TTS 走文本框，STT 走音频文件上传。前端按模型名
+// 粗分——命中 whisper / transcribe / asr / stt 视为 STT，其余 audio 模型当 TTS。
+// 名字启发式不完美，但覆盖 OpenAI（whisper-*, gpt-4o-transcribe, gpt-4o-mini-
+// transcribe = STT；tts-1, gpt-4o-mini-tts = TTS）及主流厂商命名。
+export const isSttModel = (name = '') => {
+  // 先把 _ / - 归一成空格，否则 \b 在 amux_stt 的 "_stt" 处不成立，下划线
+  // 命名(平台常量就叫 amux_stt)会匹配不到。
+  const s = String(name || '')
+    .toLowerCase()
+    .replace(/[_-]/g, ' ');
+  return /whisper|transcrib|\b(stt|asr)\b/.test(s);
 };
 
 // 把若干字段从 modalityMap / 当前 inputs 折叠成「一条消息的元数据」，

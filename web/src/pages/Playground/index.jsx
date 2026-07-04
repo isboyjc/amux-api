@@ -41,6 +41,8 @@ import {
   putMessages as dbPutMessages,
 } from '../../utils/playgroundDb';
 import { useVideoGeneration } from '../../hooks/playground/useVideoGeneration';
+import { useAudioGeneration } from '../../hooks/playground/useAudioGeneration';
+import { useAudioTranscription } from '../../hooks/playground/useAudioTranscription';
 import { useSyncMessageAndCustomBody } from '../../hooks/playground/useSyncMessageAndCustomBody';
 import { useMessageEdit } from '../../hooks/playground/useMessageEdit';
 import { useDataLoader } from '../../hooks/playground/useDataLoader';
@@ -82,7 +84,10 @@ import {
 } from '../../components/playground/SchemaParamsRenderer';
 import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
 import { MODALITY } from '../../constants/playground.constants';
-import { inferMessageModality } from '../../components/playground/messageModality';
+import {
+  inferMessageModality,
+  isSttModel,
+} from '../../components/playground/messageModality';
 
 // 生成用户头像（灰色背景 + 圆角矩形，与导航头像一致）
 const generateAvatarDataUrl = (username) => {
@@ -288,11 +293,30 @@ const Playground = () => {
       const empty = { type: 'object', properties: {} };
       return { paramsSchema: empty, inputsSchema: empty, rawSchema: null };
     }
+    // 剥离结构性字段：model 由模型选择器决定，input / prompt 就是输入框本身，
+    // 它们不是"可调参数"，不该出现在右栏面板或工具栏（TTS 的 input 尤其明显）。
+    const STRUCTURAL_KEYS = new Set(['model', 'input', 'prompt']);
+    let cleaned = parsed;
+    if (parsed.properties) {
+      const props = {};
+      Object.entries(parsed.properties).forEach(([k, v]) => {
+        if (!STRUCTURAL_KEYS.has(String(k).toLowerCase())) props[k] = v;
+      });
+      cleaned = {
+        ...parsed,
+        properties: props,
+        required: Array.isArray(parsed.required)
+          ? parsed.required.filter(
+              (k) => !STRUCTURAL_KEYS.has(String(k).toLowerCase()),
+            )
+          : parsed.required,
+      };
+    }
     // 先按当前分组过滤掉它不支持的字段（schema 里通过
     // `x-disabled-group-prefixes` 声明），再做 image-input 拆分。
     // 这样不仅 UI 上隐藏，imageSchemaSig 变化也会触发 imageParamValues
     // 重置，避免之前在 premium 设的值（比如 n=4）被偷偷发到 special。
-    const filtered = filterSchemaByGroup(parsed, inputs.group);
+    const filtered = filterSchemaByGroup(cleaned, inputs.group);
     const split = splitSchema(filtered);
     return { ...split, rawSchema: filtered };
   }, [inputs.model, inputs.group, modalityMap]);
@@ -811,6 +835,23 @@ const Playground = () => {
       setDebugData((prev) => ({ ...prev, ...patch })),
   });
 
+  // 语音合成（audio workspace 专用）—— 同步请求：拿到音频二进制 → 转存 R2 →
+  // 返回永久 URL，由 handleGenerateAudio 落到对应 assistant 消息上。
+  const { generate: generateAudio, loading: audioGenerating } =
+    useAudioGeneration({
+      onDebug: (patch) =>
+        setDebugData((prev) => ({ ...prev, ...patch })),
+    });
+
+  // 语音识别（STT）—— 上传音频文件 → 转写文本。和 TTS 相反的音频流。
+  const {
+    transcribe: transcribeAudio,
+    loading: audioTranscribing,
+    startPolling: startSttPolling,
+  } = useAudioTranscription({
+    onDebug: (patch) => setDebugData((prev) => ({ ...prev, ...patch })),
+  });
+
   // 本轮已自动命名过的 session id 集合。避免同一会话多次触发 rename。
   const autoNamedSessionsRef = useRef(new Set());
 
@@ -1154,6 +1195,240 @@ const Playground = () => {
     ],
   );
 
+  // ========== 语音合成（同步请求） ==========
+  //
+  // 和图片一样是「一条 user + 一条 loading assistant」。区别：speech 是同步
+  // 请求，直接 await generateAudio 拿结果（内部已把音频转存 R2 换永久 URL），
+  // 再把结果落到 loading 消息上——complete 时 content 写成
+  // [{type:'audio_url', audio_url:{url}}]，由 AudioBubble 渲染成播放器。
+  const handleGenerateAudio = useCallback(
+    async ({ prompt, paramsOverride, modelOverride, groupOverride }) => {
+      const trimmed = (prompt || '').trim();
+      if (!trimmed) return;
+      maybeAutoNameSession(trimmed);
+      if (activeSessionId) touchSession?.(activeSessionId);
+      const params = paramsOverride
+        ? { ...paramsOverride }
+        : { ...imageParamValues };
+      const usedModel = modelOverride || inputs.model;
+      const usedGroup = groupOverride || inputs.group;
+
+      const userMsg = {
+        ...createMessage(MESSAGE_ROLES.USER, prompt),
+        modality: MODALITY.AUDIO,
+        meta: { model: usedModel, group: usedGroup, params },
+      };
+      const loadingMsg = {
+        ...createLoadingAssistantMessage(),
+        status: 'loading',
+        modality: MODALITY.AUDIO,
+        meta: { model: usedModel, group: usedGroup, params },
+      };
+      let newMessages = [];
+      setMessage((prev) => {
+        newMessages = [...prev, userMsg, loadingMsg];
+        return newMessages;
+      });
+      setTimeout(() => saveMessagesImmediately(newMessages), 0);
+
+      const result = await generateAudio({
+        model: usedModel,
+        group: usedGroup,
+        prompt,
+        params,
+      });
+
+      setMessage((prev) => {
+        const next = prev.map((m) => {
+          if (m.id !== loadingMsg.id) return m;
+          if (!result || result.error) {
+            return {
+              ...m,
+              status: 'error',
+              errorMessage: result?.error || t('音频生成失败'),
+            };
+          }
+          return {
+            ...m,
+            status: 'complete',
+            modality: MODALITY.AUDIO,
+            content: [
+              { type: 'audio_url', audio_url: { url: result.url } },
+            ],
+          };
+        });
+        setTimeout(() => saveMessagesImmediately(next), 0);
+        return next;
+      });
+    },
+    [
+      generateAudio,
+      inputs.model,
+      inputs.group,
+      imageParamValues,
+      maybeAutoNameSession,
+      setMessage,
+      saveMessagesImmediately,
+      activeSessionId,
+      touchSession,
+      t,
+    ],
+  );
+
+  // ========== 语音识别（STT，上传音频文件 → 转写文本） ==========
+  //
+  // 由 UnifiedInputBar 的音频上传按钮直接触发（不走文本框发送）。用户消息展示
+  // 上传的文件名，assistant 消息落转写文本——文本内容用普通字符串，走
+  // MessageContent 文本气泡渲染（不打 audio modality，否则会走 AudioBubble）。
+  // 把轮询 patch 合并到对应 assistant 消息上。转写结果是文本 → content 直接
+  // 是转写字符串（走 MessageContent 文本气泡）。
+  const applySttUpdate = useCallback(
+    (assistantId, patch) => {
+      // polling 心跳没有可见变化（消息一直是 loading 态），直接跳过，避免每
+      // 3s 白写一次 IDB + 重渲染。只在完成/失败时落更新。
+      if (patch.status !== 'complete' && patch.status !== 'error') return;
+      setMessage((prev) => {
+        const next = prev.map((m) => {
+          if (m.id !== assistantId) return m;
+          if (patch.status === 'complete') {
+            return {
+              ...m,
+              status: 'complete',
+              content: patch.text || t('（未识别到文本）'),
+            };
+          }
+          // error：STT 走文本气泡，MessageContent 的 error 分支读 content 而非
+          // errorMessage，所以把错误文案同时写进 content 才显示得出来。
+          const errText = patch.errorMessage || t('语音识别失败');
+          return { ...m, status: 'error', content: errText, errorMessage: errText };
+        });
+        setTimeout(() => saveMessagesImmediately(next), 0);
+        return next;
+      });
+    },
+    [setMessage, saveMessagesImmediately, t],
+  );
+
+  const handleTranscribeAudio = useCallback(
+    async (file) => {
+      if (!(file instanceof File) && !(file instanceof Blob)) return;
+      const usedModel = inputs.model;
+      const usedGroup = inputs.group;
+      if (!usedModel) {
+        showError(t('请先选择模型'));
+        return;
+      }
+      const fileName = file instanceof File && file.name ? file.name : 'audio';
+      maybeAutoNameSession(fileName);
+      if (activeSessionId) touchSession?.(activeSessionId);
+
+      // 发送即挂播放器：立刻用本地 objectURL 让气泡带上播放器。注意音频链接
+      // 存到消息的**自定义字段 sttAudioUrl** 上（不放进 content）——因为
+      // Semi <Chat> 会把它不认识的 audio_url 从 content 数组里剥掉，导致渲染
+      // 不出来。自定义字段 Semi 不会碰，气泡渲染器直接读它渲染 <audio>。
+      let localAudioUrl = '';
+      try {
+        localAudioUrl = URL.createObjectURL(file);
+      } catch (e) {
+        localAudioUrl = '';
+      }
+
+      const userMsg = {
+        ...createMessage(MESSAGE_ROLES.USER, `🎙️ ${fileName}`),
+        modality: MODALITY.AUDIO,
+        sttAudioUrl: localAudioUrl,
+        meta: { model: usedModel, group: usedGroup },
+      };
+      const loadingMsg = {
+        ...createLoadingAssistantMessage(),
+        status: 'loading',
+        meta: { model: usedModel, group: usedGroup },
+      };
+      let newMessages = [];
+      setMessage((prev) => {
+        newMessages = [...prev, userMsg, loadingMsg];
+        return newMessages;
+      });
+      setTimeout(() => saveMessagesImmediately(newMessages), 0);
+
+      // 异步任务：transcribeAudio 提交后立刻返回 { taskId }，随后内部轮询
+      // 通过 onUpdate 把状态/结果打回这条 loading 消息。
+      const result = await transcribeAudio({
+        model: usedModel,
+        group: usedGroup,
+        file,
+        // STT 的 language / prompt / temperature 等由右栏 schema 面板提供
+        params: { ...imageParamValues },
+        onUpdate: (patch) => applySttUpdate(loadingMsg.id, patch),
+        // R2 上传成功即把 sttAudioUrl 换成永久链接（不等转写、不怕 504；刷新也在）
+        onAudioUploaded: (url) => {
+          if (!url) return;
+          setMessage((prev) => {
+            const next = prev.map((m) => {
+              if (m.id !== userMsg.id) return m;
+              // 换成 R2 永久链接前，释放本地 objectURL，避免泄漏
+              if (
+                typeof m.sttAudioUrl === 'string' &&
+                m.sttAudioUrl.startsWith('blob:')
+              ) {
+                try {
+                  URL.revokeObjectURL(m.sttAudioUrl);
+                } catch {
+                  /* ignore */
+                }
+              }
+              return { ...m, sttAudioUrl: url };
+            });
+            setTimeout(() => saveMessagesImmediately(next), 0);
+            return next;
+          });
+        },
+      });
+
+      // 一次性更新两条消息：
+      //  1) 用户气泡：只要音频传了 R2(result.audioUrl 存在)，就挂「文件名 +
+      //     播放器」——不管转写提交成功还是失败(比如上游 504)，音频都已在
+      //     R2，用户都该能回放。R2 是永久链接，刷新也在。
+      //  2) 助手 loading 气泡：提交成功 → 写 taskId+标记(保持 loading，供恢复
+      //     轮询)；提交失败 → 标 error，content 写错误文案(文本气泡才显示)。
+      setMessage((prev) => {
+        const errText = result?.error || t('语音识别任务提交失败');
+        const next = prev.map((m) => {
+          if (m.id === userMsg.id && result?.audioUrl) {
+            return { ...m, sttAudioUrl: result.audioUrl };
+          }
+          if (m.id === loadingMsg.id) {
+            if (result?.taskId) {
+              return {
+                ...m,
+                taskId: result.taskId,
+                taskKind: 'stt',
+                status: 'loading',
+              };
+            }
+            return { ...m, status: 'error', content: errText, errorMessage: errText };
+          }
+          return m;
+        });
+        setTimeout(() => saveMessagesImmediately(next), 0);
+        return next;
+      });
+    },
+    [
+      transcribeAudio,
+      applySttUpdate,
+      inputs.model,
+      inputs.group,
+      imageParamValues,
+      maybeAutoNameSession,
+      setMessage,
+      saveMessagesImmediately,
+      activeSessionId,
+      touchSession,
+      t,
+    ],
+  );
+
   // 扫一遍 message 里还在 polling 的视频任务，把没跑轮询的补上。
   //   - 切会话 → message 由 IDB 异步加载进来，这时触发一次恢复
   //   - 刷新页面 → 同上
@@ -1166,10 +1441,25 @@ const Playground = () => {
     message.forEach((m) => {
       if (!m || m.role !== MESSAGE_ROLES.ASSISTANT) return;
       if (!m.taskId) return;
+      // STT 任务用同样的 taskId 字段但走另一套 endpoint，别让视频轮询误接
+      if (m.taskKind === 'stt') return;
       if (m.status === 'complete' || m.status === 'error') return;
       startVideoPolling(m.taskId, (patch) => applyVideoUpdate(m.id, patch));
     });
   }, [message, startVideoPolling, applyVideoUpdate]);
+
+  // STT 任务恢复轮询：刷新 / 切会话回来后，未完成的 STT 消息(带 taskId +
+  // taskKind='stt')重新挂上轮询。任务在服务端(amux_stt)持久化，重连即可
+  // 拉到最新状态/结果。startSttPolling 内部按 taskId 去重，重复调用 no-op。
+  React.useEffect(() => {
+    if (!Array.isArray(message) || message.length === 0) return;
+    message.forEach((m) => {
+      if (!m || m.role !== MESSAGE_ROLES.ASSISTANT) return;
+      if (m.taskKind !== 'stt' || !m.taskId) return;
+      if (m.status === 'complete' || m.status === 'error') return;
+      startSttPolling(m.taskId, (patch) => applySttUpdate(m.id, patch));
+    });
+  }, [message, startSttPolling, applySttUpdate]);
 
   // ========== 图片生成结果恢复 ==========
   //
@@ -1422,6 +1712,10 @@ const Playground = () => {
       // 上下文裁剪：只把 text / multimodal 消息送给 chat 模型；图片/视频
       // 气泡是 side outputs，不参与对话上下文。
       const chatHistory = newMessages.filter((m) => {
+        // STT 转写(assistant 文本)也是 side output：它没有 modality、内容是
+        // 纯文本，会被推断成 TEXT 混进上下文，造成"assistant 先说话"的孤儿
+        // 历史(部分厂商会拒)。按 taskKind 显式剔除。
+        if (m?.taskKind === 'stt') return false;
         const mod = inferMessageModality(m);
         return mod === MODALITY.TEXT || mod === MODALITY.MULTIMODAL;
       });
@@ -1469,6 +1763,20 @@ const Playground = () => {
       // 注意：imageParamValues（size/quality 等）保留，只在切模型/切 schema
       // 时才重置——用户调好的参数不该因为发送一次就被吞掉。
       setImageInputsValues({});
+      return;
+    }
+    if (currentModality === MODALITY.AUDIO) {
+      if (isSttModel(inputs.model)) {
+        // STT（语音识别）模型不接受文本框发送——它需要上传音频文件转写，
+        // 走输入框左侧的音频上传按钮。
+        Toast.warning({
+          content: t('该模型是语音识别模型，请用输入框的音频上传按钮上传音频进行转写'),
+          duration: 3,
+        });
+        return;
+      }
+      // 语音合成（TTS）：输入文本就是要合成的内容，无参考素材。
+      handleGenerateAudio({ prompt: content });
       return;
     }
     if (currentModality === MODALITY.VIDEO) {
@@ -1853,6 +2161,8 @@ const Playground = () => {
   const isAnyGenerating =
     imageGenerating ||
     videoGenerating ||
+    audioGenerating ||
+    audioTranscribing ||
     (Array.isArray(message) &&
       message.some(
         (m) => m.status === 'loading' || m.status === 'incomplete' || m.status === 'polling',
@@ -2687,6 +2997,7 @@ const Playground = () => {
                   showDebugPanel={showDebugPanel}
                   roleInfo={roleInfo}
                   onMessageSend={onMessageSend}
+                  onTranscribeAudio={handleTranscribeAudio}
                   onMessageCopy={messageActions.handleMessageCopy}
                   onMessageReset={messageActions.handleMessageReset}
                   onMessageDelete={messageActions.handleMessageDelete}

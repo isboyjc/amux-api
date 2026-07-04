@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { MODALITY } from '../../constants/playground.constants';
+import { isSttModel } from './messageModality';
 import {
   getModalityLongLabel,
   getModalityShortLabel,
@@ -827,6 +828,7 @@ const MODE_DEFS = [
   { key: 'smart', icon: Sparkles, modality: null },
   { key: 'image', icon: ImageIcon, modality: MODALITY.IMAGE },
   { key: 'video', icon: VideoIcon, modality: MODALITY.VIDEO },
+  { key: 'audio', icon: Mic, modality: MODALITY.AUDIO },
 ];
 const getModeLabel = (t, key) => {
   switch (key) {
@@ -834,6 +836,9 @@ const getModeLabel = (t, key) => {
       return t('图片生成');
     case 'video':
       return t('视频生成');
+    case 'audio':
+      // 音频类含 TTS（文字→语音）与 STT（语音→文字）两种模型，统称音频处理
+      return t('音频处理');
     default:
       return t('智能模式');
   }
@@ -849,6 +854,11 @@ const MODE_TINT = {
     bg: 'rgba(249, 115, 22, 0.14)',
     bgHover: 'rgba(249, 115, 22, 0.22)',
     color: 'var(--semi-color-orange-6, rgb(234, 88, 12))',
+  },
+  audio: {
+    bg: 'rgba(236, 72, 153, 0.14)',
+    bgHover: 'rgba(236, 72, 153, 0.22)',
+    color: 'var(--semi-color-pink-6, rgb(219, 39, 119))',
   },
 };
 
@@ -1006,6 +1016,10 @@ const TOOLBAR_PARAM_KEYS = new Set([
   'duration',
   'videoduration',
   'length',
+  // 音频模型（TTS）：voice / 语速 / 输出格式是高频快捷参数（normKey 已去下划线）
+  'voice',
+  'speed',
+  'responseformat',
 ]);
 // 工具栏支持两类参数：
 //   1) enum 字段（size / quality / aspect_ratio …）→ 选择型下拉
@@ -2002,6 +2016,7 @@ const UnifiedInputBar = ({
   // 行为
   loading,
   onSubmit,           // (text) => void  按当前 modality 由父层路由
+  onTranscribeAudio,  // (file) => void  STT：音频上传按钮直接触发转写
   onStop,             // () => void       loading 时点发送按钮触发停止
 
   // image / video 模型的快捷参数：schema 里所有 enum 字段（size, quality,
@@ -2052,6 +2067,24 @@ const UnifiedInputBar = ({
 }) => {
   const { t } = useTranslation();
   const [text, setText] = useState('');
+
+  // STT（语音识别）：audio modality 且模型名命中 whisper/transcribe 时，输入区
+  // 改成「上传音频文件 → 点发送转写」：文本框禁用，左侧出现上传入口，选中的
+  // 文件以 chip 形式挂着（不自动发送），点发送按钮才真正转写。
+  const isStt =
+    currentModality === MODALITY.AUDIO && isSttModel(inputs?.model);
+  const sttFileInputRef = useRef(null);
+  const [sttFile, setSttFile] = useState(null);
+  const handleSttFilePick = (e) => {
+    const file = e.target?.files?.[0];
+    // 清空 value，允许连续选同一个文件再次触发
+    if (e.target) e.target.value = '';
+    if (file) setSttFile(file); // 仅挂载，不自动发送
+  };
+  // 切走 STT 模型 / 切模态时清掉挂着的音频，避免带到别的模型上
+  useEffect(() => {
+    if (!isStt && sttFile) setSttFile(null);
+  }, [isStt, sttFile]);
 
   // pendingText 接力：外部一次性注入文案到本地 text，并立刻通知父层 reset
   // 这个 prop（避免把 pendingText 当成 controlled value 反复同步）
@@ -2351,9 +2384,16 @@ const UnifiedInputBar = ({
   const canSend =
     !loading &&
     !!inputs?.model &&
-    text.trim().length > 0;
+    // STT：有挂载的音频即可发送（无需文本）；其余模态照旧要非空 prompt
+    (isStt ? !!sttFile : text.trim().length > 0);
   const handleSubmit = async () => {
     if (!canSend) return;
+    if (isStt) {
+      const f = sttFile;
+      setSttFile(null);
+      await onTranscribeAudio?.(f);
+      return;
+    }
     const value = text;
     setText('');
     await onSubmit?.(value);
@@ -2361,6 +2401,10 @@ const UnifiedInputBar = ({
 
   // 输入提示文案随 modality + 视频模式调整
   const placeholder = useMemo(() => {
+    // STT：文本框禁用，提示走右上角上传入口
+    if (isStt) {
+      return t('🎧 语音识别：点右上角「+」上传音频，发送后气泡会带播放器');
+    }
     if (currentModality === MODALITY.VIDEO) {
       if (videoInputMode === 'first_last') {
         return t(
@@ -2376,12 +2420,14 @@ const UnifiedInputBar = ({
     switch (currentModality) {
       case MODALITY.IMAGE:
         return t('描述你想要的图片…');
+      case MODALITY.AUDIO:
+        return t('输入要合成语音的文本…');
       case MODALITY.MULTIMODAL:
         return t('输入消息（支持图片附件）…');
       default:
         return t('给模型发条消息…');
     }
-  }, [currentModality, videoInputMode, t]);
+  }, [currentModality, videoInputMode, isStt, t]);
 
   return (
     <div
@@ -2579,11 +2625,11 @@ const UnifiedInputBar = ({
         {/* 文本区：默认 4 行；右侧给参考图堆叠 / 首尾帧双上传预留空间 */}
         <textarea
           ref={textareaRef}
-          value={text}
+          value={isStt ? '' : text}
           onChange={handleTextareaChange}
           placeholder={placeholder}
           rows={3}
-          disabled={loading}
+          disabled={loading || isStt}
           onKeyDown={(e) => {
             // mention 弹层打开时优先拦截方向键 / 选择键，否则 Enter 会
             // 触发提交、Tab 会跳焦
@@ -2688,6 +2734,119 @@ const UnifiedInputBar = ({
           />
         )}
 
+        {/* STT：音频上传入口。样式/位置和图片上传的「+」基座完全对齐
+            （右上角悬浮、56×56 虚线圆角方块、微倾斜）。未选文件是虚线 +；
+            选中后变成带 Mic 的缩略方块 + 右上角删除角标。仅挂载不发送，点
+            右下角发送按钮才转写。 */}
+        {isStt && (
+          <div style={{ position: 'absolute', right: 12, top: 18, zIndex: 5 }}>
+            <input
+              ref={sttFileInputRef}
+              type='file'
+              accept='audio/*'
+              style={{ display: 'none' }}
+              onChange={handleSttFilePick}
+            />
+            {!sttFile ? (
+              <button
+                type='button'
+                disabled={loading}
+                onClick={() => sttFileInputRef.current?.click()}
+                aria-label={t('上传音频文件')}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--semi-color-fill-1)';
+                  e.currentTarget.style.color = 'var(--semi-color-text-1)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--semi-color-fill-0)';
+                  e.currentTarget.style.color = 'var(--semi-color-text-2)';
+                }}
+                style={{
+                  width: THUMB_SIZE,
+                  height: THUMB_SIZE,
+                  borderRadius: 10,
+                  border: '1.5px dashed var(--semi-color-border)',
+                  background: 'var(--semi-color-fill-0)',
+                  color: 'var(--semi-color-text-2)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 0,
+                  transform: 'rotate(-3deg)',
+                  transformOrigin: 'center center',
+                  transition: 'background-color 150ms, color 150ms',
+                }}
+              >
+                <Plus size={20} />
+              </button>
+            ) : (
+              <div style={{ position: 'relative', width: THUMB_SIZE, height: THUMB_SIZE }}>
+                <div
+                  title={sttFile.name}
+                  style={{
+                    width: THUMB_SIZE,
+                    height: THUMB_SIZE,
+                    borderRadius: 10,
+                    border: '1px solid var(--semi-color-border)',
+                    background: 'var(--semi-color-fill-1)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 2,
+                    transform: 'rotate(-3deg)',
+                    transformOrigin: 'center center',
+                  }}
+                >
+                  <Mic
+                    size={20}
+                    style={{ color: 'var(--semi-color-pink-6, rgb(219, 39, 119))' }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 9,
+                      lineHeight: 1.1,
+                      color: 'var(--semi-color-text-2)',
+                      maxWidth: THUMB_SIZE - 8,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      padding: '0 4px',
+                    }}
+                  >
+                    {sttFile.name || t('音频')}
+                  </span>
+                </div>
+                <button
+                  type='button'
+                  onClick={() => setSttFile(null)}
+                  aria-label={t('移除')}
+                  style={{
+                    position: 'absolute',
+                    top: -6,
+                    right: -6,
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    border: 'none',
+                    background: 'var(--semi-color-danger)',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 0,
+                    zIndex: 1,
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* 隐藏文件选择器：「+ 上传参考素材」点击触发。
             accept 跟当前能接受的媒体类型对齐——视频模型 omni 模式下扩展到
             视频/音频，其它场景仅图片。点空首/末帧 slot 时强制锁回 image/*，
@@ -2742,11 +2901,12 @@ const UnifiedInputBar = ({
             />
           )}
 
-          {/* 仅 image / video 模型展示的快捷参数下拉条。schema 里所有
-              enum 字段一字排开；多了横向滚动，滚动条隐藏。flex:1 + min-w:0
-              让它占据 ModelPickerPill 和 send 之间的剩余空间且可压缩。 */}
+          {/* image / video / audio 模型展示的快捷参数下拉条。schema 里所有
+              enum / 有界数字字段一字排开；多了横向滚动，滚动条隐藏。flex:1 +
+              min-w:0 让它占据 ModelPickerPill 和 send 之间的剩余空间且可压缩。 */}
           {(currentModality === MODALITY.IMAGE ||
-            currentModality === MODALITY.VIDEO) &&
+            currentModality === MODALITY.VIDEO ||
+            currentModality === MODALITY.AUDIO) &&
             paramSchema?.properties && (
               <div
                 className='playground-toolbar-params flex items-center gap-1 overflow-x-auto'
@@ -2770,7 +2930,16 @@ const UnifiedInputBar = ({
               </div>
             )}
 
-          <div style={{ flex: currentModality === MODALITY.IMAGE || currentModality === MODALITY.VIDEO ? 0 : 1 }} />
+          <div
+            style={{
+              flex:
+                currentModality === MODALITY.IMAGE ||
+                currentModality === MODALITY.VIDEO ||
+                currentModality === MODALITY.AUDIO
+                  ? 0
+                  : 1,
+            }}
+          />
 
           {/* 视频模型工具栏已经塞满了模式选择器 + 多个参数下拉，再加一行
               提示文字会把整条工具栏挤到换行；这里直接隐藏，保留 image 和

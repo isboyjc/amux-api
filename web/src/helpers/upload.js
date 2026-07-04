@@ -40,6 +40,7 @@ import { API } from './api';
 //     - playground-video-video
 //     - playground-video-audio
 //     - playground-image-reference
+//     - playground-audio-output
 //   通用上传（对外 API 也可用）:
 //     - user-upload-image
 //     - user-upload-video
