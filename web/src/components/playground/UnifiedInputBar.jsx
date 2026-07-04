@@ -2403,7 +2403,7 @@ const UnifiedInputBar = ({
   const placeholder = useMemo(() => {
     // STT：文本框禁用，提示走右上角上传入口
     if (isStt) {
-      return t('🎧 语音识别：点右上角「+」上传音频，发送后气泡会带播放器');
+      return t('该模型为语音识别，点右上角「+」上传音频文件后发送');
     }
     if (currentModality === MODALITY.VIDEO) {
       if (videoInputMode === 'first_last') {

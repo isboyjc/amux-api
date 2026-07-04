@@ -160,6 +160,11 @@ func GetModelRecordsByNames(names []string) (
 			if _, ok := ruleMap[n]; ok {
 				continue
 			}
+			// 同一名字可能命中多条同类规则（如宽泛的 gemini 前缀 + 具体的
+			// gemini-2.5-flash-image 前缀）。取「最具体」的那条 —— ModelName
+			// 最长的匹配 —— 让具体规则赢过宽泛规则，且不再依赖 DB 返回顺序。
+			// 否则宽泛的 gemini→text 规则会盖掉具体的图片模型规则。
+			var best *Model
 			for _, m := range ruleRows {
 				if m.NameRule != rule {
 					continue
@@ -173,10 +178,12 @@ func GetModelRecordsByNames(names []string) (
 				case NameRuleContains:
 					matched = strings.Contains(n, m.ModelName)
 				}
-				if matched {
-					ruleMap[n] = m
-					break
+				if matched && (best == nil || len(m.ModelName) > len(best.ModelName)) {
+					best = m
 				}
+			}
+			if best != nil {
+				ruleMap[n] = best
 			}
 		}
 	}
