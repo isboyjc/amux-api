@@ -28,8 +28,8 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/emailtpl"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -55,6 +55,11 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		return string(constant.EndpointTypeOpenAIResponse)
+	}
+	// Poyo 是同步图片渠道(异步转同步),探活走图片生成端点。
+	// 注意:探活会真提交并轮询一次生图,消耗上游额度、耗时数秒~数十秒。
+	if channel != nil && channel.Type == constant.ChannelTypePoyo {
+		return string(constant.EndpointTypeImageGeneration)
 	}
 	return normalized
 }
@@ -669,6 +674,16 @@ func shouldUseStreamForAutomaticChannelTest(channel *model.Channel) bool {
 	return channel != nil && channel.Type == constant.ChannelTypeCodex
 }
 
+// shouldSkipAutomaticChannelTest 把"探活代价高到不该周期性重复"的渠道排除在
+// 定时全量探活之外。手动点击测试不受影响——那是管理员知情的一次性行为。
+//
+// poyo 是"异步转同步"的图片渠道:一次探活会真提交并轮询一张图,消耗上游额度,
+// 且要占住 30 秒以上(实测 n=1 量级)。AutomaticallyTestChannels 每
+// AutoTestChannelMinutes 分钟扫一遍全部渠道,既在持续烧钱,也会拖慢整轮探活。
+func shouldSkipAutomaticChannelTest(channel *model.Channel) bool {
+	return channel != nil && channel.Type == constant.ChannelTypePoyo
+}
+
 func detectErrorMessageFromJSONBytes(jsonBytes []byte) string {
 	if len(jsonBytes) == 0 {
 		return ""
@@ -936,6 +951,9 @@ func testAllChannels(notify bool) error {
 
 		for _, channel := range channels {
 			if channel.Status == common.ChannelStatusManuallyDisabled {
+				continue
+			}
+			if shouldSkipAutomaticChannelTest(channel) {
 				continue
 			}
 			isChannelEnabled := channel.Status == common.ChannelStatusEnabled

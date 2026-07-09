@@ -20,9 +20,64 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API, showError } from '../../helpers';
+import { uploadToR2 } from '../../helpers/upload';
 
 const IMAGE_ENDPOINT = '/pg/images/generations';
 const IMAGE_EDITS_ENDPOINT = '/pg/images/edits';
+
+/**
+ * 将分辨率档位和宽高比转换成 WIDTHxHEIGHT 格式
+ * 例如: "3K" + "9:16" → "1728x3072"
+ *
+ * @param {string} resolution - 分辨率档位 ("2K", "3K", "4K")
+ * @param {string} aspectRatio - 宽高比 ("16:9", "9:16" 等)
+ * @returns {string|null} - WIDTHxHEIGHT 格式或 null
+ */
+function resolutionAndRatioToSize(resolution, aspectRatio) {
+  // 解析分辨率档位对应的基准像素
+  const resolutionMap = {
+    '2K': 2048,
+    '3K': 3072,
+    '4K': 4096,
+  };
+
+  const basePixels = resolutionMap[resolution];
+  if (!basePixels) {
+    return null; // 不支持的分辨率档位
+  }
+
+  // 解析宽高比 "W:H"
+  const parts = aspectRatio.split(':');
+  if (parts.length !== 2) {
+    return null;
+  }
+
+  const widthRatio = parseFloat(parts[0]);
+  const heightRatio = parseFloat(parts[1]);
+
+  if (isNaN(widthRatio) || isNaN(heightRatio) || widthRatio <= 0 || heightRatio <= 0) {
+    return null;
+  }
+
+  // 计算实际宽高:让较长边接近 basePixels
+  let width, height;
+  if (widthRatio >= heightRatio) {
+    // 横向或方形:宽度为基准
+    width = basePixels;
+    height = Math.round(basePixels * heightRatio / widthRatio);
+  } else {
+    // 纵向:高度为基准
+    height = basePixels;
+    width = Math.round(basePixels * widthRatio / heightRatio);
+  }
+
+  // 确保是偶数(视频编码友好)
+  if (width % 2 !== 0) width++;
+  if (height % 2 !== 0) height++;
+
+  return `${width}x${height}`;
+}
+
 
 // 模块作用域的「进行中请求」注册表：messageId -> Promise<result>。
 // 用途：图片生成是同步请求，promise 句柄只活在调用它的组件里；用户切到
@@ -140,10 +195,36 @@ export const useImageGeneration = ({ onDebug } = {}) => {
       ]);
       const topParams = {};
       const extraBody = {};
+
+      // Seedream 特殊处理: resolution + aspect_ratio → size
+      // 用户可以同时选择档位和比例,前端计算最终 size 值
+      let computedSize = null;
+      const resolution = params?.resolution;
+      const aspectRatio = params?.aspect_ratio;
+
+      if (resolution && aspectRatio) {
+        // 两者都有: 转换成 WIDTHxHEIGHT 格式 (如 "3K" + "9:16" → "1728x3072")
+        // 这样既保持比例又保持分辨率档位
+        computedSize = resolutionAndRatioToSize(resolution, aspectRatio);
+      } else if (aspectRatio) {
+        // 只有比例: 直接使用比例
+        computedSize = aspectRatio;
+      } else if (resolution) {
+        // 只有档位: 直接使用档位
+        computedSize = resolution;
+      }
+
       for (const [k, v] of Object.entries(params || {})) {
         if (v === undefined || v === null || v === '') continue;
+        // 跳过 resolution 和 aspect_ratio,已处理成 size
+        if (k === 'resolution' || k === 'aspect_ratio') continue;
         if (OPENAI_STD_KEYS.has(k)) topParams[k] = v;
         else extraBody[k] = v;
+      }
+
+      // 如果计算出了 size,覆盖原有 size 参数
+      if (computedSize) {
+        topParams.size = computedSize;
       }
 
       const hasImages = hasAnyFile(inputs);
@@ -176,56 +257,65 @@ export const useImageGeneration = ({ onDebug } = {}) => {
             });
             res = await API.post(IMAGE_ENDPOINT, payload);
           } else {
-            // 路径 B：带参考图，走 /pg/images/edits multipart。
-            // 约定：schema 声明了图像输入槽 → 这里的 inputs[key] 就是 File / File[]。
-            //   - 单槽：直接以 key 为表单字段名追加
-            //   - 多槽：单文件仍用 key，多文件用 key[]（贴合 OpenAI image[] 惯例）
-            // 非图像标量参数和 generations 一条同样走 topParams + extra_body。
-            const fd = new FormData();
-            fd.append('model', model);
-            if (group) fd.append('group', group);
-            fd.append('prompt', prompt.trim());
-            fd.append('response_format', 'b64_json');
-            Object.entries(topParams).forEach(([k, v]) => {
-              fd.append(k, typeof v === 'string' ? v : String(v));
-            });
-            if (Object.keys(extraBody).length > 0) {
-              fd.append('extra_body', JSON.stringify(extraBody));
-            }
-            // 调试预览：把文件部分用占位符代替，避免把 base64 塞进面板
-            const filesPreview = {};
-            Object.entries(inputs).forEach(([key, val]) => {
+            // 路径 B：带参考图，先上传到 R2 获取公开 URL，再发送 JSON 请求。
+            // 这是为了兼容 Poyo 等只接受 URL 的渠道（不支持 multipart 文件）。
+            // 流程：File → uploadToR2(scope: "playground-image-reference") → URL → 请求体
+            const imageUrls = [];
+            const uploadErrors = [];
+
+            // 收集所有需要上传的文件
+            for (const [key, val] of Object.entries(inputs)) {
               if (val instanceof File) {
-                fd.append(key, val, val.name);
-                filesPreview[key] = `<File: ${val.name} (${val.size} bytes)>`;
+                try {
+                  const result = await uploadToR2(val, 'playground-image-reference');
+                  imageUrls.push(result.url);
+                } catch (err) {
+                  uploadErrors.push(`${val.name}: ${err?.message || '上传失败'}`);
+                }
               } else if (Array.isArray(val)) {
                 const usable = val.filter((x) => x instanceof File);
-                if (usable.length === 0) return;
-                const field = usable.length > 1 ? `${key}[]` : key;
-                usable.forEach((f) => fd.append(field, f, f.name));
-                filesPreview[key] = usable.map(
-                  (f) => `<File: ${f.name} (${f.size} bytes)>`,
-                );
+                for (const f of usable) {
+                  try {
+                    const result = await uploadToR2(f, 'playground-image-reference');
+                    imageUrls.push(result.url);
+                  } catch (err) {
+                    uploadErrors.push(`${f.name}: ${err?.message || '上传失败'}`);
+                  }
+                }
               }
-            });
-            if (extra && typeof extra === 'object') {
-              Object.entries(extra).forEach(([k, v]) => {
-                if (v === undefined || v === null) return;
-                fd.append(k, typeof v === 'string' ? v : String(v));
-              });
             }
+
+            // 如果有上传失败，提示用户
+            if (uploadErrors.length > 0) {
+              const msg = `参考图上传失败：\n${uploadErrors.join('\n')}`;
+              showError(msg);
+              return { error: msg };
+            }
+
+            // 没有成功上传任何图片
+            if (imageUrls.length === 0) {
+              const msg = t('请上传参考图');
+              showError(msg);
+              return { error: msg };
+            }
+
+            // 构建 JSON 请求体，把图片 URL 放进 image 或 images 字段
+            // 优先用 images（复数），OpenAI edits API 标准字段
+            const payload = {
+              model,
+              group,
+              prompt: prompt.trim(),
+              response_format: 'b64_json',
+              images: imageUrls, // 参考图 URL 数组
+              ...topParams,
+            };
+            if (Object.keys(extraBody).length > 0) payload.extra_body = extraBody;
+            if (extra && typeof extra === 'object') Object.assign(payload, extra);
+
             previewForDebug = JSON.stringify(
               {
-                _endpoint: IMAGE_EDITS_ENDPOINT,
-                _format: 'multipart/form-data',
-                model,
-                group,
-                prompt: prompt.trim(),
-                ...topParams,
-                ...(Object.keys(extraBody).length > 0
-                  ? { extra_body: extraBody }
-                  : {}),
-                ...filesPreview,
+                ...payload,
+                images: imageUrls.map((url, i) => `<Uploaded: image_${i + 1}>`),
               },
               null,
               2,
@@ -236,8 +326,9 @@ export const useImageGeneration = ({ onDebug } = {}) => {
               request: previewForDebug,
               timestamp: requestTs,
             });
-            // 不要设置 Content-Type：浏览器会自动带 boundary
-            res = await API.post(IMAGE_EDITS_ENDPOINT, fd);
+
+            // 图生图也走 /pg/images/generations，adaptor 会根据有无 image/images 字段自动切换到 edit 模式
+            res = await API.post(IMAGE_ENDPOINT, payload);
           }
 
           const body = res?.data;

@@ -674,6 +674,26 @@ const EditChannelModal = (props) => {
             base_url: 'https://ark.cn-beijing.volces.com',
           }));
           break;
+        case 59:
+          // Poyo 聚合渠道:预填 Base URL 与官方 id → poyo 上游名的 model_mapping。
+          // model_mapping 仅在为空时预填,避免覆盖用户已有配置。
+          localModels = getChannelModels(value);
+          setInputs((prevInputs) => ({
+            ...prevInputs,
+            base_url: 'https://api.poyo.ai',
+            model_mapping:
+              prevInputs.model_mapping && prevInputs.model_mapping.trim()
+                ? prevInputs.model_mapping
+                : JSON.stringify(
+                    {
+                      'doubao-seedream-4-5': 'seedream-4.5',
+                      'doubao-seedream-5-0-lite': 'seedream-5.0-lite',
+                    },
+                    null,
+                    2,
+                  ),
+          }));
+          break;
         default:
           localModels = getChannelModels(value);
           break;

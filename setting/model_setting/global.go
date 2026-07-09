@@ -3,6 +3,7 @@ package model_setting
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -45,6 +46,14 @@ type GlobalSettings struct {
 	//   - "prefix:xxx"：不区分大小写前缀匹配
 	// 与底层硬编码（common.ImageGenerationModels 等）取 **并集**。
 	CustomModalityPatterns map[string][]string `json:"custom_modality_patterns"`
+
+	// SyncImagePollTimeout 针对"异步转同步"的图片渠道（如 poyo）：提交后网关在
+	// 同一请求内轮询上游任务直到出图。key 为模型名 pattern（语法同 matchPatterns），
+	// value 为该模型允许的最大轮询时长（秒）。命中即用，未命中走
+	// SyncImagePollTimeoutDefault。图片模型有快有慢，故按模型可配。
+	SyncImagePollTimeout map[string]int `json:"sync_image_poll_timeout"`
+	// SyncImagePollTimeoutDefault 未命中 SyncImagePollTimeout 时的兜底轮询超时（秒）。
+	SyncImagePollTimeoutDefault int `json:"sync_image_poll_timeout_default"`
 }
 
 // DefaultCustomModalityPatterns 出厂默认的模型分类规则，覆盖主流厂商的常
@@ -61,9 +70,9 @@ var DefaultCustomModalityPatterns = map[string][]string{
 	// 视频（优先于图片判断，防止 prefix:jimeng- 吃掉 jimeng-video）
 	"video": {
 		// 国际
-		"prefix:sora-",     // sora-2, sora-2-pro, sora-2-i2v
-		"prefix:veo-",      // veo-2.0-*, veo-3.0-*, veo-3.1-*
-		"prefix:gen4",      // gen4_turbo
+		"prefix:sora-", // sora-2, sora-2-pro, sora-2-i2v
+		"prefix:veo-",  // veo-2.0-*, veo-3.0-*, veo-3.1-*
+		"prefix:gen4",  // gen4_turbo
 		"prefix:gen-4",
 		"prefix:gen3",
 		"prefix:gen-3",
@@ -260,6 +269,17 @@ var DefaultCustomModalityPatterns = map[string][]string{
 	},
 }
 
+// defaultSyncImagePollTimeoutSeconds 是"异步转同步"图片渠道请求内轮询的内置兜底超时。
+const defaultSyncImagePollTimeoutSeconds = 90
+
+// DefaultSyncImagePollTimeout 出厂默认：异步转同步图片渠道的按模型轮询超时（秒）。
+//
+// 出厂为空：渠道自行按请求张数缩放超时（见 relay/channel/poyo 的 pollTimeoutFor，
+// 60s + 30s×n），比一刀切的固定值更贴合实际——出图耗时随 n 线性增长。
+// 这里配置的值对渠道而言是**下限**：只有大于公式算出的值才会生效，
+// 因此仅在某个模型确实异常慢时才需要按 pattern 加码。
+var DefaultSyncImagePollTimeout = map[string]int{}
+
 // 默认配置
 var defaultOpenaiSettings = GlobalSettings{
 	PassThroughRequestEnabled: false,
@@ -271,7 +291,9 @@ var defaultOpenaiSettings = GlobalSettings{
 		Enabled:     false,
 		AllChannels: true,
 	},
-	CustomModalityPatterns: DefaultCustomModalityPatterns,
+	CustomModalityPatterns:      DefaultCustomModalityPatterns,
+	SyncImagePollTimeout:        DefaultSyncImagePollTimeout,
+	SyncImagePollTimeoutDefault: defaultSyncImagePollTimeoutSeconds,
 }
 
 // 全局实例
@@ -287,6 +309,21 @@ func init() {
 
 func GetGlobalSettings() *GlobalSettings {
 	return &globalSettings
+}
+
+// GetSyncImagePollTimeout 返回"异步转同步"图片渠道对某模型的请求内轮询超时。
+// 按模型名 pattern 匹配 SyncImagePollTimeout（语法同 matchPatterns），未命中走
+// SyncImagePollTimeoutDefault；都无效时回退到内置 defaultSyncImagePollTimeoutSeconds。
+func GetSyncImagePollTimeout(modelName string) time.Duration {
+	for pattern, sec := range globalSettings.SyncImagePollTimeout {
+		if sec > 0 && matchPatterns(modelName, []string{pattern}) {
+			return time.Duration(sec) * time.Second
+		}
+	}
+	if globalSettings.SyncImagePollTimeoutDefault > 0 {
+		return time.Duration(globalSettings.SyncImagePollTimeoutDefault) * time.Second
+	}
+	return time.Duration(defaultSyncImagePollTimeoutSeconds) * time.Second
 }
 
 // ShouldPreserveThinkingSuffix 判断模型是否配置为保留 thinking/-nothinking/-low/-high/-medium 后缀
