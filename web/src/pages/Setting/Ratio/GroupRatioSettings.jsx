@@ -230,7 +230,7 @@ export default function GroupRatioSettings(props) {
 
       <Form.Section text={t('自动分组')}>
         <Text type='tertiary' size='small' style={{ display: 'block', marginBottom: 12 }}>
-          {t('这里的顺序有两个用途：一是存量 auto 分组令牌仍按此顺序选择分组；二是开启下方开关后，新建令牌会用它预填分组链。新建令牌不再提供 auto 选项，用户直接多选分组并自行排序')}
+          {t('存量 auto 分组令牌仍按以下顺序依次选择分组。新建令牌不再提供 auto 选项，用户直接多选分组并自行排序，也不会被预填')}
         </Text>
         <Row gutter={16}>
           <Col xs={24} sm={12} md={8} lg={8} xl={8}>
@@ -250,7 +250,7 @@ export default function GroupRatioSettings(props) {
                 />
               </div>
               <Text type='tertiary' size='small' style={{ marginTop: 4 }}>
-                {t('开启后新建令牌会用上面的顺序预填分组链，新用户的初始令牌仍设为 auto')}
+                {t('开启后新注册用户的初始令牌将使用 auto 分组')}
               </Text>
             </Form.Slot>
           </Col>

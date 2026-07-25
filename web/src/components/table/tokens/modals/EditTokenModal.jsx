@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useContext, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   API,
   showError,
@@ -57,13 +57,11 @@ import {
   IconArrowDown,
 } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
-import { StatusContext } from '../../../../context/Status';
 
 const { Text, Title } = Typography;
 
 const EditTokenModal = (props) => {
   const { t } = useTranslation();
-  const [statusState, statusDispatch] = useContext(StatusContext);
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
   const formApiRef = useRef(null);
@@ -77,13 +75,6 @@ const EditTokenModal = (props) => {
   // 这类令牌保持原行为运行，只有用户在这里保存后才会转成显式分组链。
   const [isLegacyAuto, setIsLegacyAuto] = useState(false);
 
-  // 新建令牌时，管理员开了「默认使用自动分组」就把当时的 auto 顺序预填成分组链。
-  // auto 本身不再作为可选项出现 —— 它已经降级成「预设的分组链」。
-  const defaultGroups =
-    statusState?.status?.default_use_auto_group && autoGroupOrder.length > 0
-      ? autoGroupOrder
-      : [];
-
   const getInitValues = () => ({
     name: '',
     remain_quota: 0,
@@ -93,7 +84,9 @@ const EditTokenModal = (props) => {
     model_limits_enabled: false,
     model_limits: [],
     allow_ips: '',
-    groups: defaultGroups,
+    // 新建令牌默认不预选任何分组，由用户自己挑。预填「全部 auto 分组」看着省事，
+    // 实际是替用户做了一个他没表达过的决定，而且一上来就选满十来个分组也没意义。
+    groups: [],
     cross_group_retry: true,
     tokenCount: 1,
   });
@@ -180,22 +173,13 @@ const EditTokenModal = (props) => {
           modelCount: info.model_count,
           disabled: info.model_count === 0,
         }));
-      // 管理员配置的分组顺序：新建令牌时作为预填，编辑旧版 auto 令牌时展示
+      // 管理员配置的 auto 分组顺序。只用于「编辑旧版 auto 令牌」时还原它当前
+      // 实际生效的链，新建令牌不做任何预填。
       try {
         const pricingRes = await API.get('/api/pricing');
         const pricingData = pricingRes.data;
         if (pricingData.success && pricingData.auto_groups?.length > 0) {
           setAutoGroupOrder(pricingData.auto_groups);
-          // 分组顺序是异步拿到的，早于它的 getInitValues() 预填不到东西，
-          // 这里补一次：只在新建、且用户还没选过分组时生效。
-          if (
-            !isEdit &&
-            statusState?.status?.default_use_auto_group &&
-            (formApiRef.current?.getValue('groups') || []).length === 0
-          ) {
-            formApiRef.current?.setValue('groups', pricingData.auto_groups);
-            loadModels(pricingData.auto_groups);
-          }
         }
       } catch (e) {
         // ignore
@@ -299,6 +283,12 @@ const EditTokenModal = (props) => {
   };
 
   const submit = async (values) => {
+    // 分组可以在编辑过程中被清空，但不能就这么保存：用户等级分组下没有任何渠道，
+    // 空分组的令牌调任何模型都只会得到「无可用渠道」，等于发出去一个死令牌。
+    if (!Array.isArray(values.groups) || values.groups.length === 0) {
+      showError(t('请至少选择一个分组'));
+      return;
+    }
     setLoading(true);
     if (isEdit) {
       let { tokenCount: _tc, ...localInputs } = values;
@@ -435,7 +425,7 @@ const EditTokenModal = (props) => {
     >
       <Spin spinning={loading}>
         <Form
-          key={`${isEdit ? 'edit' : 'new'}-${defaultGroups.join(',')}`}
+          key={isEdit ? `edit-${props.editingToken.id}` : 'new'}
           initValues={getInitValues()}
           getFormApi={(api) => (formApiRef.current = api)}
           onSubmit={submit}
@@ -485,7 +475,10 @@ const EditTokenModal = (props) => {
                         field='groups'
                         label={t('令牌分组')}
                         multiple
-                        placeholder={t('可多选，按选择顺序作为优先级，靠前的分组优先')}
+                        placeholder={t('请选择分组，可多选')}
+                        extraText={t(
+                          '可选择多个分组，选择顺序即优先级：请求会按该顺序依次寻找拥有目标模型的分组，靠前的先用；某个分组没有该模型时直接跳过，不消耗重试次数。选择多个分组后可开启「跨分组重试」，让靠前的分组失败时自动切换到下一个拥有该模型的分组。',
+                        )}
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
                         filter={(input, option) => {

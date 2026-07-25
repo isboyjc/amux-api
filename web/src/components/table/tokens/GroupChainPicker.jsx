@@ -97,8 +97,12 @@ const GroupChainPicker = ({
     });
   };
 
+  // 下限不只作用在「移除」上：auto / 空分组令牌打开面板时草稿本来就是空的，
+  // 不挡住保存按钮的话，一路点过去就存出一个调不通任何模型的死令牌。
+  const canSave = draft.length >= minSelected;
+
   const handleSave = async () => {
-    if (typeof onSave !== 'function') return;
+    if (typeof onSave !== 'function' || !canSave) return;
     setSaving(true);
     try {
       await onSave(draft, draft.length > 1 ? draftCross : false);
@@ -265,11 +269,22 @@ const GroupChainPicker = ({
         </div>
       )}
 
-      <div className='flex justify-end gap-2 mt-3'>
+      <div className='flex items-center justify-end gap-2 mt-3'>
+        {!canSave && (
+          <Text type='danger' size='small' className='flex-1'>
+            {t('请至少选择一个分组')}
+          </Text>
+        )}
         <Button size='small' theme='borderless' onClick={() => setVisible(false)}>
           {t('取消')}
         </Button>
-        <Button size='small' theme='solid' loading={saving} onClick={handleSave}>
+        <Button
+          size='small'
+          theme='solid'
+          loading={saving}
+          disabled={!canSave}
+          onClick={handleSave}
+        >
           {t('保存')}
         </Button>
       </div>
