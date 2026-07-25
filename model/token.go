@@ -27,8 +27,57 @@ type Token struct {
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
-	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
+	GroupsJSON         string         `json:"-" gorm:"column:groups;type:text"` // 有序分组链，JSON 数组；空表示走 Group 的旧语义
+	CrossGroupRetry    bool           `json:"cross_group_retry"`                // 跨分组重试
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
+}
+
+// GetGroups 解析令牌的有序分组链。返回空切片表示该令牌没有显式分组链，
+// 调用方应当回退到 Group 字段的旧语义（见 service.ResolveGroupChain）。
+//
+// 注意：Token 结构体的字段必须全部是标量。令牌的 Redis 缓存走
+// common.RedisHSetObj / RedisHGetObj 的反射序列化，后者对 string / int / bool /
+// gorm.DeletedAt 之外的类型会直接返回错误（common/redis.go 的 default 分支），
+// 一旦在这里放一个 []string，每次读令牌缓存都会失败并退化成全量查库。
+// 所以链以 JSON 字符串落库，数组形态只在 API 边界上转换。
+func (token *Token) GetGroups() []string {
+	raw := strings.TrimSpace(token.GroupsJSON)
+	if raw == "" {
+		return nil
+	}
+	var groups []string
+	if err := common.Unmarshal([]byte(raw), &groups); err != nil {
+		common.SysError(fmt.Sprintf("failed to parse token#%d groups %q: %s", token.Id, raw, err.Error()))
+		return nil
+	}
+	cleaned := make([]string, 0, len(groups))
+	seen := make(map[string]struct{}, len(groups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		cleaned = append(cleaned, group)
+	}
+	return cleaned
+}
+
+// SetGroups 写入有序分组链。传空切片表示清空，回到 Group 字段的旧语义。
+func (token *Token) SetGroups(groups []string) error {
+	if len(groups) == 0 {
+		token.GroupsJSON = ""
+		return nil
+	}
+	encoded, err := common.Marshal(groups)
+	if err != nil {
+		return err
+	}
+	token.GroupsJSON = string(encoded)
+	return nil
 }
 
 func (token *Token) Clean() {
@@ -294,8 +343,9 @@ func (token *Token) Update() (err error) {
 			})
 		}
 	}()
+	// Select 里列出的字段即使是零值也会被写入，清空分组链依赖这个语义
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "groups", "cross_group_retry").Updates(token).Error
 	return err
 }
 

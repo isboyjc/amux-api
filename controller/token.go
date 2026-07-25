@@ -9,26 +9,77 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
 
-func buildMaskedTokenResponse(token *model.Token) *model.Token {
+// TokenResponse 是令牌相关接口的统一出参。
+//
+// 分组链在库里和 Redis 缓存里都是 JSON 字符串（model.Token 的字段必须全是标量，
+// 否则 common.RedisHGetObj 的反射会直接报错，见 model.Token.GetGroups 的注释），
+// 数组形态只在 API 边界上还原。外层 Groups 字段遮蔽内层被 json:"-" 隐藏的
+// GroupsJSON，前端拿到的就是普通数组。
+//
+// Group 字段保持输出，值等于链首分组，老客户端与脚本不受影响。
+type TokenResponse struct {
+	model.Token
+	Groups []string `json:"groups"`
+}
+
+func buildMaskedTokenResponse(token *model.Token) *TokenResponse {
 	if token == nil {
 		return nil
 	}
 	maskedToken := *token
 	maskedToken.Key = token.GetMaskedKey()
-	return &maskedToken
+	return &TokenResponse{
+		Token:  maskedToken,
+		Groups: token.GetGroups(),
+	}
 }
 
-func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
-	maskedTokens := make([]*model.Token, 0, len(tokens))
+func buildMaskedTokenResponses(tokens []*model.Token) []*TokenResponse {
+	maskedTokens := make([]*TokenResponse, 0, len(tokens))
 	for _, token := range tokens {
 		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
 	}
 	return maskedTokens
+}
+
+// tokenRequest 是令牌创建/更新的入参。
+//
+// 不能直接绑进 model.Token：那里的 groups 是 JSON 字符串字段，客户端传数组会
+// 直接绑定失败。这里显式接数组，在控制器边界完成数组 → JSON 字符串的转换。
+type tokenRequest struct {
+	model.Token
+	Groups []string `json:"groups"`
+}
+
+// applyGroupChain 校验并把分组链写入令牌。
+//
+// Group 始终与链首保持同步：middleware/auth.go 的权限校验、限流分组、渠道亲和
+// 缓存键都读 Group，同步之后这些逻辑对单分组令牌和多分组令牌是同一套代码；
+// 同时也保证 PR 回滚后（groups 列被忽略）令牌退化成「只用链首分组」而不是失效。
+func applyGroupChain(c *gin.Context, target *model.Token, groups []string) error {
+	normalized := service.NormalizeGroupChainInput(groups)
+	if len(normalized) == 0 {
+		target.GroupsJSON = ""
+		return nil
+	}
+	userGroup, err := model.GetUserGroup(c.GetInt("id"), false)
+	if err != nil {
+		return err
+	}
+	if err := service.ValidateGroupChain(normalized, userGroup); err != nil {
+		return err
+	}
+	if err := target.SetGroups(normalized); err != nil {
+		return err
+	}
+	target.Group = normalized[0]
+	return nil
 }
 
 func GetAllTokens(c *gin.Context) {
@@ -165,12 +216,13 @@ func GetTokenUsage(c *gin.Context) {
 }
 
 func AddToken(c *gin.Context) {
-	token := model.Token{}
-	err := c.ShouldBindJSON(&token)
+	req := tokenRequest{}
+	err := c.ShouldBindJSON(&req)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	token := req.Token
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -222,6 +274,10 @@ func AddToken(c *gin.Context) {
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
 	}
+	if err := applyGroupChain(c, &cleanToken, req.Groups); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	err = cleanToken.Insert()
 	if err != nil {
 		common.ApiError(c, err)
@@ -250,12 +306,13 @@ func DeleteToken(c *gin.Context) {
 func UpdateToken(c *gin.Context) {
 	userId := c.GetInt("id")
 	statusOnly := c.Query("status_only")
-	token := model.Token{}
-	err := c.ShouldBindJSON(&token)
+	req := tokenRequest{}
+	err := c.ShouldBindJSON(&req)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	token := req.Token
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -299,6 +356,10 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		if err := applyGroupChain(c, cleanToken, req.Groups); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	err = cleanToken.Update()
 	if err != nil {

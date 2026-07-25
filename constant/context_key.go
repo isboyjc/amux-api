@@ -38,9 +38,20 @@ const (
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
 
-	ContextKeyAutoGroup           ContextKey = "auto_group"
-	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"
-	ContextKeyAutoGroupRetryIndex ContextKey = "auto_group_retry_index"
+	// ContextKeyAutoGroup 保存「本次请求实际命中的分组」。键名沿用历史的
+	// auto_group 而没有改成 selected_group，是因为 relay/helper/price.go 与
+	// service/quota.go 都直接依赖它来决定计费分组，改名收益小、波及面大。
+	ContextKeyAutoGroup ContextKey = "auto_group"
+
+	/* 分组链（多分组令牌 / 旧版 auto 分组）相关，由 middleware/distributor.go 与
+	   controller/relay.go 的重试循环共享 —— 第 0 次尝试由 distributor 选渠道，
+	   第 1..N 次由 relay 循环选，游标必须放在 context 里才能接得上。 */
+	ContextKeyGroupChain        ContextKey = "group_chain"
+	ContextKeyGroupChainCursor  ContextKey = "group_chain_cursor"
+	ContextKeyTriedChannels     ContextKey = "tried_channels"
+	ContextKeyGroupSwitches     ContextKey = "group_switches"
+	ContextKeyRetryDeadline     ContextKey = "retry_deadline"
+	ContextKeyCrossGroupBlocked ContextKey = "cross_group_blocked"
 
 	/* user related keys */
 	ContextKeyUserId      ContextKey = "id"

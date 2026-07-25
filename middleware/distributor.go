@@ -87,7 +87,6 @@ func Distribute() func(c *gin.Context) {
 					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
 					return
 				}
-				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 				// 所有 /pg/* 路径（chat/completions、images/generations、
 				// images/edits 等）都允许 Playground 在 body 里带 group 字段；
@@ -110,6 +109,11 @@ func Distribute() func(c *gin.Context) {
 						}
 						usingGroup = playgroundRequest.Group
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
+						// body 里显式指定的分组优先级最高，直接把分组链换成它
+						service.OverrideGroupChain(c, service.GroupChain{
+							Groups: []string{usingGroup},
+							Source: service.GroupChainSourceUserGroup,
+						})
 					}
 				}
 
@@ -121,39 +125,26 @@ func Distribute() func(c *gin.Context) {
 								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
 								return
 							}
-						} else if usingGroup == "auto" {
-							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-							autoGroups := service.GetUserAutoGroup(userGroup)
-							for _, g := range autoGroups {
-								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
-									selectGroup = g
-									common.SetContextKey(c, constant.ContextKeyAutoGroup, g)
-									channel = preferred
-									service.MarkChannelAffinityUsed(c, g, preferred.Id)
-									break
-								}
-							}
-						} else if model.IsChannelEnabledForGroupModel(usingGroup, modelRequest.Model, preferred.Id) {
+						} else if g := service.SeedChainCursorForChannel(c, modelRequest.Model, preferred.Id); g != "" {
+							// 亲和命中时不走 selectFromChain，这里必须把游标和已尝试
+							// 集合播种好，否则重试会从链首重新扫描，可能再次选中刚刚
+							// 失败的这个亲和渠道。分组取链上最靠前的匹配项，保证计费
+							// 分组稳定。
 							channel = preferred
-							selectGroup = usingGroup
-							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+							service.MarkChannelAffinityUsed(c, g, preferred.Id)
 						}
 					}
 				}
 
 				if channel == nil {
-					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+					channel, _, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
 						Ctx:        c,
 						ModelName:  modelRequest.Model,
 						TokenGroup: usingGroup,
 						Retry:      common.GetPointer(0),
 					})
 					if err != nil {
-						showGroup := usingGroup
-						if usingGroup == "auto" {
-							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
-						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
+						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": groupHintForError(c, usingGroup), "Model": modelRequest.Model, "Error": err.Error()})
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
 						//if channel != nil {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
@@ -163,7 +154,7 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": groupHintForError(c, usingGroup), "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
 						return
 					}
 				}
@@ -176,6 +167,23 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+// groupHintForError 生成「找不到可用渠道」报错里展示的分组信息。
+// 多分组令牌展示整条链，让用户一眼看出是「我绑的这几个分组都没有这个模型」
+// 而不是某一个分组的问题；旧版 auto 令牌保持 auto(...) 的展示形式。
+func groupHintForError(c *gin.Context, usingGroup string) string {
+	chain := service.GetGroupChain(c)
+	if chain.IsEmpty() {
+		return usingGroup
+	}
+	if chain.Source == service.GroupChainSourceLegacyAuto {
+		return fmt.Sprintf("auto(%s)", chain.String())
+	}
+	if len(chain.Groups) > 1 {
+		return chain.String()
+	}
+	return usingGroup
 }
 
 // getModelFromRequest 从请求中读取模型信息
