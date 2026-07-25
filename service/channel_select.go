@@ -68,8 +68,40 @@ func (p *RetryParam) IncreaseRetry() {
 }
 
 // Budget 返回当前允许的最大 retry 序号（含）。
+//
+// 三部分相加：
+//
+//	RetryTimes        管理员配置的分组内重试次数
+//	GroupSwitches     已发生的换组次数（换组不消耗组内预算，见字段注释）
+//	pendingSwitch     还能换组时预留的 1 次
+//
+// 最后一项是必需的：GroupSwitches 是「换组之后」才增加的，如果没有预留，
+// RetryTimes=0 的部署（这就是本项目的默认值）永远走不到第 1 次重试，也就永远
+// 触发不了第 1 次换组 —— 用户明明打开了跨分组重试却完全不生效。跨分组回落是
+// 用户在令牌上显式开启的能力，不该被一个管理员侧的重试次数配置卡死。
+//
+// 循环仍然收敛：预留只在「还有分组可换」时给出，而已尝试渠道集合是硬约束，
+// 候选终会耗尽让选路返回 nil，再加上 TotalRetryBudgetMs 时间预算兜底。
 func (p *RetryParam) Budget() int {
-	return common.RetryTimes + p.GroupSwitches
+	return common.RetryTimes + p.GroupSwitches + p.pendingSwitchAllowance()
+}
+
+func (p *RetryParam) pendingSwitchAllowance() int {
+	if p.Ctx == nil {
+		return 0
+	}
+	chain := GetGroupChain(p.Ctx)
+	if !chain.CrossGroup || len(chain.Groups) <= 1 {
+		return 0
+	}
+	// 上一次的错误不值得换组（参数非法、内容审核）时不预留
+	if isCrossGroupBlocked(p.Ctx) {
+		return 0
+	}
+	if p.GroupSwitches >= len(chain.Groups)-1 {
+		return 0
+	}
+	return 1
 }
 
 // SetupGroupChain 把解析好的分组链写入 context，由 middleware/auth.go 在拿到令牌

@@ -234,6 +234,9 @@ const EditTokenModal = (props) => {
       if (data.groups && data.groups.length > 0) {
         // 已是显式链
       } else if (legacyAuto) {
+        // autoGroupOrder 由 loadGroups 异步拿，通常晚于这里，所以可能还是空。
+        // 真正的预填交给下面监听 autoGroupOrder 的 effect 兜底 —— 少了它，
+        // 用户打开旧版 auto 令牌直接保存会存成空链，令牌静默掉到用户分组。
         data.groups = autoGroupOrder;
       } else if (data.group) {
         data.groups = [data.group];
@@ -266,12 +269,23 @@ const EditTokenModal = (props) => {
       if (isEdit) {
         loadToken();
       } else {
+        setIsLegacyAuto(false);
         formApiRef.current?.setValues(getInitValues());
       }
     } else {
       formApiRef.current?.reset();
     }
   }, [props.visiable, props.editingToken.id]);
+
+  // 旧版 auto 令牌的分组链预填。loadToken 与 loadGroups 是两个独立的异步流程，
+  // 谁先完成不确定，所以在这里等 autoGroupOrder 到位后补一次。
+  useEffect(() => {
+    if (!isLegacyAuto || autoGroupOrder.length === 0) return;
+    const current = formApiRef.current?.getValue('groups') || [];
+    if (current.length > 0) return;
+    formApiRef.current?.setValue('groups', autoGroupOrder);
+    loadModels(autoGroupOrder);
+  }, [isLegacyAuto, autoGroupOrder]);
 
   const generateRandomSuffix = () => {
     const characters =

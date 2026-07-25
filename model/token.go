@@ -27,7 +27,11 @@ type Token struct {
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
-	GroupsJSON         string         `json:"-" gorm:"column:groups;type:text"` // 有序分组链，JSON 数组；空表示走 Group 的旧语义
+	// GroupsJSON 有序分组链，JSON 数组；空表示走 Group 字段的旧语义。
+	// 列名用 group_chain 而不是 groups：GROUPS 是 MySQL 8.0.2+ 的保留字
+	// （窗口函数），本项目已经为 key / group 专门维护了 commonKeyCol /
+	// commonGroupCol 来绕这个坑，没必要再引入一个。
+	GroupsJSON         string         `json:"-" gorm:"column:group_chain;type:text"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"`                // 跨分组重试
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
@@ -345,7 +349,7 @@ func (token *Token) Update() (err error) {
 	}()
 	// Select 里列出的字段即使是零值也会被写入，清空分组链依赖这个语义
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "groups", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "group_chain", "cross_group_retry").Updates(token).Error
 	return err
 }
 

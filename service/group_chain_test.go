@@ -415,3 +415,38 @@ func TestGroupChainAbsentVsExplicitClear(t *testing.T) {
 	require.NoError(t, token.SetGroups([]string{}))
 	assert.Empty(t, token.GetGroups())
 }
+
+// TestBudgetAllowsCrossGroupWhenRetryTimesIsZero 覆盖 RetryTimes=0 的部署
+// （这就是本项目的默认值）。没有 pendingSwitchAllowance 的话，循环只会跑一次，
+// 用户明明打开了跨分组重试却永远触发不了第一次换组。
+func TestBudgetAllowsCrossGroupWhenRetryTimesIsZero(t *testing.T) {
+	prev := common.RetryTimes
+	common.RetryTimes = 0
+	t.Cleanup(func() { common.RetryTimes = prev })
+
+	t.Run("多分组且开启跨分组重试时预留一次", func(t *testing.T) {
+		c := newTestContext(t, GroupChain{Groups: []string{"a", "b"}, CrossGroup: true})
+		param := &RetryParam{Ctx: c, Retry: common.GetPointer(0)}
+		assert.Equal(t, 1, param.Budget())
+
+		// 换过一次之后，预留继续给到能换的最后一组为止
+		param.GroupSwitches = 1
+		assert.Equal(t, 1, param.Budget(), "两个分组只能换一次，换完不再预留")
+	})
+
+	t.Run("单分组不预留", func(t *testing.T) {
+		c := newTestContext(t, GroupChain{Groups: []string{"a"}, CrossGroup: true})
+		assert.Equal(t, 0, (&RetryParam{Ctx: c, Retry: common.GetPointer(0)}).Budget())
+	})
+
+	t.Run("关闭跨分组重试不预留", func(t *testing.T) {
+		c := newTestContext(t, GroupChain{Groups: []string{"a", "b"}, CrossGroup: false})
+		assert.Equal(t, 0, (&RetryParam{Ctx: c, Retry: common.GetPointer(0)}).Budget())
+	})
+
+	t.Run("错误不值得换组时不预留", func(t *testing.T) {
+		c := newTestContext(t, GroupChain{Groups: []string{"a", "b"}, CrossGroup: true})
+		SetCrossGroupBlocked(c, true)
+		assert.Equal(t, 0, (&RetryParam{Ctx: c, Retry: common.GetPointer(0)}).Budget())
+	})
+}
