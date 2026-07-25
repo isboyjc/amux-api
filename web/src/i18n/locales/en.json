@@ -4966,6 +4966,10 @@
     "领取情况": "Claim status",
     "领取时间": "Claimed at",
     "领取率": "Claim rate",
-    "领取窗口": "Claim window"
+    "领取窗口": "Claim window",
+    "下方所有额度字段填写的都是额度（quota）原始值，不是金额。当前 {{unit}} 额度 = {{money}}。": "All quota fields below take raw quota values, not money. Currently {{unit}} quota = {{money}}.",
+    "达到该消耗额度即可参与": "Reach this spending quota to be eligible",
+    "中奖额度（quota）": "Prize quota (raw)",
+    "每个奖项设置名称与中奖额度。额度填 quota 原始值（右侧实时显示折算金额），参与人数少于奖项数时，多余奖项作废。": "Set a name and prize quota for each prize. Enter the raw quota value (the converted amount is shown live on the right). If participants are fewer than prizes, the surplus prizes lapse."
   }
 }

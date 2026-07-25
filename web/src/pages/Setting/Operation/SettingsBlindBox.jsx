@@ -36,6 +36,8 @@ import {
   showError,
   showSuccess,
   showWarning,
+  renderQuota,
+  renderQuotaWithPrompt,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 
@@ -178,6 +180,11 @@ export default function SettingsBlindBox(props) {
 
   const enabled = inputs['blindbox_setting.enabled'];
   const poolMode = inputs['blindbox_setting.pool_mode'];
+  // 「额度设置」里的单位额度（多少 quota 折合一个货币单位）。管理员可改，不能写死 500000。
+  const quotaPerUnit = (() => {
+    const raw = parseFloat(localStorage.getItem('quota_per_unit'));
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  })();
 
   return (
     <>
@@ -193,7 +200,21 @@ export default function SettingsBlindBox(props) {
               style={{ marginBottom: 16, display: 'block' }}
             >
               {t(
-                '用户在开奖周期内消耗达到门槛后，需主动点击「参与本期」才会进入奖池；消耗越多中奖概率越大。开奖时点统一结算，中奖后仍需用户主动开盒领取，到下次开奖仍未开则作废。未开启的盲盒会阻止用户参与新一期。额度单位约 500000 ≈ $1。',
+                '用户在开奖周期内消耗达到门槛后，需主动点击「参与本期」才会进入奖池；消耗越多中奖概率越大。开奖时点统一结算，中奖后仍需用户主动开盒领取，到下次开奖仍未开则作废。未开启的盲盒会阻止用户参与新一期。',
+              )}
+            </Typography.Text>
+            {/* 本页所有额度字段填的都是 quota 原始值，不是金额。换算比例取自
+                「额度设置」里的单位额度，管理员改过就跟着变，不能写死。 */}
+            <Typography.Text
+              type='tertiary'
+              style={{ marginBottom: 16, display: 'block' }}
+            >
+              {t(
+                '下方所有额度字段填写的都是额度（quota）原始值，不是金额。当前 {{unit}} 额度 = {{money}}。',
+                {
+                  unit: quotaPerUnit ?? '—',
+                  money: quotaPerUnit ? renderQuota(quotaPerUnit) : '—',
+                },
               )}
             </Typography.Text>
             <Typography.Text
@@ -227,8 +248,15 @@ export default function SettingsBlindBox(props) {
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
                   field={'blindbox_setting.threshold_quota'}
-                  label={t('参与门槛额度')}
-                  placeholder={t('达到该消耗额度即可参与，500000 ≈ $1')}
+                  label={
+                    <span>
+                      {t('参与门槛额度')}{' '}
+                      {renderQuotaWithPrompt(
+                        inputs['blindbox_setting.threshold_quota'],
+                      )}
+                    </span>
+                  }
+                  placeholder={t('达到该消耗额度即可参与')}
                   onChange={handleFieldChange(
                     'blindbox_setting.threshold_quota',
                   )}
@@ -296,12 +324,13 @@ export default function SettingsBlindBox(props) {
                   style={{ marginBottom: 12, display: 'block' }}
                 >
                   {t(
-                    '每个奖项设置名称与中奖额度（quota）。参与人数少于奖项数时，多余奖项作废。',
+                    '每个奖项设置名称与中奖额度。额度填 quota 原始值（右侧实时显示折算金额），参与人数少于奖项数时，多余奖项作废。',
                   )}
                 </Typography.Text>
                 {prizes.map((p, index) => (
                   <Space
                     key={index}
+                    align='center'
                     style={{ marginBottom: 8, display: 'flex' }}
                   >
                     <Input
@@ -313,12 +342,20 @@ export default function SettingsBlindBox(props) {
                     />
                     <InputNumber
                       value={p.quota}
-                      placeholder={t('中奖额度')}
+                      placeholder={t('中奖额度（quota）')}
                       min={1}
+                      step={quotaPerUnit || 1}
                       style={{ width: 180 }}
                       disabled={!enabled}
                       onChange={(v) => updatePrize(index, 'quota', v)}
                     />
+                    {/* 实时折算：填的是 quota 原始值，没有这行提示很容易把 1 当成 $1 */}
+                    <Typography.Text
+                      type={Number(p.quota) > 0 ? 'success' : 'tertiary'}
+                      style={{ minWidth: 96, display: 'inline-block' }}
+                    >
+                      {Number(p.quota) > 0 ? `= ${renderQuota(p.quota)}` : '—'}
+                    </Typography.Text>
                     <Button
                       type='danger'
                       theme='borderless'

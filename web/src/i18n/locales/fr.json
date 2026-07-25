@@ -4865,6 +4865,10 @@
     "领取情况": "État des réclamations",
     "领取时间": "Réclamé le",
     "领取率": "Taux de réclamation",
-    "领取窗口": "Fenêtre de réclamation"
+    "领取窗口": "Fenêtre de réclamation",
+    "下方所有额度字段填写的都是额度（quota）原始值，不是金额。当前 {{unit}} 额度 = {{money}}。": "Tous les champs de quota ci-dessous attendent des valeurs brutes, pas des montants. Actuellement {{unit}} de quota = {{money}}.",
+    "达到该消耗额度即可参与": "Atteignez ce quota de dépense pour participer",
+    "中奖额度（quota）": "Quota du lot (brut)",
+    "每个奖项设置名称与中奖额度。额度填 quota 原始值（右侧实时显示折算金额），参与人数少于奖项数时，多余奖项作废。": "Définissez un nom et un quota pour chaque lot. Saisissez la valeur brute du quota (le montant converti s'affiche à droite). Si les participants sont moins nombreux que les lots, les lots excédentaires sont annulés."
   }
 }

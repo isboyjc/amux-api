@@ -5384,6 +5384,10 @@
     "领取情况": "Tình trạng nhận",
     "领取时间": "Thời điểm nhận",
     "领取率": "Tỷ lệ nhận",
-    "领取窗口": "Thời hạn nhận"
+    "领取窗口": "Thời hạn nhận",
+    "下方所有额度字段填写的都是额度（quota）原始值，不是金额。当前 {{unit}} 额度 = {{money}}。": "Tất cả các trường hạn mức bên dưới nhập giá trị quota gốc, không phải số tiền. Hiện tại {{unit}} quota = {{money}}.",
+    "达到该消耗额度即可参与": "Đạt hạn mức tiêu thụ này để tham gia",
+    "中奖额度（quota）": "Hạn mức giải (quota)",
+    "每个奖项设置名称与中奖额度。额度填 quota 原始值（右侧实时显示折算金额），参与人数少于奖项数时，多余奖项作废。": "Đặt tên và hạn mức cho từng giải. Nhập giá trị quota gốc (số tiền quy đổi hiển thị ngay bên phải). Nếu số người tham gia ít hơn số giải, các giải dư sẽ bị huỷ."
   }
 }
