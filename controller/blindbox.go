@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -234,7 +235,35 @@ func GetBlindBoxRecords(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
-// ===================== 管理端接口（只读） =====================
+// ===================== 管理端接口 =====================
+//
+// 查询接口全部只读。唯一的写入口是「中奖资格屏蔽」：它不碰 blind_box_draws / winners，
+// 只在抽样前收窄候选集，因此不影响结算的幂等性（幂等仍由 draw_date 唯一索引保证）。
+// 手动开奖 / 补发 / 改判历史中奖记录依旧不提供 —— 那类操作会和定时任务抢同一把逻辑锁。
+
+// blindBoxPeriodWindow 当前进行中周期的时间窗口。
+type blindBoxPeriodWindow struct {
+	drawDate    string // 本期将要开奖的期号
+	periodStart int64  // 周期起点（最近一个已越过的开奖时点）
+	nextDrawAt  int64  // 本期开奖时点
+	now         int64
+}
+
+// currentBlindBoxPeriod 计算进行中周期的窗口，口径与定时任务一致。
+func currentBlindBoxPeriod(setting *operation_setting.BlindBoxSetting) blindBoxPeriodWindow {
+	hour, minute, ok := setting.ParseDrawTime()
+	if !ok {
+		hour, minute = 0, 0
+	}
+	now := time.Now()
+	boundary := model.MostRecentDrawBoundary(now, hour, minute)
+	return blindBoxPeriodWindow{
+		drawDate:    model.CurrentBlindBoxDrawDate(now, hour, minute),
+		periodStart: boundary.Unix(),
+		nextDrawAt:  model.NextDrawBoundary(boundary, hour, minute).Unix(),
+		now:         now.Unix(),
+	}
+}
 
 // AdminGetBlindBoxSummary 返回当前生效规则 + 本期实时预览 + 全局统计 + 健康标志。
 //
@@ -242,29 +271,13 @@ func GetBlindBoxRecords(c *gin.Context) {
 // 两者若因写库失败而不一致，管理员看到的必须是"实际生效的"那份。
 func AdminGetBlindBoxSummary(c *gin.Context) {
 	setting := operation_setting.GetBlindBoxSetting()
-
-	hour, minute, ok := setting.ParseDrawTime()
-	if !ok {
-		hour, minute = 0, 0
-	}
-	now := time.Now()
-	boundary := model.MostRecentDrawBoundary(now, hour, minute)
-	periodStart := boundary.Unix()
-	nextDrawAt := model.NextDrawBoundary(boundary, hour, minute).Unix()
-	currentDrawDate := model.CurrentBlindBoxDrawDate(now, hour, minute)
+	win := currentBlindBoxPeriod(setting)
 
 	// 本期实时预览：按当前配置推演今天的奖池，方便开奖前调整参数。
-	previewEntry, previewCount, previewConsume, previewErr := model.GetBlindBoxPeriodPreview(
-		currentDrawDate, periodStart, now.Unix(), int64(setting.ThresholdQuota))
-	previewPool := model.BuildBlindBoxPrizePool(setting, previewConsume)
-	var previewPoolQuota int64
-	for _, p := range previewPool {
-		previewPoolQuota += int64(p.Quota)
-	}
-	// 实际中奖名额受达标人数限制，多余奖项作废。
-	previewWinner := len(previewPool)
-	if previewWinner > previewCount {
-		previewWinner = previewCount
+	// 与「当期明细」共用同一个推演函数，预览与实际开奖口径不会漂移。
+	detail, previewErr := model.GetBlindBoxPeriodDetail(setting, win.drawDate, win.periodStart, win.now)
+	if detail == nil {
+		detail = &model.BlindBoxPeriodDetail{}
 	}
 
 	overview, err := model.GetBlindBoxOverview()
@@ -284,21 +297,24 @@ func AdminGetBlindBoxSummary(c *gin.Context) {
 			"percent_count":   setting.PercentCount,
 		},
 		"period": gin.H{
-			"period_start":      periodStart,
-			"next_draw_at":      nextDrawAt,
-			"current_draw_date": currentDrawDate,
+			"period_start":      win.periodStart,
+			"next_draw_at":      win.nextDrawAt,
+			"current_draw_date": win.drawDate,
 		},
 		"preview": gin.H{
 			// 消费日志关闭时聚合恒为空，前端据 log_consume_enabled 提示，不要误读成"今天没人消费"
 			"available": previewErr == nil,
-			// entry_count 是报名总数，participant_count 是报名且已达标（真正入池）的人数
-			"entry_count":       previewEntry,
-			"participant_count": previewCount,
-			"total_consume":     previewConsume,
-			"prize_count":       len(previewPool),
-			"winner_count":      previewWinner,
-			"total_prize_quota": previewPoolQuota,
-			"prizes":            previewPool,
+			// entry_count 是报名总数，participant_count 是报名且已达标且未被屏蔽（真正入池）的人数
+			"entry_count":       detail.EntryCount,
+			"qualified_count":   detail.QualifiedCount,
+			"blocked_count":     detail.BlockedCount,
+			"participant_count": detail.EffectiveCount,
+			"total_consume":     detail.TotalConsume,
+			"blocked_consume":   detail.BlockedConsume,
+			"prize_count":       detail.PrizeCount,
+			"winner_count":      detail.WinnerCount,
+			"total_prize_quota": detail.TotalPrizeQuota,
+			"prizes":            detail.Prizes,
 		},
 		"overview": overview,
 		"health": gin.H{
@@ -342,6 +358,7 @@ func AdminGetBlindBoxDraws(c *gin.Context) {
 			"period_end":          d.PeriodEnd,
 			"entry_count":         d.EntryCount,
 			"participant_count":   d.ParticipantCount,
+			"blocked_count":       d.BlockedCount,
 			"winner_count":        d.WinnerCount,
 			"total_consume_quota": d.TotalConsumeQuota,
 			"total_prize_quota":   d.TotalPrizeQuota,
@@ -371,6 +388,222 @@ func AdminGetBlindBoxWinners(c *gin.Context) {
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(winners)
+	common.ApiSuccess(c, pageInfo)
+}
+
+// AdminGetBlindBoxCurrentPeriod 返回「当期（尚未开奖）」的实时推演：周期窗口、入池统计、
+// 奖池预览，以及分页后的参与用户明细（本日消耗 + 中奖概率 + 屏蔽状态）。
+//
+// 概率、奖池、入池人数全部由 model.GetBlindBoxPeriodDetail 一次算出，与结算同源；
+// keyword 只在分页前对列表做过滤，不参与概率计算——否则搜一个人就会看到被放大的概率。
+func AdminGetBlindBoxCurrentPeriod(c *gin.Context) {
+	setting := operation_setting.GetBlindBoxSetting()
+	win := currentBlindBoxPeriod(setting)
+
+	detail, err := model.GetBlindBoxPeriodDetail(setting, win.drawDate, win.periodStart, win.now)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	items := detail.Participants
+	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+		filtered := make([]model.BlindBoxPeriodParticipant, 0, len(items))
+		for _, p := range items {
+			if strconv.Itoa(p.UserId) == keyword ||
+				strings.Contains(strings.ToLower(p.Username), strings.ToLower(keyword)) {
+				filtered = append(filtered, p)
+			}
+		}
+		items = filtered
+	}
+
+	// 明细是两个库拼出来的，只能内存分页。GetPageQuery 只夹上界，page_size 传负数会
+	// 原样透传，切片下标必须自己兜底，否则一个构造的请求就能把接口打 panic。
+	page, size := blindBoxPageWindow(c)
+	start := (page - 1) * size
+	if start > len(items) {
+		start = len(items)
+	}
+	end := start + size
+	if end > len(items) {
+		end = len(items)
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"period": gin.H{
+			"draw_date":    win.drawDate,
+			"period_start": win.periodStart,
+			"next_draw_at": win.nextDrawAt,
+			"now":          win.now,
+		},
+		"stat": gin.H{
+			"entry_count":       detail.EntryCount,
+			"qualified_count":   detail.QualifiedCount,
+			"blocked_count":     detail.BlockedCount,
+			"participant_count": detail.EffectiveCount,
+			"total_consume":     detail.TotalConsume,
+			"blocked_consume":   detail.BlockedConsume,
+			"prize_count":       detail.PrizeCount,
+			"winner_count":      detail.WinnerCount,
+			"total_prize_quota": detail.TotalPrizeQuota,
+			"prizes":            detail.Prizes,
+		},
+		"participants": gin.H{
+			"page":      page,
+			"page_size": size,
+			"total":     len(items),
+			"items":     items[start:end],
+		},
+		"health": gin.H{
+			"log_consume_enabled": common.LogConsumeEnabled,
+			"is_master_node":      common.IsMasterNode,
+		},
+	})
+}
+
+// blindBoxPageWindow 返回夹紧后的页码与页大小。GetPageQuery 不夹下界，内存分页必须自己兜底。
+func blindBoxPageWindow(c *gin.Context) (page, size int) {
+	pageInfo := common.GetPageQuery(c)
+	page, size = pageInfo.GetPage(), pageInfo.GetPageSize()
+	if page < 1 {
+		page = 1
+	}
+	if size <= 0 {
+		size = common.ItemsPerPage
+	}
+	return page, size
+}
+
+// blindBoxBlockRequest 新增屏蔽的请求体。
+type blindBoxBlockRequest struct {
+	UserId   int    `json:"user_id"`
+	Scope    string `json:"scope"`     // period | permanent
+	DrawDate string `json:"draw_date"` // scope=period 时可选，缺省为当期
+	Reason   string `json:"reason"`
+}
+
+// AdminCreateBlindBoxBlock 屏蔽某个用户的中奖资格。
+//
+// 只影响"能不能中奖"，不影响报名、消耗统计与其它任何功能，因此这里不做任何
+// 用户状态改动，只写一条屏蔽记录。已结算的期次一律拒绝：那等于事后改判中奖结果。
+func AdminCreateBlindBoxBlock(c *gin.Context) {
+	var req blindBoxBlockRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorMsg(c, "请求参数解析失败")
+		return
+	}
+	if req.UserId <= 0 {
+		common.ApiErrorMsg(c, "用户 ID 不合法")
+		return
+	}
+
+	setting := operation_setting.GetBlindBoxSetting()
+	block := &model.BlindBoxBlock{
+		UserId:    req.UserId,
+		Reason:    strings.TrimSpace(req.Reason),
+		CreatedAt: common.GetTimestamp(),
+	}
+
+	switch strings.TrimSpace(req.Scope) {
+	case model.BlindBoxBlockScopePermanent:
+		block.Scope = model.BlindBoxBlockScopePermanent
+		block.DrawDate = "" // 永久屏蔽用空串占位，见 model.BlindBoxBlock 注释
+	case model.BlindBoxBlockScopePeriod, "":
+		block.Scope = model.BlindBoxBlockScopePeriod
+		drawDate := strings.TrimSpace(req.DrawDate)
+		if drawDate == "" {
+			drawDate = currentBlindBoxPeriod(setting).drawDate
+		}
+		// 期号必须是合法日期：格式错的期号永远匹配不上任何一期，屏蔽会静默失效，
+		// 管理员却在名单里看到一条"已屏蔽"，是最难排查的那类问题。
+		if _, err := time.Parse("2006-01-02", drawDate); err != nil {
+			common.ApiErrorMsg(c, "期号格式必须为 YYYY-MM-DD")
+			return
+		}
+		settled, err := model.GetSettledBlindBoxDates([]string{drawDate})
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if _, done := settled[drawDate]; done {
+			common.ApiErrorMsg(c, "该期已开奖，不能再屏蔽")
+			return
+		}
+		block.DrawDate = drawDate
+	default:
+		common.ApiErrorMsg(c, "屏蔽范围仅支持 period 或 permanent")
+		return
+	}
+
+	user, err := model.GetUserById(req.UserId, false)
+	if err != nil || user == nil {
+		common.ApiErrorMsg(c, "用户不存在")
+		return
+	}
+	block.Username = user.Username
+	block.OperatorId = c.GetInt("id")
+	block.OperatorName = c.GetString("username")
+
+	created, err := model.CreateBlindBoxBlock(block)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !created {
+		common.ApiErrorMsg(c, "该用户已在屏蔽名单中")
+		return
+	}
+	common.SysLog(fmt.Sprintf("blindbox: block added scope=%s draw_date=%s user=%d(%s) by %d(%s) reason=%s",
+		block.Scope, block.DrawDate, block.UserId, block.Username,
+		block.OperatorId, block.OperatorName, block.Reason))
+	common.ApiSuccess(c, block)
+}
+
+// AdminDeleteBlindBoxBlock 解除屏蔽（删行）。永久屏蔽是"行在即生效"的开关，删掉即恢复。
+func AdminDeleteBlindBoxBlock(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorMsg(c, "屏蔽记录 ID 不合法")
+		return
+	}
+	block, err := model.GetBlindBoxBlockById(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if block == nil {
+		common.ApiErrorMsg(c, "屏蔽记录不存在")
+		return
+	}
+	deleted, err := model.DeleteBlindBoxBlock(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !deleted {
+		common.ApiErrorMsg(c, "屏蔽记录不存在")
+		return
+	}
+	common.SysLog(fmt.Sprintf("blindbox: block removed scope=%s draw_date=%s user=%d(%s) by %d(%s)",
+		block.Scope, block.DrawDate, block.UserId, block.Username,
+		c.GetInt("id"), c.GetString("username")))
+	common.ApiSuccess(c, nil)
+}
+
+// AdminGetBlindBoxBlocks 分页返回屏蔽名单，支持按范围 / 用户筛选。
+func AdminGetBlindBoxBlocks(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	blocks, total, err := model.SearchBlindBoxBlocks(
+		strings.TrimSpace(c.Query("scope")),
+		strings.TrimSpace(c.Query("keyword")),
+		pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(blocks)
 	common.ApiSuccess(c, pageInfo)
 }
 

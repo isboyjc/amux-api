@@ -223,6 +223,15 @@ const BlindBoxRuleCard = ({ summary, loading, t }) => {
                 label={t('预计奖池总额')}
                 value={renderQuota(preview.total_prize_quota)}
               />
+              {preview.blocked_count > 0 && (
+                <PreviewItem
+                  label={t('已屏蔽中奖资格')}
+                  value={t('{{n}} 人（消耗 {{quota}} 不计入奖池）', {
+                    n: preview.blocked_count,
+                    quota: renderQuota(preview.blocked_consume),
+                  })}
+                />
+              )}
             </div>
           </div>
         </Col>

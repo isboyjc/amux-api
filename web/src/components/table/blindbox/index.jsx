@@ -34,6 +34,9 @@ import BlindBoxRuleCard from './BlindBoxRuleCard';
 import BlindBoxOverview from './BlindBoxOverview';
 import BlindBoxDrawsTable from './BlindBoxDrawsTable';
 import BlindBoxWinnersTable from './BlindBoxWinnersTable';
+import BlindBoxBlocksTable, {
+  BLOCK_SCOPE_OPTIONS,
+} from './BlindBoxBlocksTable';
 import { WINNER_STATUS_OPTIONS } from './statusTag';
 import { useBlindBoxAdmin } from '../../../hooks/blindbox/useBlindBoxAdmin';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
@@ -44,6 +47,7 @@ const { Title } = Typography;
 const TAB_SUMMARY = 'summary';
 const TAB_DRAWS = 'draws';
 const TAB_WINNERS = 'winners';
+const TAB_BLOCKS = 'blocks';
 
 const BlindBoxAdminPage = () => {
   const data = useBlindBoxAdmin();
@@ -72,6 +76,17 @@ const BlindBoxAdminPage = () => {
     applyWinnerFilters,
     handleWinnersPageChange,
     handleWinnersPageSizeChange,
+    blocks,
+    blocksLoading,
+    blocksPage,
+    blocksPageSize,
+    blocksTotal,
+    blockFilters,
+    applyBlockFilters,
+    handleBlocksPageChange,
+    handleBlocksPageSizeChange,
+    unblockUser,
+    loadSummary,
     refreshAll,
   } = data;
 
@@ -97,11 +112,42 @@ const BlindBoxAdminPage = () => {
       isMobile,
       t,
     });
+  } else if (tab === TAB_BLOCKS) {
+    pagination = createCardProPagination({
+      currentPage: blocksPage,
+      pageSize: blocksPageSize,
+      total: blocksTotal,
+      onPageChange: handleBlocksPageChange,
+      onPageSizeChange: handleBlocksPageSizeChange,
+      isMobile,
+      t,
+    });
   }
 
   const renderContent = () => {
     if (tab === TAB_DRAWS) {
-      return <BlindBoxDrawsTable draws={draws} loading={drawsLoading} t={t} />;
+      return (
+        <BlindBoxDrawsTable
+          draws={draws}
+          loading={drawsLoading}
+          summary={summary}
+          /* 只按页码判断，不看 summaryLoading：屏蔽用户会触发 summary 重新加载，
+             若此时把当期行摘掉，展开中的参与明细会被卸载重建，翻页与搜索状态全丢 */
+          showCurrent={drawsPage === 1}
+          onPeriodChanged={loadSummary}
+          t={t}
+        />
+      );
+    }
+    if (tab === TAB_BLOCKS) {
+      return (
+        <BlindBoxBlocksTable
+          blocks={blocks}
+          loading={blocksLoading}
+          onUnblock={unblockUser}
+          t={t}
+        />
+      );
     }
     if (tab === TAB_WINNERS) {
       return (
@@ -136,6 +182,7 @@ const BlindBoxAdminPage = () => {
           <TabPane tab={t('规则统计')} itemKey={TAB_SUMMARY} />
           <TabPane tab={t('开奖记录')} itemKey={TAB_DRAWS} />
           <TabPane tab={t('中奖明细')} itemKey={TAB_WINNERS} />
+          <TabPane tab={t('屏蔽名单')} itemKey={TAB_BLOCKS} />
         </Tabs>
       }
       actionsArea={
@@ -179,6 +226,34 @@ const BlindBoxAdminPage = () => {
               <Button
                 theme='solid'
                 onClick={() => applyWinnerFilters({ keyword: keywordDraft })}
+              >
+                {t('查询')}
+              </Button>
+            </Space>
+          )}
+
+          {tab === TAB_BLOCKS && (
+            <Space wrap>
+              <Input
+                prefix={<IconSearch />}
+                placeholder={t('用户名或用户 ID')}
+                value={keywordDraft}
+                onChange={setKeywordDraft}
+                onEnterPress={() =>
+                  applyBlockFilters({ keyword: keywordDraft })
+                }
+                style={{ width: 200 }}
+                showClear
+              />
+              <Select
+                value={blockFilters.scope}
+                onChange={(v) => applyBlockFilters({ scope: v })}
+                optionList={BLOCK_SCOPE_OPTIONS(t)}
+                style={{ width: 140 }}
+              />
+              <Button
+                theme='solid'
+                onClick={() => applyBlockFilters({ keyword: keywordDraft })}
               >
                 {t('查询')}
               </Button>

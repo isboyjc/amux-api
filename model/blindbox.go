@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"sort"
 	"strconv"
 	"time"
 
@@ -40,8 +41,9 @@ type BlindBoxDraw struct {
 	DrawDate          string `json:"draw_date" gorm:"type:varchar(10);not null;uniqueIndex:idx_bbd_date"` // 开奖边界日期 YYYY-MM-DD
 	PeriodStart       int64  `json:"period_start" gorm:"bigint"`                                          // 周期起始（Unix 秒）
 	PeriodEnd         int64  `json:"period_end" gorm:"bigint"`                                            // 周期结束/开奖时点（Unix 秒）
-	EntryCount        int    `json:"entry_count" gorm:"default:0"`       // 本期报名人数
-	ParticipantCount  int    `json:"participant_count" gorm:"default:0"` // 报名且消耗达标、真正进入奖池的人数
+	EntryCount        int    `json:"entry_count" gorm:"default:0"`                                        // 本期报名人数
+	ParticipantCount  int    `json:"participant_count" gorm:"default:0"`                                  // 报名且消耗达标、真正进入奖池的人数
+	BlockedCount      int    `json:"blocked_count" gorm:"default:0"`                                      // 达标但被屏蔽中奖资格、未进入奖池的人数
 	WinnerCount       int    `json:"winner_count" gorm:"default:0"`
 	TotalConsumeQuota int64  `json:"total_consume_quota" gorm:"default:0"`
 	TotalPrizeQuota   int64  `json:"total_prize_quota" gorm:"default:0"`
@@ -89,6 +91,37 @@ type BlindBoxEntry struct {
 
 func (BlindBoxEntry) TableName() string {
 	return "blind_box_entries"
+}
+
+// 屏蔽范围。
+const (
+	BlindBoxBlockScopePeriod    = "period"    // 只屏蔽某一期
+	BlindBoxBlockScopePermanent = "permanent" // 永久屏蔽，开关语义：行在即生效
+)
+
+// BlindBoxBlock 中奖资格屏蔽记录（风控 / 违规惩罚用）。
+//
+// 语义边界必须清楚：它只决定「能不能中奖」，不影响用户报名、消耗统计、开盒或任何
+// 其它功能。被屏蔽者照常参与、照常看到"等待开奖"，开奖后表现为未中奖，与真正没抽中
+// 无法区分——这是风控手段，不是给中奖结果做手脚（已结算的期次一律不允许再屏蔽）。
+//
+// 永久屏蔽用 draw_date 空串占位，不用 NULL：MySQL/PostgreSQL 的唯一索引不约束
+// NULL，用 NULL 会让同一个用户被重复写入多行永久屏蔽。
+// 解除屏蔽直接删行（永久屏蔽是"开启才生效"的开关），操作留痕走 SysLog。
+type BlindBoxBlock struct {
+	Id           int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	Scope        string `json:"scope" gorm:"type:varchar(16);not null;uniqueIndex:idx_bbb_scope_date_user,priority:1"`
+	DrawDate     string `json:"draw_date" gorm:"type:varchar(10);default:'';uniqueIndex:idx_bbb_scope_date_user,priority:2"`
+	UserId       int    `json:"user_id" gorm:"not null;uniqueIndex:idx_bbb_scope_date_user,priority:3;index:idx_bbb_user"`
+	Username     string `json:"username" gorm:"type:varchar(64);default:''"`
+	Reason       string `json:"reason" gorm:"type:varchar(255);default:''"`
+	OperatorId   int    `json:"operator_id" gorm:"default:0"`
+	OperatorName string `json:"operator_name" gorm:"type:varchar(64);default:''"`
+	CreatedAt    int64  `json:"created_at" gorm:"bigint"`
+}
+
+func (BlindBoxBlock) TableName() string {
+	return "blind_box_blocks"
 }
 
 // blindBoxParticipant 达标参与者聚合结果。
@@ -185,7 +218,7 @@ func GetBlindBoxEntryUserIds(drawDate string) (map[int]struct{}, error) {
 // getBlindBoxParticipants 聚合 [periodStart, periodEnd) 内消耗达标的用户。
 // 读 LOG_DB.logs，type=消费，按 user_id 分组，HAVING SUM(quota) >= threshold。
 //
-// 必须只按 user_id 分组：logs.username 是行内冗余字段（且 default:''），用户改名或
+// 必须只按 user_id 分组：logs.username 是行内冗余字段（且 default:”），用户改名或
 // 历史行缺名会让同一 user_id 裂成多组 —— 轻则消耗被拆分导致达标用户漏掉，重则同一人
 // 被抽中两次，撞上 (draw_date, user_id) 唯一索引让整期结算回滚。
 // MAX(username) 在 SQLite/MySQL/PostgreSQL 上语义一致。
@@ -198,6 +231,50 @@ func getBlindBoxParticipants(periodStart, periodEnd, threshold int64) ([]blindBo
 		Having("SUM(quota) >= ?", threshold).
 		Find(&rows).Error
 	return rows, err
+}
+
+// GetBlindBoxEntries 返回某一期的全部报名记录，按报名时间正序。
+// 管理端「当期参与明细」的主线：明细以报名为准，消耗再从日志库补齐。
+func GetBlindBoxEntries(drawDate string) ([]BlindBoxEntry, error) {
+	var entries []BlindBoxEntry
+	err := DB.Where("draw_date = ?", drawDate).Order("created_at ASC, id ASC").Find(&entries).Error
+	return entries, err
+}
+
+// blindBoxConsumeChunkSize 单次 IN 查询携带的用户数上限。
+const blindBoxConsumeChunkSize = 500
+
+// sumBlindBoxConsumeByUsers 取指定用户在 [periodStart, periodEnd) 内的消耗合计。
+//
+// 刻意按 user_id IN 分块查询，而不是像结算那样对整个周期做一次全量 GROUP BY：
+// 结算有 HAVING SUM(quota) >= threshold 帮着削掉绝大多数行，明细页要的是「每个报名者
+// 的真实消耗（含门槛调高后已不达标的）」，没有 HAVING 可用，全量聚合会把当天所有消费
+// 用户都捞回内存。logs.user_id 有索引，按报名名单分块反查的代价只与报名人数相关。
+func sumBlindBoxConsumeByUsers(periodStart, periodEnd int64, userIds []int) (map[int]int64, error) {
+	res := make(map[int]int64, len(userIds))
+	for start := 0; start < len(userIds); start += blindBoxConsumeChunkSize {
+		end := start + blindBoxConsumeChunkSize
+		if end > len(userIds) {
+			end = len(userIds)
+		}
+		var rows []struct {
+			UserId int   `gorm:"column:user_id"`
+			Quota  int64 `gorm:"column:quota"`
+		}
+		err := LOG_DB.Table("logs").
+			Select("user_id, SUM(quota) as quota").
+			Where("type = ? AND created_at >= ? AND created_at < ? AND user_id IN ?",
+				LogTypeConsume, periodStart, periodEnd, userIds[start:end]).
+			Group("user_id").
+			Find(&rows).Error
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			res[r.UserId] = r.Quota
+		}
+	}
+	return res, nil
 }
 
 // GetUserBlindBoxConsume 返回某用户在 [start, end) 内的消费额度合计（用于实时进度展示）。
@@ -476,34 +553,241 @@ func GetBlindBoxOverview() (*BlindBoxOverview, error) {
 	return ov, nil
 }
 
-// GetBlindBoxPeriodPreview 统计进行中周期 [periodStart, now) 的入池情况，
-// 供管理员在开奖前预判今日奖池规模。口径与结算完全一致：报名 ∩ 达标。
-// entryCount 为本期报名总人数（含尚未达标者），便于区分"没人报名"和"报了名没花够"。
-func GetBlindBoxPeriodPreview(drawDate string, periodStart, now, threshold int64) (entryCount, count int, totalConsume int64, err error) {
-	entryIds, err := GetBlindBoxEntryUserIds(drawDate)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	entryCount = len(entryIds)
-	if entryCount == 0 {
-		return 0, 0, 0, nil
-	}
-	qualified, err := getBlindBoxParticipants(periodStart, now, threshold)
-	if err != nil {
-		return entryCount, 0, 0, err
-	}
-	for _, p := range qualified {
-		if _, ok := entryIds[p.UserId]; ok {
-			count++
-			totalConsume += p.Quota
+// ===================== 中奖资格屏蔽 =====================
+
+// CreateBlindBoxBlock 新增一条屏蔽记录。已存在（唯一索引冲突）返回 created=false。
+func CreateBlindBoxBlock(block *BlindBoxBlock) (created bool, err error) {
+	if err := DB.Create(block).Error; err != nil {
+		// 与报名同理：不同驱动的冲突错误码不统一，回查一次更可靠。
+		if exists, checkErr := blindBoxBlockExists(block.Scope, block.DrawDate, block.UserId); checkErr == nil && exists {
+			return false, nil
 		}
+		return false, err
 	}
-	return entryCount, count, totalConsume, nil
+	return true, nil
 }
 
-// BuildBlindBoxPrizePool 导出给管理端预览奖池构成（与结算共用同一实现，保证一致）。
-func BuildBlindBoxPrizePool(setting *operation_setting.BlindBoxSetting, totalConsume int64) []operation_setting.BlindBoxPrize {
-	return buildBlindBoxPrizePool(setting, totalConsume)
+func blindBoxBlockExists(scope, drawDate string, userId int) (bool, error) {
+	var count int64
+	err := DB.Model(&BlindBoxBlock{}).
+		Where("scope = ? AND draw_date = ? AND user_id = ?", scope, drawDate, userId).
+		Count(&count).Error
+	return count > 0, err
+}
+
+// GetBlindBoxBlockById 按主键取一条屏蔽记录，不存在返回 nil。
+func GetBlindBoxBlockById(id int) (*BlindBoxBlock, error) {
+	var b BlindBoxBlock
+	err := DB.Where("id = ?", id).First(&b).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
+
+// DeleteBlindBoxBlock 解除屏蔽（删行）。返回是否真的删掉了一行。
+func DeleteBlindBoxBlock(id int) (bool, error) {
+	res := DB.Where("id = ?", id).Delete(&BlindBoxBlock{})
+	return res.RowsAffected > 0, res.Error
+}
+
+// GetBlindBoxBlockedUserIds 返回 drawDate 这一期不具备中奖资格的用户集合
+// = 永久屏蔽 ∪ 本期屏蔽。结算与管理端预览共用，保证两边口径一致。
+func GetBlindBoxBlockedUserIds(drawDate string) (map[int]struct{}, error) {
+	var ids []int
+	err := DB.Model(&BlindBoxBlock{}).
+		Where("scope = ? OR (scope = ? AND draw_date = ?)",
+			BlindBoxBlockScopePermanent, BlindBoxBlockScopePeriod, drawDate).
+		Pluck("user_id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set, nil
+}
+
+// getBlindBoxPeriodBlocks 取某一期生效的屏蔽记录，按 scope 分别建索引，
+// 供明细页展示屏蔽原因并直接拿到可解除的记录 id。
+func getBlindBoxPeriodBlocks(drawDate string) (period, permanent map[int]BlindBoxBlock, err error) {
+	var rows []BlindBoxBlock
+	err = DB.Where("scope = ? OR (scope = ? AND draw_date = ?)",
+		BlindBoxBlockScopePermanent, BlindBoxBlockScopePeriod, drawDate).Find(&rows).Error
+	if err != nil {
+		return nil, nil, err
+	}
+	period = make(map[int]BlindBoxBlock)
+	permanent = make(map[int]BlindBoxBlock)
+	for _, r := range rows {
+		if r.Scope == BlindBoxBlockScopePermanent {
+			permanent[r.UserId] = r
+		} else {
+			period[r.UserId] = r
+		}
+	}
+	return period, permanent, nil
+}
+
+// SearchBlindBoxBlocks 分页返回屏蔽名单，支持按范围 / 用户（ID 或用户名）筛选。
+func SearchBlindBoxBlocks(scope, keyword string, startIdx, num int) ([]BlindBoxBlock, int64, error) {
+	tx := DB.Model(&BlindBoxBlock{})
+	if scope != "" {
+		tx = tx.Where("scope = ?", scope)
+	}
+	if keyword != "" {
+		if uid, err := strconv.Atoi(keyword); err == nil {
+			tx = tx.Where("user_id = ?", uid)
+		} else {
+			tx = tx.Where("username LIKE ?", "%"+keyword+"%")
+		}
+	}
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []BlindBoxBlock
+	err := tx.Order("id DESC").Limit(num).Offset(startIdx).Find(&rows).Error
+	return rows, total, err
+}
+
+// ===================== 当期（未开奖）实时明细 =====================
+
+// BlindBoxPeriodParticipant 当期单个报名者的实时状态。
+type BlindBoxPeriodParticipant struct {
+	UserId       int    `json:"user_id"`
+	Username     string `json:"username"`
+	JoinedAt     int64  `json:"joined_at"`
+	ConsumeQuota int64  `json:"consume_quota"`
+	Qualified    bool   `json:"qualified"` // 按当前门槛是否达标
+	Weight       int64  `json:"weight"`    // 加权抽样的权重，被屏蔽者为 0
+
+	// FirstProb 首抽中奖概率 = weight / 有效总权重，与 BlindBoxWinner.WinProbability 同口径。
+	FirstProb float64 `json:"first_prob"`
+	// AnyProb 至少中一次的估算值。无放回加权抽样没有闭式解，用 1-(1-p)^k 近似，仅供参考。
+	AnyProb float64 `json:"any_prob"`
+
+	BlockedPeriod    bool   `json:"blocked_period"`
+	BlockedPermanent bool   `json:"blocked_permanent"`
+	PeriodBlockId    int    `json:"period_block_id"`
+	PermanentBlockId int    `json:"permanent_block_id"`
+	BlockReason      string `json:"block_reason"`
+}
+
+// BlindBoxPeriodDetail 当期实时推演结果。口径与 SettleBlindBoxDraw 完全一致：
+// 入池 = 报名 ∩ 达标 ∩ 未被屏蔽，被屏蔽者连同其消耗一并移出奖池计算。
+type BlindBoxPeriodDetail struct {
+	Participants    []BlindBoxPeriodParticipant       `json:"participants"`
+	EntryCount      int                               `json:"entry_count"`       // 报名总人数
+	QualifiedCount  int                               `json:"qualified_count"`   // 报名且达标
+	BlockedCount    int                               `json:"blocked_count"`     // 其中被屏蔽的人数
+	EffectiveCount  int                               `json:"effective_count"`   // 真正进入奖池的人数
+	TotalConsume    int64                             `json:"total_consume"`     // 入池者消耗合计（奖池计算口径）
+	BlockedConsume  int64                             `json:"blocked_consume"`   // 被屏蔽者消耗合计（不计入奖池）
+	PrizeCount      int                               `json:"prize_count"`       // 奖池奖项数
+	WinnerCount     int                               `json:"winner_count"`      // 实际可开出的中奖名额
+	TotalPrizeQuota int64                             `json:"total_prize_quota"` // 奖池总额
+	Prizes          []operation_setting.BlindBoxPrize `json:"prizes"`
+}
+
+// GetBlindBoxPeriodDetail 推演 [periodStart, periodEnd) 这一期的实时入池与中奖概率。
+//
+// 管理端「当期明细」和「规则统计」的预览共用这一个函数：两处若各算一遍，
+// 一旦屏蔽/门槛口径改动就会出现"预览奖池"和"实际开奖"对不上的情况。
+func GetBlindBoxPeriodDetail(setting *operation_setting.BlindBoxSetting, drawDate string, periodStart, periodEnd int64) (*BlindBoxPeriodDetail, error) {
+	detail := &BlindBoxPeriodDetail{Participants: []BlindBoxPeriodParticipant{}}
+
+	entries, err := GetBlindBoxEntries(drawDate)
+	if err != nil {
+		return nil, err
+	}
+	detail.EntryCount = len(entries)
+	if len(entries) == 0 {
+		return detail, nil
+	}
+
+	userIds := make([]int, 0, len(entries))
+	for _, e := range entries {
+		userIds = append(userIds, e.UserId)
+	}
+	// 日志库/屏蔽表查不动时仍把已知的 entry_count 带回去：调用方据 err 标记数据不可用，
+	// 但"本期有多少人报名"是主库里的确定事实，不该被一次日志库故障一起清零。
+	consume, err := sumBlindBoxConsumeByUsers(periodStart, periodEnd, userIds)
+	if err != nil {
+		return detail, err
+	}
+	periodBlocks, permanentBlocks, err := getBlindBoxPeriodBlocks(drawDate)
+	if err != nil {
+		return detail, err
+	}
+
+	threshold := int64(setting.ThresholdQuota)
+	participants := make([]BlindBoxPeriodParticipant, 0, len(entries))
+	var totalWeight int64
+	for _, e := range entries {
+		p := BlindBoxPeriodParticipant{
+			UserId:       e.UserId,
+			Username:     e.Username,
+			JoinedAt:     e.CreatedAt,
+			ConsumeQuota: consume[e.UserId],
+		}
+		p.Qualified = p.ConsumeQuota >= threshold
+		if b, ok := periodBlocks[e.UserId]; ok {
+			p.BlockedPeriod, p.PeriodBlockId, p.BlockReason = true, b.Id, b.Reason
+		}
+		if b, ok := permanentBlocks[e.UserId]; ok {
+			p.BlockedPermanent, p.PermanentBlockId = true, b.Id
+			if p.BlockReason == "" {
+				p.BlockReason = b.Reason
+			}
+		}
+		blocked := p.BlockedPeriod || p.BlockedPermanent
+		if p.Qualified {
+			detail.QualifiedCount++
+			if blocked {
+				detail.BlockedCount++
+				detail.BlockedConsume += p.ConsumeQuota
+			} else {
+				detail.EffectiveCount++
+				detail.TotalConsume += p.ConsumeQuota
+				p.Weight = blindBoxWeight(p.ConsumeQuota)
+				totalWeight += p.Weight
+			}
+		}
+		// 未达标者即便被屏蔽也不计入 BlockedCount：该字段统计的是"本来能中、被拦下"的人数
+		participants = append(participants, p)
+	}
+
+	// 奖池只按有效入池者的消耗构建，与结算一致
+	detail.Prizes = buildBlindBoxPrizePool(setting, detail.TotalConsume)
+	detail.PrizeCount = len(detail.Prizes)
+	for _, pz := range detail.Prizes {
+		detail.TotalPrizeQuota += int64(pz.Quota)
+	}
+	detail.WinnerCount = detail.PrizeCount
+	if detail.WinnerCount > detail.EffectiveCount {
+		detail.WinnerCount = detail.EffectiveCount
+	}
+
+	// 概率必须在剔除屏蔽者之后再算：屏蔽的直接效果就是其余人的概率同步上浮。
+	for i := range participants {
+		if participants[i].Weight <= 0 || totalWeight <= 0 || detail.WinnerCount <= 0 {
+			continue
+		}
+		participants[i].FirstProb = float64(participants[i].Weight) / float64(totalWeight)
+		participants[i].AnyProb = 1 - math.Pow(1-participants[i].FirstProb, float64(detail.WinnerCount))
+	}
+
+	// 按消耗降序，运营最关心的大额用户排在最前
+	sort.SliceStable(participants, func(i, j int) bool {
+		return participants[i].ConsumeQuota > participants[j].ConsumeQuota
+	})
+	detail.Participants = participants
+	return detail, nil
 }
 
 // blindBoxWeight 由消耗额度换算权重 = max(1, round(美元))，保证达标者权重恒 ≥ 1。
@@ -666,17 +950,41 @@ func SettleBlindBoxDraw(drawDate string, periodStart, periodEnd, expireAt int64)
 		}
 	}
 
+	// 中奖资格屏蔽（风控 / 违规惩罚）：本期屏蔽 ∪ 永久屏蔽的用户整个移出奖池。
+	// 连同其消耗一并剔除，而不是只把人拿掉：percent 模式下奖池 = 总消耗 × 比例，
+	// 保留被屏蔽者的消耗等于用一笔不可能中奖的消耗凭空放大其他人分的奖池。
+	// 屏蔽只影响中奖资格，报名与消耗统计一律不受影响。
+	blockedCount := 0
+	if len(participants) > 0 {
+		blocked, bErr := GetBlindBoxBlockedUserIds(drawDate)
+		if bErr != nil {
+			return bErr
+		}
+		if len(blocked) > 0 {
+			kept := make([]blindBoxParticipant, 0, len(participants))
+			for _, p := range participants {
+				if _, ok := blocked[p.UserId]; ok {
+					blockedCount++
+					continue
+				}
+				kept = append(kept, p)
+			}
+			participants = kept
+		}
+	}
+
 	// 无人报名或报名者全部未达标 → 记一条空期（entry_count 仍要留档，便于运营判断是
 	// 「没人报名」还是「报了名但没人花够钱」）。
 	if len(participants) == 0 {
 		empty := &BlindBoxDraw{
-			DrawDate:    drawDate,
-			PeriodStart: periodStart,
-			PeriodEnd:   periodEnd,
-			EntryCount:  entryCount,
-			PoolMode:    setting.PoolMode,
-			Status:      BlindBoxDrawStatusEmpty,
-			CreatedAt:   now,
+			DrawDate:     drawDate,
+			PeriodStart:  periodStart,
+			PeriodEnd:    periodEnd,
+			EntryCount:   entryCount,
+			BlockedCount: blockedCount,
+			PoolMode:     setting.PoolMode,
+			Status:       BlindBoxDrawStatusEmpty,
+			CreatedAt:    now,
 		}
 		if err := DB.Create(empty).Error; err != nil {
 			return settleErrIfNotConflict(drawDate, err)
@@ -707,6 +1015,7 @@ func SettleBlindBoxDraw(drawDate string, periodStart, periodEnd, expireAt int64)
 			PeriodEnd:         periodEnd,
 			EntryCount:        entryCount,
 			ParticipantCount:  len(participants),
+			BlockedCount:      blockedCount,
 			TotalConsumeQuota: totalConsume,
 			PoolMode:          setting.PoolMode,
 			Status:            BlindBoxDrawStatusEmpty,
@@ -749,6 +1058,7 @@ func SettleBlindBoxDraw(drawDate string, periodStart, periodEnd, expireAt int64)
 		PeriodEnd:         periodEnd,
 		EntryCount:        entryCount,
 		ParticipantCount:  len(participants),
+		BlockedCount:      blockedCount,
 		WinnerCount:       len(winners),
 		TotalConsumeQuota: totalConsume,
 		TotalPrizeQuota:   totalPrize,

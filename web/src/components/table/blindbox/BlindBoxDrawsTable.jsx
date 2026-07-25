@@ -33,6 +33,7 @@ import {
   timestamp2string,
 } from '../../../helpers';
 import { renderDrawStatus, renderWinnerStatus } from './statusTag';
+import BlindBoxPeriodParticipants from './BlindBoxPeriodParticipants';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 
 const { Text } = Typography;
@@ -138,16 +139,64 @@ const DrawWinners = ({ drawDate, t }) => {
   );
 };
 
-const BlindBoxDrawsTable = ({ draws, loading, t }) => {
+// 当期（进行中）合成行的行键。真实开奖记录的主键是自增整数，不会撞上。
+const CURRENT_ROW_KEY = '__current__';
+
+/**
+ * 由「规则统计」已经拉到的 summary 拼出当期行，不额外打接口：
+ * summary.preview 就是按当前配置对进行中周期的实时推演，与开奖口径同源。
+ */
+const buildCurrentRow = (summary) => {
+  const period = summary?.period;
+  const preview = summary?.preview;
+  if (!period?.current_draw_date || !preview) return null;
+  return {
+    id: CURRENT_ROW_KEY,
+    __current: true,
+    draw_date: period.current_draw_date,
+    period_start: period.period_start,
+    period_end: period.next_draw_at,
+    entry_count: preview.entry_count,
+    participant_count: preview.participant_count,
+    blocked_count: preview.blocked_count,
+    total_consume_quota: preview.total_consume,
+    pool_mode: summary?.setting?.pool_mode,
+    winner_count: preview.winner_count,
+    total_prize_quota: preview.total_prize_quota,
+    status: 'running',
+  };
+};
+
+const BlindBoxDrawsTable = ({
+  draws,
+  loading,
+  summary,
+  showCurrent,
+  onPeriodChanged,
+  t,
+}) => {
   const isMobile = useIsMobile();
+
+  // 当期行只挂在第 1 页：跟着翻页走会被误读成某一期历史记录
+  const currentRow = showCurrent ? buildCurrentRow(summary) : null;
+  const dataSource = currentRow ? [currentRow, ...draws] : draws;
+
   const columns = [
     {
       title: t('开奖日期'),
       dataIndex: 'draw_date',
       render: (v, r) => (
         <div>
-          <div className='font-medium'>{v}</div>
+          <div className='font-medium'>
+            {v}
+            {r.__current ? (
+              <Tag color='blue' shape='circle' className='ml-2'>
+                {t('当期')}
+              </Tag>
+            ) : null}
+          </div>
           <Text type='tertiary' className='text-xs'>
+            {r.__current ? t('预计开奖') + ' ' : ''}
             {timestamp2string(r.period_end)}
           </Text>
         </div>
@@ -171,6 +220,16 @@ const BlindBoxDrawsTable = ({ draws, loading, t }) => {
       // 参与时已达标，但开奖按整期口径重算；差值即"参与后消耗被退款/重算"的边缘情况
       title: t('入池人数'),
       dataIndex: 'participant_count',
+      render: (v, r) => (
+        <div>
+          <div>{v || 0}</div>
+          {r.blocked_count > 0 ? (
+            <Text type='danger' className='text-xs'>
+              {t('屏蔽 {{n}} 人', { n: r.blocked_count })}
+            </Text>
+          ) : null}
+        </div>
+      ),
     },
     {
       title: t('参与总消耗'),
@@ -203,6 +262,14 @@ const BlindBoxDrawsTable = ({ draws, loading, t }) => {
       title: t('领取情况'),
       dataIndex: 'claim_stat',
       render: (s, r) => {
+        // 当期尚未开奖，没有中奖记录可谈领取；显示的是"预计名额"
+        if (r.__current) {
+          return (
+            <Text type='tertiary' className='text-xs'>
+              {t('待开奖')}
+            </Text>
+          );
+        }
         const total = r.winner_count || 0;
         if (!total) return <Text type='tertiary'>-</Text>;
         const claimed = s?.claimed_count || 0;
@@ -242,7 +309,7 @@ const BlindBoxDrawsTable = ({ draws, loading, t }) => {
   return (
     <Table
       columns={columns}
-      dataSource={draws}
+      dataSource={dataSource}
       loading={loading}
       pagination={false}
       rowKey='id'
@@ -251,11 +318,20 @@ const BlindBoxDrawsTable = ({ draws, loading, t }) => {
          容器右侧会留白撑不满。窄屏才需要横向滚动。 */
       scroll={isMobile ? { x: 'max-content' } : undefined}
       empty={<Empty description={t('暂无开奖记录')} />}
-      // 只有真正开出奖的期次可展开；空期展开是一片空白，没有信息量
-      expandedRowRender={(record) => (
-        <DrawWinners drawDate={record.draw_date} t={t} />
-      )}
-      rowExpandable={(record) => record.winner_count > 0}
+      // 当期展开的是实时参与明细（可屏蔽），历史期展开的是中奖名单存档；
+      // 空期展开是一片空白，没有信息量，所以不给展开
+      expandedRowRender={(record) =>
+        record.__current ? (
+          <BlindBoxPeriodParticipants
+            drawDate={record.draw_date}
+            onChanged={onPeriodChanged}
+            t={t}
+          />
+        ) : (
+          <DrawWinners drawDate={record.draw_date} t={t} />
+        )
+      }
+      rowExpandable={(record) => record.__current || record.winner_count > 0}
     />
   );
 };

@@ -247,13 +247,18 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.GET("/backfill_marketing/status", controller.GetBackfillMarketingStatus)
 		}
 
-		// 盲盒管理（只读）。结算幂等依赖 draw_date 唯一索引，刻意不提供手动开奖/补发接口。
+		// 盲盒管理。查询只读；唯一的写入口是中奖资格屏蔽（风控用，只收窄抽样候选集，
+		// 不触碰开奖结果）。结算幂等依赖 draw_date 唯一索引，刻意不提供手动开奖/补发接口。
 		blindBoxAdminRoute := apiRouter.Group("/blindbox")
 		blindBoxAdminRoute.Use(middleware.AdminAuth())
 		{
 			blindBoxAdminRoute.GET("/summary", controller.AdminGetBlindBoxSummary)
 			blindBoxAdminRoute.GET("/draws", controller.AdminGetBlindBoxDraws)
 			blindBoxAdminRoute.GET("/winners", controller.AdminGetBlindBoxWinners)
+			blindBoxAdminRoute.GET("/period", controller.AdminGetBlindBoxCurrentPeriod)
+			blindBoxAdminRoute.GET("/blocks", controller.AdminGetBlindBoxBlocks)
+			blindBoxAdminRoute.POST("/blocks", controller.AdminCreateBlindBoxBlock)
+			blindBoxAdminRoute.DELETE("/blocks/:id", controller.AdminDeleteBlindBoxBlock)
 		}
 
 		// Custom OAuth provider management

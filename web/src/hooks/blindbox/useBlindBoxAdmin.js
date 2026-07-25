@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API, showError } from '../../helpers';
+import { API, showError, showSuccess } from '../../helpers';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -51,6 +51,13 @@ export const useBlindBoxAdmin = () => {
     status: '',
     keyword: '',
   });
+
+  const [blocks, setBlocks] = useState([]);
+  const [blocksLoading, setBlocksLoading] = useState(false);
+  const [blocksPage, setBlocksPage] = useState(1);
+  const [blocksPageSize, setBlocksPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [blocksTotal, setBlocksTotal] = useState(0);
+  const [blockFilters, setBlockFilters] = useState({ scope: '', keyword: '' });
 
   const loadSummary = useCallback(async () => {
     setSummaryLoading(true);
@@ -118,6 +125,48 @@ export const useBlindBoxAdmin = () => {
     [winnersPage, winnersPageSize, winnerFilters, t],
   );
 
+  const loadBlocks = useCallback(
+    async (page = blocksPage, size = blocksPageSize, filters) => {
+      const f = filters || blockFilters;
+      setBlocksLoading(true);
+      try {
+        const params = new URLSearchParams({ p: page, page_size: size });
+        if (f.scope) params.set('scope', f.scope);
+        if (f.keyword) params.set('keyword', f.keyword);
+        const res = await API.get(`/api/blindbox/blocks?${params.toString()}`);
+        const { success, message, data } = res.data;
+        if (success) {
+          setBlocks(data.items || []);
+          setBlocksTotal(data.total || 0);
+        } else {
+          showError(message || t('获取屏蔽名单失败'));
+        }
+      } catch (e) {
+        showError(t('获取屏蔽名单失败'));
+      } finally {
+        setBlocksLoading(false);
+      }
+    },
+    [blocksPage, blocksPageSize, blockFilters, t],
+  );
+
+  // 解除屏蔽后当期入池人数与奖池都会变，summary 一并刷新
+  const unblockUser = async (blockId) => {
+    try {
+      const res = await API.delete(`/api/blindbox/blocks/${blockId}`);
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('已解除屏蔽'));
+        loadBlocks(blocksPage, blocksPageSize);
+        loadSummary();
+      } else {
+        showError(message || t('解除屏蔽失败'));
+      }
+    } catch (e) {
+      showError(t('解除屏蔽失败'));
+    }
+  };
+
   const handleDrawsPageChange = (page) => {
     setDrawsPage(page);
     loadDraws(page, drawsPageSize);
@@ -145,16 +194,34 @@ export const useBlindBoxAdmin = () => {
     loadWinners(1, winnersPageSize, next);
   };
 
+  const handleBlocksPageChange = (page) => {
+    setBlocksPage(page);
+    loadBlocks(page, blocksPageSize);
+  };
+  const handleBlocksPageSizeChange = (size) => {
+    setBlocksPageSize(size);
+    setBlocksPage(1);
+    loadBlocks(1, size);
+  };
+  const applyBlockFilters = (filters) => {
+    const next = { ...blockFilters, ...filters };
+    setBlockFilters(next);
+    setBlocksPage(1);
+    loadBlocks(1, blocksPageSize, next);
+  };
+
   const refreshAll = () => {
     loadSummary();
     loadDraws(drawsPage, drawsPageSize);
     loadWinners(winnersPage, winnersPageSize);
+    loadBlocks(blocksPage, blocksPageSize);
   };
 
   useEffect(() => {
     loadSummary();
     loadDraws(1, DEFAULT_PAGE_SIZE);
     loadWinners(1, DEFAULT_PAGE_SIZE);
+    loadBlocks(1, DEFAULT_PAGE_SIZE);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -178,6 +245,17 @@ export const useBlindBoxAdmin = () => {
     applyWinnerFilters,
     handleWinnersPageChange,
     handleWinnersPageSizeChange,
+    blocks,
+    blocksLoading,
+    blocksPage,
+    blocksPageSize,
+    blocksTotal,
+    blockFilters,
+    applyBlockFilters,
+    handleBlocksPageChange,
+    handleBlocksPageSizeChange,
+    unblockUser,
+    loadSummary,
     refreshAll,
   };
 };

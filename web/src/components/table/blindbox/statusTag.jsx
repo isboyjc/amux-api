@@ -55,6 +55,14 @@ export const renderWinnerStatus = (status, t) => {
 
 // 开奖记录状态。empty 分两种成因，靠 participant_count 区分后给出更具体的说明。
 export const renderDrawStatus = (draw, t) => {
+  // 当期是前端合成的行，没有真正结算过，单独标注
+  if (draw.__current) {
+    return (
+      <Tag color='blue' shape='circle'>
+        {t('进行中')}
+      </Tag>
+    );
+  }
   if (draw.status === 'done') {
     return (
       <Tag color='green' shape='circle'>
@@ -62,10 +70,12 @@ export const renderDrawStatus = (draw, t) => {
       </Tag>
     );
   }
-  // 空期有三种成因，分开标注运营才知道该动哪个旋钮
+  // 空期有多种成因，分开标注运营才知道该动哪个旋钮
   let reason;
   if (draw.participant_count > 0) {
     reason = t('奖池为空');
+  } else if (draw.blocked_count > 0) {
+    reason = t('达标者均被屏蔽');
   } else if (draw.entry_count > 0) {
     reason = t('参与者均未达标');
   } else {
