@@ -240,16 +240,18 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 
 // selectFromChain 是选路的核心。
 //
-// 分两个阶段依次放宽约束，每个阶段都从当前游标开始扫描整条链：
+// 约束分两轮放宽：
 //
-//	阶段 1：跳过「本次已尝试过」和「熔断冷却中」的渠道
-//	阶段 2：只跳过「本次已尝试过」的（忽略熔断）
+//	第一轮，沿链逐个分组。每个分组内部先避开「已尝试 + 熔断冷却」的渠道，
+//	   再退一步只避开「已尝试」的，两者都没有候选才换下一个分组。
+//	   熔断因此只影响「组内选哪个渠道」，绝不影响「用哪个分组」—— 如果让冷却
+//	   触发换组，一次抖动就会把请求推到链上后面的分组，连带改变计费倍率。
+//	   这一步同时是熔断的安全阀：熔断只能作为优先级，不能是硬排除。
 //
-// 阶段 2 是熔断的安全阀：熔断只能作为优先级，不能是硬排除。如果全站抖动导致链上
-// 所有渠道都在冷却，硬排除会让请求直接失败，比不做熔断还糟。
-//
-// 没有「忽略已尝试集合」的第三阶段：重新选中刚失败的渠道正是本次要修掉的问题，
-// 已尝试集合是硬约束。候选耗尽就如实返回 nil，由调用方结束重试。
+//	第二轮，整条链都没有未尝试过的候选时的最后手段：允许重选已尝试过的渠道。
+//	   保留改动前的行为 —— 单渠道分组（线上最常见的形态）遇到瞬时错误仍然能拿到
+//	   第二次机会，多 key 渠道还会轮换到下一个 key。少了这一轮，这类用户的重试
+//	   次数会从 2 次悄悄降到 1 次。
 //
 // 游标在选中渠道后停在原优先级层不动：同一层里通常有多个渠道，层是否耗尽由
 // PickChannelAtLevel 返回 nil 来判定，而不是由「选过一次」来判定。
@@ -267,13 +269,17 @@ func selectFromChain(c *gin.Context, chain GroupChain, modelName string) (*model
 		_, ok := tried[channelID]
 		return ok
 	}
-
-	skipFuncs := []func(channelID int) bool{
-		func(channelID int) bool { return isTried(channelID) || IsChannelCooling(channelID, modelName) },
-		isTried,
+	skipTriedOrCooling := func(channelID int) bool {
+		return isTried(channelID) || IsChannelCooling(channelID, modelName)
 	}
 
-	for phase, skip := range skipFuncs {
+	// 组内放宽序列 → 最后手段（允许重选已尝试渠道）
+	passes := [][]func(channelID int) bool{
+		{skipTriedOrCooling, isTried},
+		{nil},
+	}
+
+	for pass, groupSkips := range passes {
 		for groupIdx := cursor.GroupIdx; groupIdx < len(chain.Groups); groupIdx++ {
 			if groupIdx > cursor.GroupIdx && !allowGroupAdvance {
 				break
@@ -291,26 +297,28 @@ func selectFromChain(c *gin.Context, chain GroupChain, modelName string) (*model
 			if groupIdx == cursor.GroupIdx {
 				startLevel = cursor.LevelIdx
 			}
-			for level := startLevel; level < levelCount; level++ {
-				channel, err := model.PickChannelAtLevel(group, modelName, level, skip)
-				if err != nil {
-					logger.LogError(c, fmt.Sprintf("pick channel failed, group=%s model=%s level=%d: %s",
-						group, modelName, level, err.Error()))
-					continue
+			for _, skip := range groupSkips {
+				for level := startLevel; level < levelCount; level++ {
+					channel, err := model.PickChannelAtLevel(group, modelName, level, skip)
+					if err != nil {
+						logger.LogError(c, fmt.Sprintf("pick channel failed, group=%s model=%s level=%d: %s",
+							group, modelName, level, err.Error()))
+						continue
+					}
+					if channel == nil {
+						continue
+					}
+					switched := groupIdx > cursor.GroupIdx && len(tried) > 0
+					// 停在当前层：同层可能还有别的渠道，层耗尽由 PickChannelAtLevel
+					// 返回 nil 判定。推进到 level+1 会把同层剩余候选整批跳过。
+					setChainCursor(c, chainCursor{GroupIdx: groupIdx, LevelIdx: level})
+					MarkChannelTried(c, channel.Id)
+					if pass > 0 {
+						logger.LogDebug(c, fmt.Sprintf("chain select fell back to retrying a used channel, group=%s model=%s channel=%d",
+							group, modelName, channel.Id))
+					}
+					return channel, group, switched
 				}
-				if channel == nil {
-					continue
-				}
-				switched := groupIdx > cursor.GroupIdx && len(tried) > 0
-				// 停在当前层：同层可能还有别的渠道，层耗尽由 PickChannelAtLevel
-				// 返回 nil 判定。推进到 level+1 会把同层剩余候选整批跳过。
-				setChainCursor(c, chainCursor{GroupIdx: groupIdx, LevelIdx: level})
-				MarkChannelTried(c, channel.Id)
-				if phase > 0 {
-					logger.LogDebug(c, fmt.Sprintf("chain select relaxed to phase %d, group=%s model=%s channel=%d",
-						phase, group, modelName, channel.Id))
-				}
-				return channel, group, switched
 			}
 		}
 	}

@@ -234,9 +234,23 @@ func TestSelectFromChainWalksPrioritiesThenNextGroup(t *testing.T) {
 	assert.Equal(t, "b", group3)
 	assert.True(t, sw3, "跨到下一个分组要算一次换组")
 
-	// 全部候选用尽
+	// 未尝试过的候选全部用尽后，退到最后一轮：允许重选已用过的渠道，
+	// 保留改动前单渠道分组仍能重试的行为。
 	id4, _, _ := selectOnce(c, "gpt-4")
-	assert.Equal(t, -1, id4)
+	assert.Contains(t, []int{10, 11, 20}, id4, "最后一轮应重选已用过的渠道而不是直接失败")
+}
+
+// 线上最常见的形态：一个分组、一个渠道。改动前 RetryTimes=1 能打 2 次，
+// 如果选路在候选用尽时直接返回 nil，这类用户的重试会悄悄从 2 次降到 1 次。
+func TestSelectFromChainSingleChannelGroupStillRetries(t *testing.T) {
+	seedAbilities(t, []model.Ability{ability("a", "gpt-4", 10, 0)})
+
+	c := newTestContext(t, GroupChain{Groups: []string{"a"}})
+	id1, _, _ := selectOnce(c, "gpt-4")
+	assert.Equal(t, 10, id1)
+
+	id2, _, _ := selectOnce(c, "gpt-4")
+	assert.Equal(t, 10, id2, "单渠道分组必须还能再试一次，否则等于砍掉了存量用户的重试")
 }
 
 func TestSelectFromChainNeverRepeatsTriedChannel(t *testing.T) {
@@ -271,9 +285,12 @@ func TestSelectFromChainRespectsCrossGroupSwitch(t *testing.T) {
 	assert.Equal(t, 10, id1)
 	assert.Equal(t, "a", group1)
 
-	// 关掉跨分组开关后，a 用尽就到此为止，不回落到 b
-	id2, _, _ := selectOnce(c, "gpt-4")
-	assert.Equal(t, -1, id2)
+	// 关掉跨分组开关后，即便 a 的候选用尽、最后一轮重选已用渠道，
+	// 也绝不能碰到 b —— 分组边界是硬约束，最后一轮只放宽「已尝试」这一条。
+	id2, group2, _ := selectOnce(c, "gpt-4")
+	assert.Equal(t, 10, id2)
+	assert.Equal(t, "a", group2)
+	assert.NotEqual(t, 20, id2, "关闭跨分组重试后不得回落到 b")
 }
 
 func TestSelectFromChainBlockedCrossGroupStaysInGroup(t *testing.T) {
@@ -294,8 +311,9 @@ func TestSelectFromChainBlockedCrossGroupStaysInGroup(t *testing.T) {
 	assert.Equal(t, 11, id2, "组内低优先级仍应尝试")
 	assert.Equal(t, "a", group2)
 
-	id3, _, _ := selectOnce(c, "gpt-4")
-	assert.Equal(t, -1, id3, "被阻止跨组时不该回落到 b")
+	id3, group3, _ := selectOnce(c, "gpt-4")
+	assert.Equal(t, "a", group3, "被阻止跨组时只能在 a 内重选，不该回落到 b")
+	assert.NotEqual(t, 20, id3)
 }
 
 func TestSelectFromChainCoolingIsPreferenceNotHardExclusion(t *testing.T) {
@@ -325,6 +343,30 @@ func TestSelectFromChainCoolingIsPreferenceNotHardExclusion(t *testing.T) {
 	// 成功后立即恢复
 	MarkChannelSuccess(10, "gpt-4")
 	assert.False(t, IsChannelCooling(10, "gpt-4"))
+}
+
+// 熔断只能影响「组内选哪个渠道」，绝不能影响「用哪个分组」。
+// 如果让冷却触发换组，一次抖动就会把请求推到链上后面的分组，连带改变计费倍率 ——
+// 用户会莫名其妙按另一个分组的价格被扣费。
+func TestSelectFromChainCoolingNeverChangesGroup(t *testing.T) {
+	seedAbilities(t, []model.Ability{
+		ability("a", "gpt-4", 10, 0),
+		ability("b", "gpt-4", 20, 0),
+	})
+	ResetChannelHealth()
+	t.Cleanup(ResetChannelHealth)
+
+	// a 组唯一的渠道进入冷却
+	for i := 0; i < operation_setting.GetGroupChainSetting().HealthThreshold; i++ {
+		MarkChannelFailure(10, "gpt-4")
+	}
+	require.True(t, IsChannelCooling(10, "gpt-4"))
+
+	c := newTestContext(t, GroupChain{Groups: []string{"a", "b"}, CrossGroup: true})
+	id, group, switched := selectOnce(c, "gpt-4")
+	assert.Equal(t, 10, id, "a 组内忽略冷却后仍有候选，不该跳到 b")
+	assert.Equal(t, "a", group, "冷却不得改变命中的分组，否则计费倍率会跟着变")
+	assert.False(t, switched)
 }
 
 func TestSelectFromChainSkipsGroupsWithoutModel(t *testing.T) {
