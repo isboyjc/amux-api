@@ -435,7 +435,7 @@ const EditTokenModal = (props) => {
     >
       <Spin spinning={loading}>
         <Form
-          key={`${isEdit ? 'edit' : 'new'}-${defaultGroup}`}
+          key={`${isEdit ? 'edit' : 'new'}-${defaultGroups.join(',')}`}
           initValues={getInitValues()}
           getFormApi={(api) => (formApiRef.current = api)}
           onSubmit={submit}
