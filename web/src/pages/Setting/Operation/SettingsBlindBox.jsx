@@ -37,7 +37,6 @@ import {
   showSuccess,
   showWarning,
   renderQuota,
-  renderQuotaWithPrompt,
 } from '../../../helpers';
 import { useTranslation } from 'react-i18next';
 
@@ -186,6 +185,25 @@ export default function SettingsBlindBox(props) {
     return Number.isFinite(raw) && raw > 0 ? raw : null;
   })();
 
+  /**
+   * 把 quota 折算成金额，且必须显示真值。
+   *
+   * 不能直接用 renderQuota：它在结果四舍五入为 0 时会兜底显示最小可见金额（$0.01）。
+   * 那个兜底是给余额展示用的 —— 避免非零余额显示成 $0.00 让用户以为清零。但配置项
+   * 用它正好相反：填 1 会看到 $0.01，管理员据此以为「1 = 1 分」，实际差 5000 倍，
+   * 比不给提示更危险。这里按数量级抬高小数位绕开兜底，再去掉尾随 0。
+   */
+  const renderExactQuota = (quota) => {
+    const n = Number(quota);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (!quotaPerUnit) return renderQuota(n);
+    const value = n / quotaPerUnit;
+    if (value >= 0.01) return renderQuota(n, 2);
+    const digits = Math.min(10, Math.ceil(-Math.log10(value)) + 1);
+    // 仅在亚分区间去尾零，避免把常见的 $1.00 削成 $1
+    return renderQuota(n, digits).replace(/(\.\d*?[1-9])0+$/, '$1');
+  };
+
   return (
     <>
       <Spin spinning={loading}>
@@ -213,7 +231,7 @@ export default function SettingsBlindBox(props) {
                 '下方所有额度字段填写的都是额度（quota）原始值，不是金额。当前 {{unit}} 额度 = {{money}}。',
                 {
                   unit: quotaPerUnit ?? '—',
-                  money: quotaPerUnit ? renderQuota(quotaPerUnit) : '—',
+                  money: quotaPerUnit ? renderExactQuota(quotaPerUnit) : '—',
                 },
               )}
             </Typography.Text>
@@ -251,9 +269,16 @@ export default function SettingsBlindBox(props) {
                   label={
                     <span>
                       {t('参与门槛额度')}{' '}
-                      {renderQuotaWithPrompt(
+                      {renderExactQuota(
                         inputs['blindbox_setting.threshold_quota'],
-                      )}
+                      ) ? (
+                        <Typography.Text type='tertiary'>
+                          {t('等价金额：')}
+                          {renderExactQuota(
+                            inputs['blindbox_setting.threshold_quota'],
+                          )}
+                        </Typography.Text>
+                      ) : null}
                     </span>
                   }
                   placeholder={t('达到该消耗额度即可参与')}
@@ -354,7 +379,9 @@ export default function SettingsBlindBox(props) {
                       type={Number(p.quota) > 0 ? 'success' : 'tertiary'}
                       style={{ minWidth: 96, display: 'inline-block' }}
                     >
-                      {Number(p.quota) > 0 ? `= ${renderQuota(p.quota)}` : '—'}
+                      {renderExactQuota(p.quota)
+                        ? `= ${renderExactQuota(p.quota)}`
+                        : '—'}
                     </Typography.Text>
                     <Button
                       type='danger'
