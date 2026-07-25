@@ -133,6 +133,9 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
+	// Blind-box lottery daily draw task (master node only; dormant when disabled)
+	service.StartBlindBoxDrawTask()
+
 	// 事件总线 worker（所有实例都跑，靠 DB 乐观 claim 互斥）+ 每日清理任务（仅 master）
 	if operation_setting.EventWorkerEnabled {
 		workerOpts := events.WorkerOpts{

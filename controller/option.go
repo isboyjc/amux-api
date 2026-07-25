@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -405,6 +406,37 @@ func UpdateOption(c *gin.Context) {
 			"message": "侧边栏轮播版本号由系统自动维护，不可直接修改",
 		})
 		return
+	case "blindbox_setting.prizes":
+		// 盲盒固定奖池：JSON 数组字符串。校验数量 ≤10、名称非空、额度 >0
+		if err := operation_setting.ValidateBlindBoxPrizes(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	case "blindbox_setting.draw_time":
+		if err := operation_setting.ValidateBlindBoxDrawTime(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	case "blindbox_setting.pool_mode":
+		if err := operation_setting.ValidateBlindBoxPoolMode(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+	case "blindbox_setting.percent_rate":
+		if v, err := strconv.ParseFloat(strings.TrimSpace(option.Value.(string)), 64); err != nil || v < 0 || v > 1 {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "奖池百分比必须是 0~1 之间的数值"})
+			return
+		}
+	case "blindbox_setting.percent_count":
+		if v, err := strconv.Atoi(strings.TrimSpace(option.Value.(string))); err != nil || v < 1 || v > operation_setting.MaxBlindBoxPrizes {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": fmt.Sprintf("百分比模式奖项数量必须在 1~%d 之间", operation_setting.MaxBlindBoxPrizes)})
+			return
+		}
+	case "blindbox_setting.threshold_quota":
+		if v, err := strconv.Atoi(strings.TrimSpace(option.Value.(string))); err != nil || v < 0 {
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "参与门槛额度必须是非负整数"})
+			return
+		}
 	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {

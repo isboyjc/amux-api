@@ -62,6 +62,7 @@ const Dashboard = lazy(() => import('./pages/Dashboard'));
 const About = lazy(() => import('./pages/About'));
 const UserAgreement = lazy(() => import('./pages/UserAgreement'));
 const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
+const BlindBox = lazy(() => import('./pages/BlindBox'));
 
 function DynamicOAuth2Callback() {
   const { provider } = useParams();
@@ -184,6 +185,14 @@ function App() {
           element={
             <AdminRoute>
               <Redemption />
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/blindbox'
+          element={
+            <AdminRoute>
+              <BlindBox />
             </AdminRoute>
           }
         />

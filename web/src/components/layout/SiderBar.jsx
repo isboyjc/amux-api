@@ -36,6 +36,7 @@ const routerMap = {
   channel: '/console/channel',
   token: '/console/token',
   redemption: '/console/redemption',
+  blindbox_admin: '/console/blindbox',
   topup: '/console/topup',
   user: '/console/user',
   billing: '/console/billing',
@@ -226,6 +227,16 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         // 同时需要管理员身份 + 工单系统开关。两者任一不满足都隐藏。
         className:
           isAdmin() && localStorage.getItem('ticket_enabled') === 'true'
+            ? ''
+            : 'tableHiddle',
+      },
+      {
+        text: t('盲盒管理'),
+        itemKey: 'blindbox_admin',
+        to: '/blindbox',
+        // 同时需要管理员身份 + 盲盒总开关。两者任一不满足都隐藏。
+        className:
+          isAdmin() && localStorage.getItem('blindbox_enabled') === 'true'
             ? ''
             : 'tableHiddle',
       },

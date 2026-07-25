@@ -68,6 +68,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       user: true,
       billing: true,
       subscription: true,
+      blindbox_admin: true,
       setting: true,
     },
   });
@@ -131,6 +132,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         user: true,
         billing: true,
         subscription: true,
+        blindbox_admin: true,
         setting: true,
       },
     };
@@ -202,6 +204,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             user: true,
             billing: true,
             subscription: true,
+            blindbox_admin: true,
             setting: true,
           },
         };
@@ -286,6 +289,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'billing',
           title: t('账单管理'),
           description: t('账单查看管理'),
+        },
+        {
+          key: 'blindbox_admin',
+          title: t('盲盒管理'),
+          description: t('盲盒开奖记录与中奖明细'),
         },
         {
           key: 'setting',

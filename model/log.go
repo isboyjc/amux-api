@@ -50,6 +50,7 @@ const (
 	LogTypeError      = 5
 	LogTypeRefund     = 6
 	LogTypeSignupGift = 7 // 注册赠送（含新用户、邀请码、邀请人三种），结构化记录 quota
+	LogTypeBlindBox   = 8 // 盲盒抽奖中奖领取，结构化记录 quota
 )
 
 func formatUserLogs(logs []*Log, startIdx int) {

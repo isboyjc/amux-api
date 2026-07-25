@@ -184,6 +184,7 @@ func GetStatus(c *gin.Context) {
 		"user_agreement_enabled":      legalSetting.UserAgreement != "",
 		"privacy_policy_enabled":      legalSetting.PrivacyPolicy != "",
 		"checkin_enabled":             operation_setting.GetCheckinSetting().Enabled,
+		"blindbox_enabled":            operation_setting.GetBlindBoxSetting().Enabled,
 		// 工单系统总开关。前端用这个字段决定是否渲染"我的工单"/"工单管理"侧边栏
 		// 入口以及头部红点按钮。后端接口本身也会按 enabled 拒绝建单/回复。
 		"ticket_enabled":              operation_setting.GetTicketSetting().Enabled,

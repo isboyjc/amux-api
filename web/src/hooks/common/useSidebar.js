@@ -56,6 +56,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     billing: true,
     subscription: true,
     ticket_admin: true,
+    blindbox_admin: true,
     setting: true,
   },
 };

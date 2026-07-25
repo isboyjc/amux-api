@@ -51,6 +51,12 @@ export function setStatusData(data) {
   // 工单系统开关：影响侧边栏「我的工单」「工单管理」入口及头部 NotificationButton
   // 是否渲染工单行。值是字符串 'true'/'false'，读取处用 === 'true' 比较。
   localStorage.setItem('ticket_enabled', data.ticket_enabled ? 'true' : 'false');
+  // 盲盒开关：控制侧边栏「盲盒管理」入口与个人设置页盲盒卡片是否渲染。
+  // 同样是字符串 'true'/'false'，读取处必须用 === 'true' 比较。
+  localStorage.setItem(
+    'blindbox_enabled',
+    data.blindbox_enabled ? 'true' : 'false',
+  );
   localStorage.setItem('chats', JSON.stringify(data.chats));
   localStorage.setItem(
     'data_export_default_time',

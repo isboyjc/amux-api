@@ -143,6 +143,13 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
 				selfRoute.POST("/checkin", middleware.TurnstileCheck(), controller.DoCheckin)
 
+				// Blind-box lottery routes
+				selfRoute.GET("/blindbox", controller.GetBlindBoxStatus)
+				selfRoute.POST("/blindbox", middleware.TurnstileCheck(), controller.DoBlindBoxClaim)
+				selfRoute.GET("/blindbox/records", controller.GetBlindBoxRecords)
+				// 参与本期抽奖。与开盒一样过 Turnstile —— 参与正是刷量脚本最想批量做的动作
+				selfRoute.POST("/blindbox/enter", middleware.TurnstileCheck(), controller.DoBlindBoxEnter)
+
 				// Custom OAuth bindings
 				selfRoute.GET("/oauth/bindings", controller.GetUserOAuthBindings)
 				selfRoute.DELETE("/oauth/bindings/:provider_id", controller.UnbindCustomOAuth)
@@ -238,6 +245,15 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/test_resend", controller.TestResendToken)
 			optionRoute.POST("/backfill_marketing", controller.BackfillMarketing)
 			optionRoute.GET("/backfill_marketing/status", controller.GetBackfillMarketingStatus)
+		}
+
+		// 盲盒管理（只读）。结算幂等依赖 draw_date 唯一索引，刻意不提供手动开奖/补发接口。
+		blindBoxAdminRoute := apiRouter.Group("/blindbox")
+		blindBoxAdminRoute.Use(middleware.AdminAuth())
+		{
+			blindBoxAdminRoute.GET("/summary", controller.AdminGetBlindBoxSummary)
+			blindBoxAdminRoute.GET("/draws", controller.AdminGetBlindBoxDraws)
+			blindBoxAdminRoute.GET("/winners", controller.AdminGetBlindBoxWinners)
 		}
 
 		// Custom OAuth provider management

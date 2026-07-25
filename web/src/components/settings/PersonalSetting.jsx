@@ -42,6 +42,7 @@ import NotificationSettings from './personal/cards/NotificationSettings';
 import PreferencesSettings from './personal/cards/PreferencesSettings';
 import MarketingSubscriptions from './personal/cards/MarketingSubscriptions';
 import CheckinCalendar from './personal/cards/CheckinCalendar';
+import BlindBoxCard from './personal/cards/BlindBoxCard';
 import EmailBindModal from './personal/modals/EmailBindModal';
 import WeChatBindModal from './personal/modals/WeChatBindModal';
 import AccountDeleteModal from './personal/modals/AccountDeleteModal';
@@ -583,6 +584,15 @@ const PersonalSetting = () => {
             <div className='flex flex-col gap-4 md:gap-6'>
               {status?.checkin_enabled && (
                 <CheckinCalendar
+                  t={t}
+                  status={status}
+                  turnstileEnabled={turnstileEnabled}
+                  turnstileSiteKey={turnstileSiteKey}
+                />
+              )}
+
+              {status?.blindbox_enabled && (
+                <BlindBoxCard
                   t={t}
                   status={status}
                   turnstileEnabled={turnstileEnabled}

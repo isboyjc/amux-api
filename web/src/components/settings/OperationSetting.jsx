@@ -27,6 +27,7 @@ import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsBlindBox from '../../pages/Setting/Operation/SettingsBlindBox';
 import SettingsTicket from '../../pages/Setting/Operation/SettingsTicket';
 import SettingsUserAutoUpgrade from '../../pages/Setting/Operation/SettingsUserAutoUpgrade';
 import SettingsTaskURLRewrite from '../../pages/Setting/Operation/SettingsTaskURLRewrite';
@@ -213,6 +214,10 @@ const OperationSetting = () => {
         {/* 签到设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsCheckin options={inputs} refresh={onRefresh} />
+        </Card>
+        {/* 盲盒抽奖设置 */}
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsBlindBox options={inputs} refresh={onRefresh} />
         </Card>
         {/* 工单设置：总开关 + 限流 + 通知。关闭后用户/管理员侧入口都会隐藏 */}
         <Card style={{ marginTop: '10px' }}>
