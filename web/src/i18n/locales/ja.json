@@ -684,7 +684,6 @@
     "你可以在“自定义模型名称”处手动添加它们，然后点击填入后再提交，或者直接使用下方操作自动处理。": "You can manually add them under “Custom model names”, click Fill and submit, or use the actions below to handle them automatically.",
     "你已拒绝此次授权请求": "この認証リクエストを拒否しました。",
     "你有一个待开启的盲盒": "未開封の福袋があります",
-    "你的等级分组": "あなたの階層グループ",
     "你还没有处理{{type}}模型（{{count}}个）。是否仅提交当前已勾选内容？_other": "",
     "使用 {{model}} 开始一段对话": "{{model}} との会話を始めましょう",
     "使用 {{name}} 继续": "{{name}}で続行",

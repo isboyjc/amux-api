@@ -178,7 +178,6 @@ const EditTokenModal = (props) => {
           value: group,
           ratio: info.ratio,
           modelCount: info.model_count,
-          isUserGroup: info.is_user_group,
           disabled: info.model_count === 0,
         }));
       // 管理员配置的分组顺序：新建令牌时作为预填，编辑旧版 auto 令牌时展示
@@ -540,9 +539,6 @@ const EditTokenModal = (props) => {
                           <Space key={groupName} align='center'>
                             <Tag color='blue'>{index + 1}</Tag>
                             <Text strong>{groupName}</Text>
-                            {option?.isUserGroup && (
-                              <Tag size='small'>{t('你的等级分组')}</Tag>
-                            )}
                             {typeof option?.modelCount === 'number' && (
                               <Text type='secondary' size='small'>
                                 {option.modelCount} {t('可用模型')}
