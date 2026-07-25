@@ -43,7 +43,11 @@ const { Text } = Typography;
  * 调顺序。这里换成勾选 + 排序的面板，勾选顺序就是优先级，选中项单独列出来并
  * 提供上下移动，让「谁先谁后」一眼可见。
  *
- * 不选任何分组表示使用用户自身分组（与令牌 group 为空的语义一致）。
+ * 可选项只有渠道分组。用户自身的等级分组是权限标识、本身不挂渠道，不是能被
+ * 选中的东西，所以既不出现在候选里，也不作为「清空」后的说法。
+ *
+ * minSelected 用于列表里的快捷修改：那里是「改分组」而不是「清空分组」，
+ * 只剩最后一个时不允许再删。新建/编辑弹窗不设这个下限，清空即为空。
  */
 const GroupChainPicker = ({
   value = [],
@@ -53,6 +57,7 @@ const GroupChainPicker = ({
   fetchGroupModels,
   onSave,
   disabled = false,
+  minSelected = 0,
   children,
 }) => {
   const { t } = useTranslation();
@@ -69,13 +74,18 @@ const GroupChainPicker = ({
     }
   }, [visible]);
 
+  // 已达下限时不允许再移除（列表快捷修改场景：不能把最后一个分组删掉）
+  const canRemove = draft.length > minSelected;
+
   const toggleGroup = (groupName) => {
-    setDraft((prev) =>
-      prev.includes(groupName)
-        ? prev.filter((g) => g !== groupName)
-        : // 新勾选的排在最后：勾选顺序即优先级顺序
-          [...prev, groupName],
-    );
+    setDraft((prev) => {
+      if (!prev.includes(groupName)) {
+        // 新勾选的排在最后：勾选顺序即优先级顺序
+        return [...prev, groupName];
+      }
+      if (prev.length <= minSelected) return prev;
+      return prev.filter((g) => g !== groupName);
+    });
   };
 
   const moveGroup = (from, to) => {
@@ -140,7 +150,7 @@ const GroupChainPicker = ({
       <div className='mb-2'>
         <Text strong>{t('令牌分组')}</Text>
         <div className='text-xs text-[var(--semi-color-text-2)] mt-1'>
-          {t('可多选，请求按顺序寻找拥有目标模型的分组；不选表示使用用户自身分组')}
+          {t('可多选，请求按顺序寻找拥有目标模型的分组，靠前的优先')}
         </div>
       </div>
 
@@ -172,6 +182,7 @@ const GroupChainPicker = ({
                 theme='borderless'
                 type='tertiary'
                 icon={<IconClose />}
+                disabled={!canRemove}
                 onClick={() => toggleGroup(groupName)}
               />
             </div>
@@ -182,6 +193,8 @@ const GroupChainPicker = ({
       <div className='overflow-auto' style={{ maxHeight: 220 }}>
         {groupOptions.map((opt) => {
           const checked = draft.includes(opt.value);
+          // 已勾选且已达下限时不能取消，否则绕过 × 按钮照样能删空
+          const locked = checked && !canRemove;
           return (
             <Tooltip
               key={opt.value}
@@ -193,20 +206,23 @@ const GroupChainPicker = ({
               trigger='hover'
             >
               <div
-                className='flex items-center gap-2 py-1 px-1 rounded cursor-pointer hover:bg-[var(--semi-color-fill-0)]'
+                className={`flex items-center gap-2 py-1 px-1 rounded hover:bg-[var(--semi-color-fill-0)] ${
+                  locked ? 'cursor-not-allowed' : 'cursor-pointer'
+                }`}
                 onMouseEnter={() => {
                   if (typeof fetchGroupModels === 'function') {
                     fetchGroupModels(opt.value);
                   }
                 }}
                 onClick={() => {
+                  if (locked) return;
                   if (opt.disabled && !checked) return;
                   toggleGroup(opt.value);
                 }}
               >
                 <Checkbox
                   checked={checked}
-                  disabled={opt.disabled && !checked}
+                  disabled={locked || (opt.disabled && !checked)}
                   onChange={() => {}}
                 />
                 <span className='flex flex-col min-w-0 flex-1'>

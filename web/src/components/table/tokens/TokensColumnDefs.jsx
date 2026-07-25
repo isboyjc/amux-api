@@ -112,7 +112,7 @@ const renderGroupColumn = (
     typeof updateTokenGroup === 'function' && (groupOptions || []).length > 0;
 
   // 令牌的分组链。为空时回退到 group 字段的旧语义：单分组 → 单元素链，
-  // 空字符串 → 空链（使用用户自身分组），auto → 保留旧版展示。
+  // 空字符串 → 空链，auto → 保留旧版展示。
   const chain = Array.isArray(record?.groups) ? record.groups : [];
 
   // 多分组令牌：把整条链按顺序展示出来，序号即优先级。
@@ -164,6 +164,7 @@ const renderGroupColumn = (
         groupModelsCache={groupModelsCache}
         fetchGroupModels={fetchGroupModels}
         disabled={!canChange}
+        minSelected={1}
         onSave={(groups, crossGroupRetry) =>
           updateTokenGroup(record, groups, crossGroupRetry)
         }
@@ -235,6 +236,7 @@ const renderGroupColumn = (
       groupOptions={groupOptions}
       groupModelsCache={groupModelsCache}
       fetchGroupModels={fetchGroupModels}
+      minSelected={1}
       onSave={(groups, crossGroupRetry) =>
         updateTokenGroup(record, groups, crossGroupRetry)
       }

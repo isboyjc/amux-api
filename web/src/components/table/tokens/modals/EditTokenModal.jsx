@@ -485,7 +485,7 @@ const EditTokenModal = (props) => {
                         field='groups'
                         label={t('令牌分组')}
                         multiple
-                        placeholder={t('可多选，按选择顺序作为优先级；不选则使用用户自身分组')}
+                        placeholder={t('可多选，按选择顺序作为优先级，靠前的分组优先')}
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
                         filter={(input, option) => {
