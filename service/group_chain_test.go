@@ -402,3 +402,16 @@ type simpleError string
 func (e simpleError) Error() string { return string(e) }
 
 func assertError(msg string) error { return simpleError(msg) }
+
+// TestApplyGroupChainAbsentFieldSemantics 覆盖「字段缺省 vs 显式清空」。
+// 这个区分很重要：没有它，任何不带 groups 字段的老客户端 PUT 一次令牌，
+// 就会把用户配好的分组链静默抹掉。
+func TestGroupChainAbsentVsExplicitClear(t *testing.T) {
+	token := &model.Token{}
+	require.NoError(t, token.SetGroups([]string{"vip", "default"}))
+	assert.Equal(t, []string{"vip", "default"}, token.GetGroups())
+
+	// 显式空数组 → 清空
+	require.NoError(t, token.SetGroups([]string{}))
+	assert.Empty(t, token.GetGroups())
+}

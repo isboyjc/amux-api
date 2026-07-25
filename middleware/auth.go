@@ -392,10 +392,11 @@ func TokenAuth() func(c *gin.Context) {
 		realUserGroup := userCache.Group
 		userGroup := realUserGroup
 		tokenGroup := token.Group
+		hasExplicitChain := len(token.GetGroups()) > 0
 		// 多分组令牌的 Group 字段保存链首分组，所以下面这段校验对新老令牌都成立：
 		// 校验的始终是「令牌默认使用的那个分组」。链上其余分组由
 		// service.ResolveGroupChain 单独过滤（失效的跳过而不是整体 403）。
-		if tokenGroup != "" && len(token.GetGroups()) == 0 {
+		if tokenGroup != "" && !hasExplicitChain {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
 				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
@@ -419,7 +420,7 @@ func TokenAuth() func(c *gin.Context) {
 			return
 		}
 		service.SetupGroupChain(c, chain)
-		if len(token.GetGroups()) > 0 {
+		if hasExplicitChain {
 			// 显式链：usingGroup 取链首。它决定限流分组（限流中间件跑在选路之前，
 			// 拿不到实际命中的分组）与渠道亲和缓存键，必须是稳定可预测的值。
 			userGroup = chain.Head()

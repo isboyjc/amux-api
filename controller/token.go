@@ -72,7 +72,12 @@ type tokenRequest struct {
 // 同时也保证 PR 回滚后（groups 列被忽略）令牌退化成「只用链首分组」而不是失效。
 func applyGroupChain(c *gin.Context, target *model.Token, groups *[]string) error {
 	if groups == nil {
-		// 字段缺省：不动分组链
+		// 字段缺省（不认识分组链的老客户端 / 脚本）。此时如果它把 Group 改成了
+		// 链首以外的值，用户意图显然是「只用这一个分组」，清掉链；否则原样保留。
+		// 不这么做的话，老客户端改分组会毫无效果 —— 链仍然生效，Group 被忽略。
+		if existing := target.GetGroups(); len(existing) > 0 && target.Group != existing[0] {
+			target.GroupsJSON = ""
+		}
 		return nil
 	}
 	normalized := service.NormalizeGroupChainInput(*groups)
