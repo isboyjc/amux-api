@@ -52,9 +52,17 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*TokenResponse {
 //
 // 不能直接绑进 model.Token：那里的 groups 是 JSON 字符串字段，客户端传数组会
 // 直接绑定失败。这里显式接数组，在控制器边界完成数组 → JSON 字符串的转换。
+// Groups 用指针以区分「字段缺省」和「显式清空」（项目 Rule 6 的同款理由）：
+//
+//	字段不存在 → nil    → 保持令牌原有分组链不变
+//	"groups": []→ 非 nil 空 → 清空分组链，回到 Group 字段的单分组语义
+//	"groups": [..]      → 设置分组链
+//
+// 没有这个区分的话，任何不带 groups 字段的老客户端 / 脚本 PUT 一次令牌，
+// 就会把用户配好的分组链静默抹掉。
 type tokenRequest struct {
 	model.Token
-	Groups []string `json:"groups"`
+	Groups *[]string `json:"groups"`
 }
 
 // applyGroupChain 校验并把分组链写入令牌。
@@ -62,8 +70,12 @@ type tokenRequest struct {
 // Group 始终与链首保持同步：middleware/auth.go 的权限校验、限流分组、渠道亲和
 // 缓存键都读 Group，同步之后这些逻辑对单分组令牌和多分组令牌是同一套代码；
 // 同时也保证 PR 回滚后（groups 列被忽略）令牌退化成「只用链首分组」而不是失效。
-func applyGroupChain(c *gin.Context, target *model.Token, groups []string) error {
-	normalized := service.NormalizeGroupChainInput(groups)
+func applyGroupChain(c *gin.Context, target *model.Token, groups *[]string) error {
+	if groups == nil {
+		// 字段缺省：不动分组链
+		return nil
+	}
+	normalized := service.NormalizeGroupChainInput(*groups)
 	if len(normalized) == 0 {
 		target.GroupsJSON = ""
 		return nil

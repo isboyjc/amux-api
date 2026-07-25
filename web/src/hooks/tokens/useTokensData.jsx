@@ -314,6 +314,9 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       model_limits: record.model_limits || '',
       allow_ips: record.allow_ips || '',
       group: newGroup,
+      // 行内切换的语义就是「只用这一个分组」，显式传空数组清掉分组链。
+      // 不传的话后端会保持原链不变，导致 group 和链首对不上。
+      groups: [],
       cross_group_retry:
         newGroup === 'auto' ? record.cross_group_retry : false,
     };
@@ -325,7 +328,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
         setTokens((prev) =>
           prev.map((tk) =>
             tk.id === record.id
-              ? { ...tk, group: data?.group ?? newGroup, cross_group_retry: data?.cross_group_retry ?? payload.cross_group_retry }
+              ? { ...tk, group: data?.group ?? newGroup, groups: data?.groups ?? [], cross_group_retry: data?.cross_group_retry ?? payload.cross_group_retry }
               : tk,
           ),
         );

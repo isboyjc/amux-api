@@ -229,6 +229,39 @@ const renderGroupColumn = (
   const canChange =
     typeof updateTokenGroup === 'function' && (groupOptions || []).length > 0;
 
+  // 多分组令牌：行内的单选下拉表达不了「有序分组链」，直接展示整条链，
+  // 要改顺序去编辑弹窗。链首之外的分组用浅色区分，一眼能看出优先级。
+  const chain = Array.isArray(record?.groups) ? record.groups : [];
+  if (chain.length > 1) {
+    return (
+      <Tooltip
+        content={
+          t('该令牌按顺序使用以下分组：') +
+          chain.join(' → ') +
+          (record?.cross_group_retry
+            ? t('，失败时自动切换到下一个分组')
+            : t('，未开启跨分组重试'))
+        }
+        position='top'
+      >
+        <span className='flex items-center gap-1 flex-wrap'>
+          {chain.map((groupName, index) => (
+            <React.Fragment key={groupName}>
+              {index > 0 && <span className='opacity-50 text-xs'>→</span>}
+              <Tag
+                color={index === 0 ? tagColors[groupName] || stringToColor(groupName) : 'white'}
+                shape='circle'
+                size='small'
+              >
+                {groupName}
+              </Tag>
+            </React.Fragment>
+          ))}
+        </span>
+      </Tooltip>
+    );
+  }
+
   // Render the merged tag content
   let tagContent;
   if (text === 'auto') {
