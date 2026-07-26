@@ -32,7 +32,7 @@ from collections import Counter
 # ─────────────────────────────────────────────────────────────
 BASE_URL = "http://localhost:3000"
 TOKEN = "sk-9SBrFz1MFWPiJ5G3QFbF3qhHfHz15UoTVL4VXsjbDgBzm5wx"
-MODEL = "gpt-5.6-luna"
+MODEL = "gpt-5.4"
 
 # 可选：只存在于链上靠后分组的模型，用来验证「跨分组开关不影响模型发现」。
 # 留空则跳过该项检查。

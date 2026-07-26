@@ -170,3 +170,37 @@ func TestGetPriorityLevelCountDBPath(t *testing.T) {
 	assert.Equal(t, 2, GetPriorityLevelCount("vip", "gpt-4"), "禁用的 ability 不计入层数")
 	assert.Equal(t, 0, GetPriorityLevelCount("vip", "claude-3"))
 }
+
+// TestTokenUpdatePersistsGroupChain 验证分组链的写入与清空真的落库了。
+//
+// 特别是清空：Token.Update() 用 Select("...","group_chain",...) 指定字段，
+// 依赖 GORM「Select 里列出的字段即使是零值也写入」这个语义，并且依赖用
+// 列名（group_chain）而不是 Go 字段名（GroupsJSON）也能被正确匹配。
+// 这两条任何一条不成立，清空分组链就会静默失败 —— 用户以为改了、其实没改。
+func TestTokenUpdatePersistsGroupChain(t *testing.T) {
+	InitCommonColumnsForTest()
+	t.Cleanup(func() { DB.Exec("DELETE FROM tokens") })
+
+	token := &Token{Name: "chain-persist", Key: "k-chain-persist", UserId: 1, Group: "vip"}
+	require.NoError(t, token.SetGroups([]string{"vip", "default"}))
+	require.NoError(t, token.Insert())
+
+	reloaded, err := GetTokenById(token.Id)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vip", "default"}, reloaded.GetGroups())
+
+	// 改链
+	require.NoError(t, reloaded.SetGroups([]string{"default", "vip"}))
+	require.NoError(t, reloaded.Update())
+	again, err := GetTokenById(token.Id)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"default", "vip"}, again.GetGroups())
+
+	// 清空：零值必须被写入，否则老链还在，group 与链首对不上
+	require.NoError(t, again.SetGroups(nil))
+	require.NoError(t, again.Update())
+	cleared, err := GetTokenById(token.Id)
+	require.NoError(t, err)
+	assert.Empty(t, cleared.GetGroups(), "清空分组链必须真的落库")
+	assert.Equal(t, "", cleared.GroupsJSON)
+}
