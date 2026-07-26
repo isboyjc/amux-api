@@ -31,8 +31,8 @@ from collections import Counter
 # 改这三项就能跑
 # ─────────────────────────────────────────────────────────────
 BASE_URL = "http://localhost:3000"
-TOKEN = "sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-MODEL = "gpt-4"
+TOKEN = "sk-9SBrFz1MFWPiJ5G3QFbF3qhHfHz15UoTVL4VXsjbDgBzm5wx"
+MODEL = "gpt-5.6-luna"
 
 # 可选：只存在于链上靠后分组的模型，用来验证「跨分组开关不影响模型发现」。
 # 留空则跳过该项检查。
@@ -83,12 +83,17 @@ def extract_error(body):
     return str(body)
 
 
-def chat(base_url, token, model, timeout):
-    """发一次最小 chat 请求，返回 (状态码, 耗时毫秒, request_id, 错误信息)。"""
+def chat(base_url, token, model, timeout, max_tokens):
+    """发一次最小 chat 请求，返回 (状态码, 耗时毫秒, request_id, 错误信息)。
+
+    max_tokens 不能给太小：推理模型会先产出推理 token，额度不够就会以
+    400「Could not finish the message because max_tokens ... was reached」
+    失败，看起来像渠道有问题，其实是探测请求自己的问题。
+    """
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
+        "messages": [{"role": "user", "content": "只回复两个字：收到"}],
+        "max_tokens": max_tokens,
         "stream": False,
     }
     started = time.time()
@@ -143,7 +148,9 @@ def run(args):
     attempts = []
     total = args.count + (1 if args.discover_model else 0)
     for i in range(1, args.count + 1):
-        status, elapsed, rid, error = chat(base_url, args.token, args.model, args.timeout)
+        status, elapsed, rid, error = chat(
+            base_url, args.token, args.model, args.timeout, args.max_tokens
+        )
         print(f"  [{i}/{total}] {args.model}  HTTP {status}  {elapsed}ms")
         attempts.append((f"{i}", args.model, status, elapsed, rid, error))
         if i < args.count and args.interval > 0:
@@ -151,7 +158,7 @@ def run(args):
 
     if args.discover_model:
         status, elapsed, rid, error = chat(
-            base_url, args.token, args.discover_model, args.timeout
+            base_url, args.token, args.discover_model, args.timeout, args.max_tokens
         )
         print(f"  [{total}/{total}] {args.discover_model}  HTTP {status}  {elapsed}ms")
         attempts.append(("发现", args.discover_model, status, elapsed, rid, error))
@@ -226,6 +233,13 @@ def main():
     parser.add_argument("-n", "--count", type=int, default=3, help="请求次数，默认 3")
     parser.add_argument("-i", "--interval", type=float, default=1.0, help="请求间隔秒，默认 1")
     parser.add_argument("-t", "--timeout", type=int, default=180, help="单次超时秒数")
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=256,
+        help="探测请求的 max_tokens，默认 256。给太小会让推理模型以 400 失败，"
+        "看起来像渠道故障其实是探测请求本身的问题",
+    )
     parser.add_argument(
         "-w", "--settle-wait", type=float, default=2.0, help="查日志前等待结算的秒数"
     )

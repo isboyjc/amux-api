@@ -390,7 +390,13 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		tokenName := c.GetString("token_name")
 		modelName := c.GetString("original_model")
 		tokenId := c.GetInt("token_id")
-		userGroup := c.GetString("group")
+		// 取本次尝试实际命中的分组，而不是 ContextKeyUsingGroup。后者对多分组令牌
+		// 恒为链首分组，跨分组回落后错误日志会把失败归到错误的分组上，排查时非常
+		// 误导（消费日志没这个问题：HandleGroupRatio 会改写 relayInfo.UsingGroup）。
+		userGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup)
+		if userGroup == "" {
+			userGroup = c.GetString("group")
+		}
 		channelId := c.GetInt("channel_id")
 		other := make(map[string]interface{})
 		if c.Request != nil && c.Request.URL != nil {
