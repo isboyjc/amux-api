@@ -375,7 +375,14 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 
 	if modelName != "" {
-		tx = tx.Where("logs.model_name like ?", modelName)
+		// 与 GetUserLogs / SumUsedQuota 保持一致：管理员这里原先直接把输入丢进 LIKE，
+		// 导致 _ 被当成单字符通配符，而同一页的 /api/log/stat 走的是清洗过的模式，
+		// 列表行数和顶部额度统计对不上。
+		modelNamePattern, err := sanitizeLikePattern(modelName)
+		if err != nil {
+			return nil, 0, err
+		}
+		tx = tx.Where("logs.model_name LIKE ? ESCAPE '!'", modelNamePattern)
 	}
 	if userId != 0 {
 		tx = tx.Where("logs.user_id = ?", userId)
