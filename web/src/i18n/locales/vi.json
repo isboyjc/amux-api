@@ -571,6 +571,7 @@
     "仅密钥": "Chỉ khóa",
     "仅对自定义模型有效": "Chỉ hiệu quả đối với các mô hình tùy chỉnh",
     "仅屏蔽该用户在本期的中奖资格，开奖后自动失效。仅影响中奖资格，不影响参与、消耗与其它功能。": "Chỉ chặn quyền trúng thưởng của người dùng trong kỳ này, tự hết hiệu lực sau khi mở thưởng. Chỉ ảnh hưởng quyền trúng thưởng, không ảnh hưởng tham gia, tiêu thụ và các chức năng khác.",
+    "仅展示前 100 个令牌，可直接输入完整名称搜索": "Chỉ hiển thị 100 token đầu tiên; nhập tên đầy đủ để tìm kiếm",
     "仅当前层": "Chỉ cấp hiện tại",
     "仅当自动禁用开启时有效，关闭后不会自动禁用该渠道": "Chỉ hiệu quả khi bật tự động vô hiệu hóa, sau khi đóng, kênh sẽ không bị tự động vô hiệu hóa",
     "仅提交已勾选": "",

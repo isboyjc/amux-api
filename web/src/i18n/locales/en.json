@@ -585,6 +585,7 @@
     "仅密钥": "Only key",
     "仅对自定义模型有效": "Only effective for custom models",
     "仅屏蔽该用户在本期的中奖资格，开奖后自动失效。仅影响中奖资格，不影响参与、消耗与其它功能。": "Blocks the user's winning eligibility for this period only; it expires automatically once the draw is settled. It only affects winning eligibility — participation, usage and other features are untouched.",
+    "仅展示前 100 个令牌，可直接输入完整名称搜索": "Only the first 100 tokens are shown; type a full name to search",
     "仅当前层": "Current level only",
     "仅当自动禁用开启时有效，关闭后不会自动禁用该渠道": "Only effective when automatic disabling is enabled, after closing, the channel will not be automatically disabled",
     "仅提交已勾选": "",

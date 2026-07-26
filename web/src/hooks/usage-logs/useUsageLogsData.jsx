@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useContext } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@douyinfe/semi-ui';
+import { UserContext } from '../../context/User';
 import {
   API,
   getTodayStartTimestamp,
@@ -78,6 +79,14 @@ export const useLogsData = () => {
 
   // User and admin
   const isAdminUser = isAdmin();
+  const [userState] = useContext(UserContext);
+  const userGroup = userState?.user?.group || '';
+
+  // 令牌 / 分组 / 模型筛选项的下拉候选值
+  const [tokenOptions, setTokenOptions] = useState([]);
+  const [tokenOptionsTruncated, setTokenOptionsTruncated] = useState(false);
+  const [groupOptions, setGroupOptions] = useState([]);
+  const [modelOptions, setModelOptions] = useState([]);
   // Role-specific storage key to prevent different roles from overwriting each other
   const STORAGE_KEY = isAdminUser
     ? 'logs-table-columns-admin'
@@ -110,10 +119,13 @@ export const useLogsData = () => {
   const formInitValues = {
     username: initialUrlParams.get('username') || '',
     user_id: initialUrlParams.get('user_id') || '',
-    token_name: initialUrlParams.get('token_name') || '',
-    model_name: initialUrlParams.get('model_name') || '',
+    // token_name / model_name / group 现在是 Select：初值必须用 undefined 而不是 ''，
+    // 否则 Semi Select 会认为「已选中一个空值」而不渲染 placeholder。
+    // getFormValues() 里有 `|| ''` 兜底，拼 URL 的行为不变。
+    token_name: initialUrlParams.get('token_name') || undefined,
+    model_name: initialUrlParams.get('model_name') || undefined,
     channel: initialUrlParams.get('channel') || '',
-    group: initialUrlParams.get('group') || '',
+    group: initialUrlParams.get('group') || undefined,
     request_id: initialUrlParams.get('request_id') || '',
     dateRange: [
       timestamp2string(getTodayStartTimestamp()),
@@ -862,6 +874,62 @@ export const useLogsData = () => {
     }
   }, [formApi]);
 
+  // 令牌下拉候选：只能拉到「当前登录用户自己」的令牌 —— GetAllTokens 固定用登录态
+  // user id，没有按 user_id 查别人令牌的接口。管理员日志页要筛的是别人的令牌，
+  // 这份数据对他没用，所以管理员端保持手输输入框，这里也不发请求。
+  useEffect(() => {
+    if (isAdminUser) return;
+    // page_size 会被后端硬截断到 100（common/page_info.go:77），令牌超过 100 个的
+    // 账号只能拿到第一页；剩下的靠 allowCreate 手输兜底，并在下拉里给出提示。
+    API.get('/api/token/?p=1&page_size=100')
+      .then((res) => {
+        if (!res?.data?.success) return;
+        const items = res.data.data?.items || [];
+        const total = res.data.data?.total ?? items.length;
+        const names = [...new Set(items.map((it) => it?.name).filter(Boolean))];
+        setTokenOptions(names.map((name) => ({ label: name, value: name })));
+        setTokenOptionsTruncated(total > items.length);
+      })
+      .catch(() => {});
+  }, [isAdminUser]);
+
+  // 分组下拉候选：管理员取全量分组，普通用户取自己可用的分组。
+  useEffect(() => {
+    const url = isAdminUser ? '/api/group/' : '/api/user/self/groups';
+    API.get(url)
+      .then((res) => {
+        if (!res?.data?.success) return;
+        const data = res.data.data;
+        // /api/group/ 返回 string[]；/api/user/self/groups 返回 { name: {...} }
+        const names = Array.isArray(data)
+          ? data.filter(Boolean)
+          : Object.keys(data || {});
+        // self/groups 故意剔除了用户自身的等级分组（后端是为「创建令牌」场景设计的）。
+        // 但日志里的 group 存的是实际计费分组，完全可能就是这个等级分组，不补进来
+        // 用户会筛不到自己相当一部分日志。
+        if (!isAdminUser && userGroup && !names.includes(userGroup)) {
+          names.unshift(userGroup);
+        }
+        setGroupOptions(names.map((name) => ({ label: name, value: name })));
+      })
+      .catch(() => {});
+  }, [isAdminUser, userGroup]);
+
+  // 模型下拉候选：管理员取全站启用模型（/api/channel/models_enabled，AdminAuth），
+  // 普通用户取自己可用分组下的模型（/api/user/models，两者都返回 []string）。
+  useEffect(() => {
+    const url = isAdminUser
+      ? '/api/channel/models_enabled'
+      : '/api/user/models';
+    API.get(url)
+      .then((res) => {
+        if (!res?.data?.success) return;
+        const names = (res.data.data || []).filter(Boolean);
+        setModelOptions(names.map((name) => ({ label: name, value: name })));
+      })
+      .catch(() => {});
+  }, [isAdminUser]);
+
   // Check if any record has expandable content
   const hasExpandableRows = () => {
     return logs.some(
@@ -888,6 +956,12 @@ export const useLogsData = () => {
     setFormApi,
     formInitValues,
     getFormValues,
+
+    // Filter dropdown options
+    tokenOptions,
+    tokenOptionsTruncated,
+    groupOptions,
+    modelOptions,
 
     // Column visibility
     visibleColumns,
