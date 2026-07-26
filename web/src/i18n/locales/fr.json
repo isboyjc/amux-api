@@ -576,6 +576,7 @@
     "仅密钥": "Clé uniquement",
     "仅对自定义模型有效": "Uniquement efficace pour les modèles personnalisés",
     "仅屏蔽该用户在本期的中奖资格，开奖后自动失效。仅影响中奖资格，不影响参与、消耗与其它功能。": "Bloque l'éligibilité au gain de l'utilisateur pour cette période uniquement ; expire automatiquement après le tirage. Seule l'éligibilité au gain est affectée ; participation, consommation et autres fonctions restent inchangées.",
+    "仅展示前 100 个令牌，可直接输入完整名称搜索": "Seuls les 100 premiers jetons sont affichés ; saisissez un nom complet pour rechercher",
     "仅当前层": "Niveau actuel uniquement",
     "仅当自动禁用开启时有效，关闭后不会自动禁用该渠道": "Efficace uniquement lorsque la désactivation automatique est activée, après la fermeture, le canal ne sera pas automatiquement désactivé",
     "仅提交已勾选": "",

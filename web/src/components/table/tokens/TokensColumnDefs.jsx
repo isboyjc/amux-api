@@ -430,6 +430,9 @@ const renderQuotaUsage = (text, record, t) => {
   const remain = parseInt(record.remain_quota) || 0;
   const total = used + remain;
   if (record.unlimited_quota) {
+    // 无限额度下没有「剩余/总额」可言，但消耗依然有意义 —— 之前这里只渲染一个
+    // 「无限额度」标签，已用额度藏在 Popover 里，列表上完全看不到消耗。
+    // 注意必须单行横排：Tag 高度固定，在里面堆两行会溢出遮挡相邻行。
     const popoverContent = (
       <div className='text-xs p-2'>
         <Paragraph copyable={{ content: renderQuota(used) }}>
@@ -440,7 +443,13 @@ const renderQuotaUsage = (text, record, t) => {
     return (
       <Popover content={popoverContent} position='top'>
         <Tag color='white' shape='circle'>
-          {t('无限额度')}
+          <span className='text-xs whitespace-nowrap'>
+            {t('无限额度')}
+            <span className='mx-1 text-[var(--semi-color-text-3)]'>·</span>
+            <span className='text-[var(--semi-color-text-2)]'>
+              {t('已用')} {renderQuota(used)}
+            </span>
+          </span>
         </Tag>
       </Popover>
     );

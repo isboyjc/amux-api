@@ -32,8 +32,39 @@ const LogsFilters = ({
   setLogType,
   loading,
   isAdminUser,
+  tokenOptions,
+  tokenOptionsTruncated,
+  groupOptions,
+  modelOptions,
   t,
 }) => {
+  // 下拉候选只覆盖「当前存在」的令牌/分组/模型，而日志里的 token_name / group /
+  // model_name 是写入当时的历史快照。令牌改名、模型下架后，那批旧日志的名字不在
+  // 候选里 —— 所以下拉都开 allowCreate + filter，既能输入关键字快速过滤，也能
+  // 直接输入候选之外的任意值，不让下拉化造成功能倒退。
+  const searchableSelectProps = {
+    filter: true,
+    allowCreate: true,
+    showClear: true,
+    pure: true,
+    size: 'small',
+    className: 'w-full',
+    // 下面的 key 会让 Select 在候选到达时重挂，而 Semi 的 Form 字段默认在卸载时
+    // 删掉自己的值（form/foundation.js unRegister: !keepState 时 remove values）。
+    // 不加 keepState，从工单跳转过来的 ?token_name=xxx 预填值会被这次重挂清空。
+    keepState: true,
+  };
+
+  // Semi 的 allowCreate + 受控组件（Form.Select 由 Form 托管 value）组合下，
+  // select/foundation.js 里 handleValueChange 有一条捷径：
+  //     if (allowCreate && this._isControlledComponent()) {
+  //         originalOptions = this.getState('options');   // 复用旧 options
+  //     }
+  // 它会跳过对 props.optionList 的重新收集。我们的候选值是异步拉回来的，首次
+  // 挂载时是空数组，于是内部 options 永远停在空 —— 下拉打开什么都没有。
+  // 用 key 绑定候选数量，让候选到达时强制重建 Select，绕开这条捷径。
+  const optionsKey = (list) => (list?.length ? list.length : 0);
+
   return (
     <Form
       initValues={formInitValues}
@@ -66,31 +97,47 @@ const LogsFilters = ({
           </div>
 
           {/* 其他搜索字段 */}
-          <Form.Input
-            field='token_name'
-            prefix={<IconSearch />}
-            placeholder={t('令牌名称')}
-            showClear
-            pure
-            size='small'
-          />
+          {/* 管理员筛的是别人的令牌，拉不到候选值，仍走手输 */}
+          {isAdminUser ? (
+            <Form.Input
+              field='token_name'
+              prefix={<IconSearch />}
+              placeholder={t('令牌名称')}
+              showClear
+              pure
+              size='small'
+            />
+          ) : (
+            <Form.Select
+              key={`token-${optionsKey(tokenOptions)}`}
+              field='token_name'
+              placeholder={t('令牌名称')}
+              optionList={tokenOptions}
+              outerBottomSlot={
+                tokenOptionsTruncated ? (
+                  <div className='px-3 py-2 text-xs text-[var(--semi-color-text-2)]'>
+                    {t('仅展示前 100 个令牌，可直接输入完整名称搜索')}
+                  </div>
+                ) : null
+              }
+              {...searchableSelectProps}
+            />
+          )}
 
-          <Form.Input
+          <Form.Select
+            key={`model-${optionsKey(modelOptions)}`}
             field='model_name'
-            prefix={<IconSearch />}
             placeholder={t('模型名称')}
-            showClear
-            pure
-            size='small'
+            optionList={modelOptions}
+            {...searchableSelectProps}
           />
 
-          <Form.Input
+          <Form.Select
+            key={`group-${optionsKey(groupOptions)}`}
             field='group'
-            prefix={<IconSearch />}
             placeholder={t('分组')}
-            showClear
-            pure
-            size='small'
+            optionList={groupOptions}
+            {...searchableSelectProps}
           />
 
           <Form.Input
