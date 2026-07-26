@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useContext, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   API,
   showError,
@@ -53,26 +53,27 @@ import {
   IconSave,
   IconClose,
   IconKey,
+  IconArrowUp,
+  IconArrowDown,
 } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
-import { StatusContext } from '../../../../context/Status';
 
 const { Text, Title } = Typography;
 
 const EditTokenModal = (props) => {
   const { t } = useTranslation();
-  const [statusState, statusDispatch] = useContext(StatusContext);
   const [loading, setLoading] = useState(false);
   const isMobile = useIsMobile();
   const formApiRef = useRef(null);
   const [models, setModels] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [hasAutoGroup, setHasAutoGroup] = useState(false);
   const [autoGroupOrder, setAutoGroupOrder] = useState([]);
   const [showQuotaInput, setShowQuotaInput] = useState(false);
   const isEdit = props.editingToken.id !== undefined;
 
-  const defaultGroup = hasAutoGroup && statusState?.status?.default_use_auto_group ? 'auto' : '';
+  // 该令牌用的还是旧版 auto 分组（groups 为空且 group === 'auto'）。
+  // 这类令牌保持原行为运行，只有用户在这里保存后才会转成显式分组链。
+  const [isLegacyAuto, setIsLegacyAuto] = useState(false);
 
   const getInitValues = () => ({
     name: '',
@@ -83,8 +84,10 @@ const EditTokenModal = (props) => {
     model_limits_enabled: false,
     model_limits: [],
     allow_ips: '',
-    group: defaultGroup,
-    cross_group_retry: defaultGroup === 'auto',
+    // 新建令牌默认不预选任何分组，由用户自己挑。预填「全部 auto 分组」看着省事，
+    // 实际是替用户做了一个他没表达过的决定，而且一上来就选满十来个分组也没意义。
+    groups: [],
+    cross_group_retry: true,
     tokenCount: 1,
   });
 
@@ -108,8 +111,15 @@ const EditTokenModal = (props) => {
     }
   };
 
+  // 传数组时取整条分组链的模型并集（后端 groups=a,b,c），顺序与实际选路一致。
   const loadModels = async (group) => {
-    const params = group && group !== 'auto' ? `?group=${encodeURIComponent(group)}` : '';
+    let params = '';
+    if (Array.isArray(group)) {
+      const chain = group.filter((g) => g && g !== 'auto');
+      params = chain.length > 0 ? `?groups=${encodeURIComponent(chain.join(','))}` : '';
+    } else if (group && group !== 'auto') {
+      params = `?group=${encodeURIComponent(group)}`;
+    }
     let res = await API.get(`/api/user/models${params}`);
     const { success, message, data } = res.data;
     if (success) {
@@ -152,27 +162,27 @@ const EditTokenModal = (props) => {
     let res = await API.get(`/api/user/self/groups`);
     const { success, message, data } = res.data;
     if (success) {
-      let localGroupOptions = Object.entries(data).map(([group, info]) => ({
-        label: info.desc,
-        value: group,
-        ratio: info.ratio,
-        modelCount: info.model_count,
-        disabled: info.model_count === 0,
-      }));
-      const autoGroupExists = localGroupOptions.some((group) => group.value === 'auto');
-      setHasAutoGroup(autoGroupExists);
-      if (autoGroupExists) {
-        localGroupOptions.sort((a, b) => (a.value === 'auto' ? -1 : 1));
-        // 获取自动分组顺序
-        try {
-          const pricingRes = await API.get('/api/pricing');
-          const pricingData = pricingRes.data;
-          if (pricingData.success && pricingData.auto_groups) {
-            setAutoGroupOrder(pricingData.auto_groups);
-          }
-        } catch (e) {
-          // ignore
+      let localGroupOptions = Object.entries(data)
+        // auto 不再作为可选项：它已经降级成「一条预设的分组链」，
+        // 用户现在直接选具体分组并自己排序。存量 auto 令牌仍照常运行。
+        .filter(([group]) => group !== 'auto')
+        .map(([group, info]) => ({
+          label: info.desc,
+          value: group,
+          ratio: info.ratio,
+          modelCount: info.model_count,
+          disabled: info.model_count === 0,
+        }));
+      // 管理员配置的 auto 分组顺序。只用于「编辑旧版 auto 令牌」时还原它当前
+      // 实际生效的链，新建令牌不做任何预填。
+      try {
+        const pricingRes = await API.get('/api/pricing');
+        const pricingData = pricingRes.data;
+        if (pricingData.success && pricingData.auto_groups?.length > 0) {
+          setAutoGroupOrder(pricingData.auto_groups);
         }
+      } catch (e) {
+        // ignore
       }
       setGroups(localGroupOptions);
     } else {
@@ -196,13 +206,31 @@ const EditTokenModal = (props) => {
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
+
+      // 分组链回填。存量令牌 groups 为空，按 group 字段的旧语义还原：
+      //   - group === 'auto' → 用当前 auto 顺序预填，并提示用户保存后会转成
+      //     固定分组链、不再跟随管理员配置（绝不静默转换）
+      //   - group 为具体分组 → 单元素链
+      //   - group 为空       → 空链，表示使用用户自身等级分组
+      const legacyAuto = (!data.groups || data.groups.length === 0) && data.group === 'auto';
+      setIsLegacyAuto(legacyAuto);
+      if (data.groups && data.groups.length > 0) {
+        // 已是显式链
+      } else if (legacyAuto) {
+        // autoGroupOrder 由 loadGroups 异步拿，通常晚于这里，所以可能还是空。
+        // 真正的预填交给下面监听 autoGroupOrder 的 effect 兜底 —— 少了它，
+        // 用户打开旧版 auto 令牌直接保存会存成空链，令牌静默掉到用户分组。
+        data.groups = autoGroupOrder;
+      } else if (data.group) {
+        data.groups = [data.group];
+      } else {
+        data.groups = [];
+      }
+
       if (formApiRef.current) {
         formApiRef.current.setValues({ ...getInitValues(), ...data });
       }
-      // 根据令牌已有的分组加载对应模型
-      if (data.group) {
-        loadModels(data.group);
-      }
+      loadModels(data.groups);
     } else {
       showError(message);
     }
@@ -224,12 +252,23 @@ const EditTokenModal = (props) => {
       if (isEdit) {
         loadToken();
       } else {
+        setIsLegacyAuto(false);
         formApiRef.current?.setValues(getInitValues());
       }
     } else {
       formApiRef.current?.reset();
     }
   }, [props.visiable, props.editingToken.id]);
+
+  // 旧版 auto 令牌的分组链预填。loadToken 与 loadGroups 是两个独立的异步流程，
+  // 谁先完成不确定，所以在这里等 autoGroupOrder 到位后补一次。
+  useEffect(() => {
+    if (!isLegacyAuto || autoGroupOrder.length === 0) return;
+    const current = formApiRef.current?.getValue('groups') || [];
+    if (current.length > 0) return;
+    formApiRef.current?.setValue('groups', autoGroupOrder);
+    loadModels(autoGroupOrder);
+  }, [isLegacyAuto, autoGroupOrder]);
 
   const generateRandomSuffix = () => {
     const characters =
@@ -244,6 +283,12 @@ const EditTokenModal = (props) => {
   };
 
   const submit = async (values) => {
+    // 分组可以在编辑过程中被清空，但不能就这么保存：用户等级分组下没有任何渠道，
+    // 空分组的令牌调任何模型都只会得到「无可用渠道」，等于发出去一个死令牌。
+    if (!Array.isArray(values.groups) || values.groups.length === 0) {
+      showError(t('请至少选择一个分组'));
+      return;
+    }
     setLoading(true);
     if (isEdit) {
       let { tokenCount: _tc, ...localInputs } = values;
@@ -380,7 +425,7 @@ const EditTokenModal = (props) => {
     >
       <Spin spinning={loading}>
         <Form
-          key={`${isEdit ? 'edit' : 'new'}-${defaultGroup}`}
+          key={isEdit ? `edit-${props.editingToken.id}` : 'new'}
           initValues={getInitValues()}
           getFormApi={(api) => (formApiRef.current = api)}
           onSubmit={submit}
@@ -411,11 +456,29 @@ const EditTokenModal = (props) => {
                     />
                   </Col>
                   <Col span={24}>
+                    {isLegacyAuto && (
+                      <div
+                        style={{
+                          marginBottom: 12,
+                          padding: '8px 12px',
+                          borderRadius: 6,
+                          backgroundColor: 'var(--semi-color-warning-light-default)',
+                        }}
+                      >
+                        <Text size='small'>
+                          {t('该令牌使用旧版自动分组，当前由管理员配置的顺序决定。保存后将转为下方的固定分组链，不再跟随管理员配置变化。')}
+                        </Text>
+                      </div>
+                    )}
                     {groups.length > 0 ? (
                       <Form.Select
-                        field='group'
+                        field='groups'
                         label={t('令牌分组')}
-                        placeholder={hasAutoGroup && statusState?.status?.default_use_auto_group ? t('令牌分组，默认为自动分组') : t('令牌分组，默认为用户的分组')}
+                        multiple
+                        placeholder={t('请选择分组，可多选')}
+                        extraText={t(
+                          '可选择多个分组，选择顺序即优先级：请求会按该顺序依次寻找拥有目标模型的分组，靠前的先用；某个分组没有该模型时直接跳过，不消耗重试次数。选择多个分组后可开启「跨分组重试」，让靠前的分组失败时自动切换到下一个拥有该模型的分组。',
+                        )}
                         optionList={groups}
                         renderOptionItem={renderGroupOption}
                         filter={(input, option) => {
@@ -427,7 +490,7 @@ const EditTokenModal = (props) => {
                           );
                         }}
                         onChange={(val) => {
-                          formApiRef.current?.setValue('cross_group_retry', val === 'auto');
+                          setIsLegacyAuto(false);
                           loadModels(val);
                         }}
                         showClear
@@ -442,22 +505,69 @@ const EditTokenModal = (props) => {
                       />
                     )}
                   </Col>
+
+                  {/* 分组链顺序。Select 的多选顺序不直观，这里显式列出并提供上下移动，
+                      让「优先级」这件事一眼可见。 */}
                   <Col
                     span={24}
                     style={{
-                      display: values.group === 'auto' ? 'block' : 'none',
+                      display: (values.groups || []).length > 1 ? 'block' : 'none',
+                    }}
+                  >
+                    <div style={{ marginBottom: 8 }}>
+                      <Text type='secondary' size='small'>
+                        {t('请求按下列顺序寻找拥有目标模型的分组，靠前的优先')}
+                      </Text>
+                    </div>
+                    <Space vertical align='start' style={{ width: '100%' }}>
+                      {(values.groups || []).map((groupName, index) => {
+                        const option = groups.find((g) => g.value === groupName);
+                        const moveGroup = (from, to) => {
+                          const next = [...(values.groups || [])];
+                          if (to < 0 || to >= next.length) return;
+                          [next[from], next[to]] = [next[to], next[from]];
+                          formApiRef.current?.setValue('groups', next);
+                        };
+                        return (
+                          <Space key={groupName} align='center'>
+                            <Tag color='blue'>{index + 1}</Tag>
+                            <Text strong>{groupName}</Text>
+                            {typeof option?.modelCount === 'number' && (
+                              <Text type='secondary' size='small'>
+                                {option.modelCount} {t('可用模型')}
+                              </Text>
+                            )}
+                            <Button
+                              size='small'
+                              theme='borderless'
+                              icon={<IconArrowUp />}
+                              disabled={index === 0}
+                              onClick={() => moveGroup(index, index - 1)}
+                            />
+                            <Button
+                              size='small'
+                              theme='borderless'
+                              icon={<IconArrowDown />}
+                              disabled={index === (values.groups || []).length - 1}
+                              onClick={() => moveGroup(index, index + 1)}
+                            />
+                          </Space>
+                        );
+                      })}
+                    </Space>
+                  </Col>
+
+                  <Col
+                    span={24}
+                    style={{
+                      display: (values.groups || []).length > 1 ? 'block' : 'none',
                     }}
                   >
                     <Form.Switch
                       field='cross_group_retry'
                       label={t('跨分组重试')}
                       size='default'
-                      extraText={
-                        t('开启后，当前分组渠道失败时会按顺序尝试下一个分组的渠道') +
-                        (autoGroupOrder.length > 0
-                          ? t('，当前分组顺序：') + autoGroupOrder.join(' → ')
-                          : '')
-                      }
+                      extraText={t('开启后，当前分组渠道失败时会按顺序尝试下一个拥有该模型的分组；关闭则只在首个拥有该模型的分组内重试')}
                     />
                   </Col>
                   <Col xs={24} sm={24} md={24} lg={10} xl={10}>

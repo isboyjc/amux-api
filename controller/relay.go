@@ -185,8 +185,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	service.StartRetryBudget(c)
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	// 预算是 RetryTimes + 已发生的换组次数：换组不消耗分组内的重试预算，否则
+	// 链首分组把次数用光后，后面的分组一次机会都拿不到。真正的尾延迟上界由
+	// service.RetryBudgetExhausted 的时间预算兜底。
+	for ; retryParam.GetRetry() <= retryParam.Budget(); retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
 		channel, channelErr := getChannel(c, relayInfo, retryParam)
 		if channelErr != nil {
@@ -221,6 +225,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			service.MarkChannelSuccess(channel.Id, relayInfo.OriginModelName)
 			return
 		}
 
@@ -228,8 +233,30 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		relayInfo.LastError = newAPIError
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		// AllowCrossGroupFallback 判定的是「这次失败是不是渠道的锅」，两处复用同一个
+		// 判定：不是渠道的锅（参数非法、内容审核）就既不该记熔断失败 —— 否则几个用户
+		// 发几条坏请求就能把健康渠道打进冷却 —— 也不该换分组，因为换到哪个分组都是
+		// 同样的失败，只会把一个坏请求挨个打到链上每一个分组。
+		channelAtFault := service.AllowCrossGroupFallback(newAPIError)
+		if channelAtFault {
+			service.MarkChannelFailure(channel.Id, relayInfo.OriginModelName)
+		}
+		service.SetCrossGroupBlocked(c, !channelAtFault)
 
-		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
+		// 已经有响应体写给客户端了就绝不能重试，否则客户端会收到两段拼接的内容。
+		// 目前流式中途失败不会走到这里（StreamScannerHandler 只记录 EndReason 不
+		// 返回 error），这是一道兜底闸门：RelayInfo.HasSendResponse 早就定义好了
+		// 却从未被调用，重试次数提高后更需要它守住。
+		if relayInfo.HasSendResponse() {
+			logger.LogError(c, "response already sent to client, skip retry")
+			break
+		}
+
+		if !shouldRetry(c, newAPIError, retryParam.Budget()-retryParam.GetRetry()) {
+			break
+		}
+		if service.RetryBudgetExhausted(c) {
+			logger.LogError(c, "retry time budget exhausted, stop retrying")
 			break
 		}
 	}
@@ -363,7 +390,13 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		tokenName := c.GetString("token_name")
 		modelName := c.GetString("original_model")
 		tokenId := c.GetInt("token_id")
-		userGroup := c.GetString("group")
+		// 取本次尝试实际命中的分组，而不是 ContextKeyUsingGroup。后者对多分组令牌
+		// 恒为链首分组，跨分组回落后错误日志会把失败归到错误的分组上，排查时非常
+		// 误导（消费日志没这个问题：HandleGroupRatio 会改写 relayInfo.UsingGroup）。
+		userGroup := common.GetContextKeyString(c, constant.ContextKeyAutoGroup)
+		if userGroup == "" {
+			userGroup = c.GetString("group")
+		}
 		channelId := c.GetInt("channel_id")
 		other := make(map[string]interface{})
 		if c.Request != nil && c.Request.URL != nil {
@@ -507,7 +540,9 @@ func RelayTask(c *gin.Context) {
 		Retry:      common.GetPointer(0),
 	}
 
-	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+	service.StartRetryBudget(c)
+
+	for ; retryParam.GetRetry() <= retryParam.Budget(); retryParam.IncreaseRetry() {
 		var channel *model.Channel
 
 		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
@@ -542,6 +577,7 @@ func RelayTask(c *gin.Context) {
 
 		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
 		if taskErr == nil {
+			service.MarkChannelSuccess(channel.Id, relayInfo.OriginModelName)
 			break
 		}
 
@@ -550,9 +586,20 @@ func RelayTask(c *gin.Context) {
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+			// 与文本链路同一套判定，见上面的注释
+			channelAtFault := service.AllowCrossGroupFallback(
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+			if channelAtFault {
+				service.MarkChannelFailure(channel.Id, relayInfo.OriginModelName)
+			}
+			service.SetCrossGroupBlocked(c, !channelAtFault)
 		}
 
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+		if !shouldRetryTaskRelay(c, channel.Id, taskErr, retryParam.Budget()-retryParam.GetRetry()) {
+			break
+		}
+		if service.RetryBudgetExhausted(c) {
+			logger.LogError(c, "retry time budget exhausted, stop retrying")
 			break
 		}
 	}

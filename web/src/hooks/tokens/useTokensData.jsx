@@ -300,10 +300,24 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     setLoading(false);
   };
 
-  // Inline update token group (and cross_group_retry when switching to/from auto)
-  const updateTokenGroup = async (record, newGroup) => {
+  // 行内更新令牌的分组链。groups 是有序数组，顺序即优先级；
+  // 传空数组表示回到「使用用户自身分组」。
+  //
+  // 这里必须显式带上 groups 字段：后端把「字段缺省」当作「保持原链不变」，
+  // 只传 group 的话链还在，group 会被链首覆盖回去，界面看起来像没保存成功。
+  const updateTokenGroup = async (record, groups, crossGroupRetry) => {
     if (!record || !record.id) return;
-    if (record.group === newGroup) return;
+    const nextGroups = Array.isArray(groups) ? groups : [];
+    const prevGroups = Array.isArray(record.groups) ? record.groups : [];
+    const unchanged =
+      nextGroups.join(',') === prevGroups.join(',') &&
+      (nextGroups.length > 1
+        ? !!crossGroupRetry === !!record.cross_group_retry
+        : true) &&
+      // 单分组/空链时 prevGroups 为空，还要比一下 group 字段本身
+      (prevGroups.length > 0 || (nextGroups[0] || '') === (record.group || ''));
+    if (unchanged) return;
+
     const payload = {
       id: record.id,
       name: record.name,
@@ -313,9 +327,9 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       model_limits_enabled: record.model_limits_enabled,
       model_limits: record.model_limits || '',
       allow_ips: record.allow_ips || '',
-      group: newGroup,
-      cross_group_retry:
-        newGroup === 'auto' ? record.cross_group_retry : false,
+      group: nextGroups[0] || '',
+      groups: nextGroups,
+      cross_group_retry: nextGroups.length > 1 ? !!crossGroupRetry : false,
     };
     try {
       const res = await API.put('/api/token/', payload);
@@ -325,7 +339,13 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
         setTokens((prev) =>
           prev.map((tk) =>
             tk.id === record.id
-              ? { ...tk, group: data?.group ?? newGroup, cross_group_retry: data?.cross_group_retry ?? payload.cross_group_retry }
+              ? {
+                  ...tk,
+                  group: data?.group ?? payload.group,
+                  groups: data?.groups ?? nextGroups,
+                  cross_group_retry:
+                    data?.cross_group_retry ?? payload.cross_group_retry,
+                }
               : tk,
           ),
         );

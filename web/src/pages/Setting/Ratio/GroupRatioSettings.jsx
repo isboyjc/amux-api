@@ -23,12 +23,14 @@ import {
   Col,
   Collapsible,
   Form,
+  InputNumber,
   Radio,
   RadioGroup,
   Row,
   SideSheet,
   Spin,
   Switch,
+  TagInput,
   Tabs,
   Typography,
 } from '@douyinfe/semi-ui';
@@ -57,7 +59,23 @@ const OPTION_KEYS = [
   'group_ratio_setting.group_special_usable_group',
   'AutoGroups',
   'DefaultUseAutoGroup',
+  // 分组链（令牌多分组）与重试相关
+  'group_chain_setting.max_chain_length',
+  'group_chain_setting.total_retry_budget_ms',
+  'group_chain_setting.health_enabled',
+  'group_chain_setting.health_window_seconds',
+  'group_chain_setting.health_threshold',
+  'group_chain_setting.cross_group_skip_status_codes',
+  'group_chain_setting.cross_group_skip_error_codes',
 ];
+
+// options 表里存的都是字符串，这里统一做解析/回写。
+const CHAIN_DEFAULTS = {
+  'group_chain_setting.max_chain_length': 10,
+  'group_chain_setting.total_retry_budget_ms': 0,
+  'group_chain_setting.health_window_seconds': 60,
+  'group_chain_setting.health_threshold': 3,
+};
 
 function parseJSONSafe(str, fallback) {
   if (!str || !str.trim()) return fallback;
@@ -81,6 +99,13 @@ export default function GroupRatioSettings(props) {
     'group_ratio_setting.group_special_usable_group': '',
     AutoGroups: '',
     DefaultUseAutoGroup: false,
+    'group_chain_setting.max_chain_length': '',
+    'group_chain_setting.total_retry_budget_ms': '',
+    'group_chain_setting.health_enabled': '',
+    'group_chain_setting.health_window_seconds': '',
+    'group_chain_setting.health_threshold': '',
+    'group_chain_setting.cross_group_skip_status_codes': '',
+    'group_chain_setting.cross_group_skip_error_codes': '',
   });
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
@@ -176,6 +201,17 @@ export default function GroupRatioSettings(props) {
     }));
   }, []);
 
+  // options 值是字符串，数字/布尔/数组都要在这里转换
+  const chainNumber = (key) => {
+    const raw = inputs[key];
+    if (raw === '' || raw === undefined || raw === null) return CHAIN_DEFAULTS[key];
+    const parsed = Number(raw);
+    return Number.isNaN(parsed) ? CHAIN_DEFAULTS[key] : parsed;
+  };
+  const chainBool = (key) => inputs[key] === true || inputs[key] === 'true';
+  const chainArray = (key) => parseJSONSafe(inputs[key], []);
+  const setChain = (key, value) => setInputs((prev) => ({ ...prev, [key]: value }));
+
   const dv = dataVersionRef.current;
 
   const renderVisualMode = () => (
@@ -194,7 +230,7 @@ export default function GroupRatioSettings(props) {
 
       <Form.Section text={t('自动分组')}>
         <Text type='tertiary' size='small' style={{ display: 'block', marginBottom: 12 }}>
-          {t('令牌分组设为 auto 时，按以下顺序依次尝试选择可用分组，排在前面的优先级更高')}
+          {t('存量 auto 分组令牌仍按以下顺序依次选择分组。新建令牌不再提供 auto 选项，用户直接多选分组并自行排序，也不会被预填')}
         </Text>
         <Row gutter={16}>
           <Col xs={24} sm={12} md={8} lg={8} xl={8}>
@@ -214,7 +250,7 @@ export default function GroupRatioSettings(props) {
                 />
               </div>
               <Text type='tertiary' size='small' style={{ marginTop: 4 }}>
-                {t('开启后创建令牌默认选择auto分组，初始令牌也将设为auto')}
+                {t('开启后新注册用户的初始令牌将使用 auto 分组')}
               </Text>
             </Form.Slot>
           </Col>
@@ -225,6 +261,132 @@ export default function GroupRatioSettings(props) {
           groupNames={groupNames}
           onChange={handleAutoGroupsChange}
         />
+      </Form.Section>
+
+      <Form.Section text={t('分组链与重试')}>
+        <Text type='tertiary' size='small' style={{ display: 'block', marginBottom: 12 }}>
+          {t('用户可以给令牌绑定多个分组并自行排序，请求按顺序寻找拥有目标模型的分组。链上没有该模型的分组是纯内存查找跳过的，不发请求也不消耗重试次数，因此链长几乎不影响性能')}
+        </Text>
+        <Row gutter={16}>
+          <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+            <Form.Slot label={t('令牌最多可选分组数')}>
+              <InputNumber
+                min={1}
+                max={50}
+                value={chainNumber('group_chain_setting.max_chain_length')}
+                onChange={(v) =>
+                  setChain('group_chain_setting.max_chain_length', String(v ?? 10))
+                }
+                style={{ width: '100%' }}
+              />
+              <Text type='tertiary' size='small' style={{ marginTop: 4 }}>
+                {t('仅为存储与界面保护，不是性能约束')}
+              </Text>
+            </Form.Slot>
+          </Col>
+          <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+            <Form.Slot label={t('重试总时间预算（毫秒）')}>
+              <InputNumber
+                min={0}
+                step={1000}
+                value={chainNumber('group_chain_setting.total_retry_budget_ms')}
+                onChange={(v) =>
+                  setChain('group_chain_setting.total_retry_budget_ms', String(v ?? 0))
+                }
+                style={{ width: '100%' }}
+              />
+              <Text type='tertiary' size='small' style={{ marginTop: 4 }}>
+                {t('0 表示不限制。用时间而不是次数约束尾延迟：一次上游超时可能几十秒，次数根本反映不了用户实际等待多久')}
+              </Text>
+            </Form.Slot>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+            <Form.Slot label={t('渠道熔断')}>
+              <div className='flex items-center gap-2'>
+                <Switch
+                  checked={chainBool('group_chain_setting.health_enabled')}
+                  size='default'
+                  checkedText='｜'
+                  uncheckedText='〇'
+                  onChange={(v) =>
+                    setChain('group_chain_setting.health_enabled', String(v))
+                  }
+                />
+              </div>
+              <Text type='tertiary' size='small' style={{ marginTop: 4 }}>
+                {t('开启后，短时间内连续失败的渠道会进入冷却，选路阶段直接跳过、不再发请求。这是让链路变快的主要手段：重试是每个请求都要重新踩一遍坑，熔断只需踩一次')}
+              </Text>
+            </Form.Slot>
+          </Col>
+          <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+            <Form.Slot label={t('熔断统计窗口（秒）')}>
+              <InputNumber
+                min={1}
+                value={chainNumber('group_chain_setting.health_window_seconds')}
+                onChange={(v) =>
+                  setChain('group_chain_setting.health_window_seconds', String(v ?? 60))
+                }
+                style={{ width: '100%' }}
+              />
+            </Form.Slot>
+          </Col>
+          <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+            <Form.Slot label={t('熔断失败阈值')}>
+              <InputNumber
+                min={1}
+                value={chainNumber('group_chain_setting.health_threshold')}
+                onChange={(v) =>
+                  setChain('group_chain_setting.health_threshold', String(v ?? 3))
+                }
+                style={{ width: '100%' }}
+              />
+              <Text type='tertiary' size='small' style={{ marginTop: 4 }}>
+                {t('窗口内失败达到该次数后进入冷却。只统计「渠道的锅」，参数非法、内容审核这类失败不计入')}
+              </Text>
+            </Form.Slot>
+          </Col>
+        </Row>
+
+        <Row gutter={16}>
+          <Col xs={24} sm={24} md={12} lg={12} xl={12}>
+            <Form.Slot label={t('不跨分组的状态码')}>
+              <TagInput
+                value={chainArray('group_chain_setting.cross_group_skip_status_codes').map(String)}
+                onChange={(v) =>
+                  setChain(
+                    'group_chain_setting.cross_group_skip_status_codes',
+                    JSON.stringify(
+                      v.map((item) => Number(item)).filter((item) => !Number.isNaN(item)),
+                    ),
+                  )
+                }
+                placeholder={t('回车添加，如 400')}
+                style={{ width: '100%' }}
+              />
+              <Text type='tertiary' size='small' style={{ marginTop: 4 }}>
+                {t('命中这些状态码时只在当前分组内重试。请求本身有问题的错误换分组也是同样的失败，只会把一个坏请求挨个打到链上每一个分组')}
+              </Text>
+            </Form.Slot>
+          </Col>
+          <Col xs={24} sm={24} md={12} lg={12} xl={12}>
+            <Form.Slot label={t('不跨分组的错误码')}>
+              <TagInput
+                value={chainArray('group_chain_setting.cross_group_skip_error_codes')}
+                onChange={(v) =>
+                  setChain(
+                    'group_chain_setting.cross_group_skip_error_codes',
+                    JSON.stringify(v.map((item) => String(item).trim()).filter(Boolean)),
+                  )
+                }
+                placeholder={t('回车添加，如 sensitive_words_detected')}
+                style={{ width: '100%' }}
+              />
+            </Form.Slot>
+          </Col>
+        </Row>
       </Form.Section>
 
       <Form.Section text={t('分组特殊倍率')}>
