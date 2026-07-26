@@ -49,6 +49,9 @@ func GetUserGroups(c *gin.Context) {
 		if desc, ok := userUsableGroups[groupName]; ok {
 			// 完全过滤掉用户自己的等级分组，避免在创建令牌时选择用户等级作为令牌分组
 			// 用户等级分组应该只用于标识用户权限等级，不应该作为令牌的渠道分组
+			//
+			// 多分组链同样只从「该等级下可见的渠道分组」里选：等级分组本身不挂渠道，
+			// 放进链里也只会被选路零成本跳过，没有任何意义。
 			if groupName == userGroup {
 				continue
 			}

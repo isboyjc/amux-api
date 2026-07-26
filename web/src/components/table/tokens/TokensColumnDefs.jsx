@@ -47,6 +47,7 @@ import {
   IconEyeOpened,
   IconEyeClosed,
 } from '@douyinfe/semi-icons';
+import GroupChainPicker from './GroupChainPicker';
 
 // progress color helper
 const getProgressColor = (pct) => {
@@ -107,127 +108,71 @@ const renderGroupColumn = (
     premium: 'red',
   };
 
-  // Render the model preview block shown inside the Tooltip of each menu item.
-  // States: idle (not yet requested) / loading / loaded (with or without models) / error.
-  // Models are rendered as wrap-able tags with a max height so a group with hundreds
-  // of models won't blow up the tooltip.
-  const renderModelsPreview = (groupKey) => {
-    const cache = groupModelsCache[groupKey];
-    if (!cache || cache.status === 'loading') {
-      return (
-        <div className='text-xs opacity-70'>{t('加载中...')}</div>
-      );
-    }
-    if (cache.status === 'error') {
-      return (
-        <div className='text-xs' style={{ color: 'var(--semi-color-danger)' }}>
-          {cache.error || t('加载失败')}
-        </div>
-      );
-    }
-    const models = cache.models || [];
-    if (models.length === 0) {
-      return (
-        <div className='text-xs opacity-70'>{t('该分组下暂无可用模型')}</div>
-      );
-    }
-    const MAX_VISIBLE = 60;
-    const visible = models.slice(0, MAX_VISIBLE);
-    const extra = models.length - visible.length;
-    return (
-      <div
-        className='flex flex-wrap gap-1 overflow-auto'
-        style={{ maxHeight: 180, maxWidth: 320 }}
-      >
-        {visible.map((m) => (
-          <Tag key={m} size='small' shape='circle' color='white'>
-            {m}
-          </Tag>
-        ))}
-        {extra > 0 && (
-          <Tag size='small' shape='circle'>
-            +{extra}
-          </Tag>
-        )}
-      </div>
-    );
-  };
+  const canChange =
+    typeof updateTokenGroup === 'function' && (groupOptions || []).length > 0;
 
-  // Build dropdown menu (skip current value, mark disabled when modelCount === 0)
-  // Note: opt.label (group desc) can be quite long. We:
-  //  - cap the item width so a long desc cannot stretch the menu indefinitely;
-  //  - truncate desc to a single line (min-w-0 is required so truncate works inside a flex child);
-  //  - hovering an item shows a Tooltip with ONLY the available model list
-  //    (group name / desc / count are already visible in the menu item itself,
-  //    so we keep the popover minimal and focused).
-  // Hovering an item also triggers a lazy (cached) request for that group's models.
-  const buildItemNode = (opt) => {
-    const showDesc = opt.label && opt.label !== opt.value;
-    const modelCount = opt.modelCount;
+  // 令牌的分组链。为空时回退到 group 字段的旧语义：单分组 → 单元素链，
+  // 空字符串 → 空链，auto → 保留旧版展示。
+  const chain = Array.isArray(record?.groups) ? record.groups : [];
 
-    const labelBlock = (
-      <span
-        className='flex flex-col min-w-0 flex-1'
-        onMouseEnter={() => {
-          if (typeof fetchGroupModels === 'function') {
-            fetchGroupModels(opt.value);
-          }
-        }}
-      >
-        <span className='font-medium truncate'>{opt.value}</span>
-        {showDesc && (
-          <span className='text-xs text-[var(--semi-color-text-2)] truncate'>
-            {opt.label}
-          </span>
-        )}
-      </span>
-    );
-
-    const tooltipContent = (
-      <div className='max-w-[340px]'>{renderModelsPreview(opt.value)}</div>
-    );
-
-    return (
+  // 多分组令牌：把整条链按顺序展示出来，序号即优先级。
+  // 单选下拉表达不了「有序的多个分组」，所以点开的是勾选 + 排序面板。
+  if (chain.length > 1) {
+    const tagContent = (
       <Tooltip
-        content={tooltipContent}
-        position='right'
-        mouseEnterDelay={300}
-        trigger='hover'
+        content={
+          t('该令牌按顺序使用以下分组：') +
+          chain.join(' → ') +
+          (record?.cross_group_retry
+            ? t('，失败时自动切换到下一个分组')
+            : t('，未开启跨分组重试'))
+        }
+        position='top'
       >
-        <span className='flex items-center justify-between gap-2 min-w-[220px] max-w-[320px]'>
-          {labelBlock}
-          <span className='flex items-center gap-1 flex-shrink-0'>
-            {typeof modelCount === 'number' && (
-              <Tag size='small' color='cyan' shape='circle'>
-                {modelCount}
+        <span
+          className='flex items-center gap-1 flex-wrap'
+          style={canChange ? { cursor: 'pointer' } : undefined}
+        >
+          {chain.map((groupName, index) => (
+            <React.Fragment key={groupName}>
+              {index > 0 && <span className='opacity-50 text-xs'>→</span>}
+              <Tag
+                color={
+                  index === 0
+                    ? tagColors[groupName] || stringToColor(groupName)
+                    : 'white'
+                }
+                shape='circle'
+                size='small'
+              >
+                <span className='flex items-center gap-1'>
+                  <span className='opacity-60'>{index + 1}</span>
+                  {groupName}
+                </span>
               </Tag>
-            )}
-            {typeof opt.ratio === 'number' && (
-              <Tag size='small' color='green' shape='circle'>
-                {opt.ratio}x
-              </Tag>
-            )}
-          </span>
+            </React.Fragment>
+          ))}
+          {canChange && <IconTreeTriangleDown style={{ fontSize: 10 }} />}
         </span>
       </Tooltip>
     );
-  };
-
-  const menu = (groupOptions || []).map((opt) => ({
-    node: 'item',
-    name: buildItemNode(opt),
-    disabled: opt.disabled || opt.value === text,
-    active: opt.value === text,
-    onClick: () => {
-      if (opt.disabled || opt.value === text) return;
-      if (typeof updateTokenGroup === 'function') {
-        updateTokenGroup(record, opt.value);
-      }
-    },
-  }));
-
-  const canChange =
-    typeof updateTokenGroup === 'function' && (groupOptions || []).length > 0;
+    return (
+      <GroupChainPicker
+        value={chain}
+        crossGroupRetry={record?.cross_group_retry}
+        groupOptions={groupOptions}
+        groupModelsCache={groupModelsCache}
+        fetchGroupModels={fetchGroupModels}
+        disabled={!canChange}
+        minSelected={1}
+        onSave={(groups, crossGroupRetry) =>
+          updateTokenGroup(record, groups, crossGroupRetry)
+        }
+      >
+        {tagContent}
+      </GroupChainPicker>
+    );
+  }
 
   // Render the merged tag content
   let tagContent;
@@ -281,20 +226,23 @@ const renderGroupColumn = (
     );
   }
 
+  // 单分组 / 旧版 auto 令牌也走同一个选择器：用户随时可以把它改成多分组。
+  // auto 令牌的当前链是运行时展开的，这里传空数组，让用户从零显式选择 ——
+  // 与编辑弹窗一样，绝不静默把 auto 转成某条固定链。
   return (
-    <Dropdown
-      trigger='click'
-      position='bottomLeft'
-      clickToHide
-      menu={menu}
+    <GroupChainPicker
+      value={text === 'auto' || !text ? [] : [text]}
+      crossGroupRetry={record?.cross_group_retry}
+      groupOptions={groupOptions}
+      groupModelsCache={groupModelsCache}
+      fetchGroupModels={fetchGroupModels}
+      minSelected={1}
+      onSave={(groups, crossGroupRetry) =>
+        updateTokenGroup(record, groups, crossGroupRetry)
+      }
     >
-      <span
-        className='inline-flex'
-        onClick={(e) => e.stopPropagation()}
-      >
-        {tagContent}
-      </span>
-    </Dropdown>
+      {tagContent}
+    </GroupChainPicker>
   );
 };
 

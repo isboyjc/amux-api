@@ -389,9 +389,14 @@ func TokenAuth() func(c *gin.Context) {
 
 		userCache.WriteContext(c)
 
-		userGroup := userCache.Group
+		realUserGroup := userCache.Group
+		userGroup := realUserGroup
 		tokenGroup := token.Group
-		if tokenGroup != "" {
+		hasExplicitChain := len(token.GetGroups()) > 0
+		// 多分组令牌的 Group 字段保存链首分组，所以下面这段校验对新老令牌都成立：
+		// 校验的始终是「令牌默认使用的那个分组」。链上其余分组由
+		// service.ResolveGroupChain 单独过滤（失效的跳过而不是整体 403）。
+		if tokenGroup != "" && !hasExplicitChain {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
 				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
@@ -405,6 +410,20 @@ func TokenAuth() func(c *gin.Context) {
 				}
 			}
 			userGroup = tokenGroup
+		}
+
+		// 解析分组链。存量令牌（groups 列为空）会按 Group 字段的旧语义解析，
+		// 结果与改动前逐字节一致；只有用户在新 UI 里保存过的令牌才有显式链。
+		chain, chainErr := service.ResolveGroupChain(token, realUserGroup)
+		if chainErr != nil {
+			abortWithOpenAiMessage(c, http.StatusForbidden, chainErr.Error())
+			return
+		}
+		service.SetupGroupChain(c, chain)
+		if hasExplicitChain {
+			// 显式链：usingGroup 取链首。它决定限流分组（限流中间件跑在选路之前，
+			// 拿不到实际命中的分组）与渠道亲和缓存键，必须是稳定可预测的值。
+			userGroup = chain.Head()
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 

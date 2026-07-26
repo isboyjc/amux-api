@@ -602,9 +602,20 @@ func GetUserModels(c *gin.Context) {
 	}
 	usableGroups := service.GetUserUsableGroups(user.Group)
 	queryGroup := c.Query("group")
+	// groups=a,b,c 返回分组链上所有分组可用模型的并集，供令牌编辑弹窗预览
+	// 「这条链一共能用哪些模型」。靠前的分组先出现，与实际选路顺序一致。
+	queryGroups := service.NormalizeGroupChainInput(strings.Split(c.Query("groups"), ","))
 
 	var models []string
-	if queryGroup != "" && queryGroup != "auto" {
+	if len(queryGroups) > 0 {
+		allowed := make([]string, 0, len(queryGroups))
+		for _, group := range queryGroups {
+			if _, ok := usableGroups[group]; ok {
+				allowed = append(allowed, group)
+			}
+		}
+		models = service.GetChainEnabledModels(allowed)
+	} else if queryGroup != "" && queryGroup != "auto" {
 		// Filter by specific group, but only if the user has access to it
 		if _, ok := usableGroups[queryGroup]; ok {
 			models = model.GetGroupEnabledModels(queryGroup)

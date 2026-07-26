@@ -166,16 +166,11 @@ func ListModels(c *gin.Context, modelType int) {
 		if tokenGroup != "" {
 			group = tokenGroup
 		}
+		// 多分组令牌（以及旧版 auto 令牌）返回链上所有分组可用模型的并集，
+		// 靠前的分组先出现。分组链已由 middleware/auth.go 解析好放进 context。
 		var models []string
-		if tokenGroup == "auto" {
-			for _, autoGroup := range service.GetUserAutoGroup(userGroup) {
-				groupModels := model.GetGroupEnabledModels(autoGroup)
-				for _, g := range groupModels {
-					if !common.StringsContains(models, g) {
-						models = append(models, g)
-					}
-				}
-			}
+		if chain := service.GetGroupChain(c); !chain.IsEmpty() {
+			models = service.GetChainEnabledModels(chain.Groups)
 		} else {
 			models = model.GetGroupEnabledModels(group)
 		}
