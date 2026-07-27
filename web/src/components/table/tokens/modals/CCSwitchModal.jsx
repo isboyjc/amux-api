@@ -32,7 +32,6 @@ import { selectFilter } from '../../../../helpers';
 const APP_CONFIGS = {
   claude: {
     label: 'Claude',
-    defaultName: 'My Claude',
     modelFields: [
       { key: 'model', label: '主模型' },
       { key: 'haikuModel', label: 'Haiku 模型' },
@@ -42,12 +41,10 @@ const APP_CONFIGS = {
   },
   codex: {
     label: 'Codex',
-    defaultName: 'My Codex',
     modelFields: [{ key: 'model', label: '主模型' }],
   },
   gemini: {
     label: 'Gemini',
-    defaultName: 'My Gemini',
     modelFields: [{ key: 'model', label: '主模型' }],
   },
 };
@@ -63,7 +60,7 @@ function getServerAddress() {
   return window.location.origin;
 }
 
-function buildCCSwitchURL(app, name, models, apiKey) {
+function buildCCSwitchURL(app, name, models, apiKey, notes) {
   const serverAddress = getServerAddress();
   const endpoint = app === 'codex' ? serverAddress + '/v1' : serverAddress;
   const params = new URLSearchParams();
@@ -77,6 +74,12 @@ function buildCCSwitchURL(app, name, models, apiKey) {
   }
   params.set('homepage', serverAddress);
   params.set('enabled', 'true');
+  if (notes) params.set('notes', notes);
+  // 用量查询走 CC Switch 内置的「New API」模板：GET {baseUrl}/api/usage/token
+  // 带 Bearer {apiKey}，跟后端 controller.GetTokenUsage 的鉴权方式（同一个令牌
+  // key）完全对得上，不需要额外接口。
+  params.set('usageBaseUrl', serverAddress);
+  params.set('usageApiKey', apiKey);
   return `ccswitch://v1/import?${params.toString()}`;
 }
 
@@ -84,11 +87,15 @@ export default function CCSwitchModal({
   visible,
   onClose,
   tokenKey,
+  tokenName,
   modelOptions,
 }) {
   const { t } = useTranslation();
   const [app, setApp] = useState('claude');
-  const [name, setName] = useState(APP_CONFIGS.claude.defaultName);
+  // 默认名字用「令牌名 Amux API」，让用户在 CC Switch 里一眼认出这个配置
+  // 对应哪个令牌；没有令牌名（理论上不会发生）时退回 'Amux API'。
+  const defaultName = tokenName ? `${tokenName} Amux API` : 'Amux API';
+  const [name, setName] = useState(defaultName);
   const [models, setModels] = useState({});
 
   const currentConfig = APP_CONFIGS[app];
@@ -97,13 +104,13 @@ export default function CCSwitchModal({
     if (visible) {
       setModels({});
       setApp('claude');
-      setName(APP_CONFIGS.claude.defaultName);
+      setName(defaultName);
     }
-  }, [visible]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, defaultName]);
 
   const handleAppChange = (val) => {
     setApp(val);
-    setName(APP_CONFIGS[val].defaultName);
     setModels({});
   };
 
@@ -116,7 +123,8 @@ export default function CCSwitchModal({
       Toast.warning(t('请选择主模型'));
       return;
     }
-    const url = buildCCSwitchURL(app, name, models, 'sk-' + tokenKey);
+    const notes = t('通过 Amux API 令牌管理创建');
+    const url = buildCCSwitchURL(app, name, models, 'sk-' + tokenKey, notes);
     window.open(url, '_blank');
     onClose();
   };
@@ -160,11 +168,7 @@ export default function CCSwitchModal({
 
         <div>
           <div style={fieldLabelStyle}>{t('名称')}</div>
-          <Input
-            value={name}
-            onChange={setName}
-            placeholder={currentConfig.defaultName}
-          />
+          <Input value={name} onChange={setName} placeholder={defaultName} />
         </div>
 
         {currentConfig.modelFields.map((field) => (

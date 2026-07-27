@@ -45,7 +45,8 @@ const TokensTable = (tokensData) => {
     copyTokenKey,
     copyTokenConnectionString,
     manageToken,
-    onOpenLink,
+    openTestModal,
+    openCCSwitchModal,
     setEditingToken,
     setShowEdit,
     refresh,
@@ -68,7 +69,8 @@ const TokensTable = (tokensData) => {
       copyTokenKey,
       copyTokenConnectionString,
       manageToken,
-      onOpenLink,
+      openTestModal,
+      openCCSwitchModal,
       setEditingToken,
       setShowEdit,
       refresh,
@@ -87,7 +89,8 @@ const TokensTable = (tokensData) => {
     copyTokenKey,
     copyTokenConnectionString,
     manageToken,
-    onOpenLink,
+    openTestModal,
+    openCCSwitchModal,
     setEditingToken,
     setShowEdit,
     refresh,
@@ -102,12 +105,12 @@ const TokensTable = (tokensData) => {
   const tableColumns = useMemo(() => {
     return compactMode
       ? columns.map((col) => {
-        if (col.dataIndex === 'operate') {
-          const { fixed, ...rest } = col;
-          return rest;
-        }
-        return col;
-      })
+          if (col.dataIndex === 'operate') {
+            const { fixed, ...rest } = col;
+            return rest;
+          }
+          return col;
+        })
       : columns;
   }, [compactMode, columns]);
 

@@ -22,7 +22,6 @@ import {
   Button,
   Dropdown,
   Space,
-  SplitButtonGroup,
   Tag,
   AvatarGroup,
   Avatar,
@@ -38,7 +37,6 @@ import {
   renderGroup,
   renderQuota,
   getModelCategories,
-  showError,
   stringToColor,
 } from '../../../helpers';
 import {
@@ -200,7 +198,8 @@ const renderGroupColumn = (
   } else {
     const ratio = groupRatios[text];
     const displayName = text === '' ? t('用户分组') : text;
-    const color = text === '' ? 'white' : tagColors[text] || stringToColor(text);
+    const color =
+      text === '' ? 'white' : tagColors[text] || stringToColor(text);
     tagContent = (
       <Tag
         color={color}
@@ -221,9 +220,7 @@ const renderGroupColumn = (
   if (!canChange) {
     // Fallback: keep original non-interactive rendering using shared helper
     if (text === 'auto') return tagContent;
-    return (
-      <span className='flex items-center gap-1'>{renderGroup(text)}</span>
-    );
+    return <span className='flex items-center gap-1'>{renderGroup(text)}</span>;
   }
 
   // 单分组 / 旧版 auto 令牌也走同一个选择器：用户随时可以把它改成多分组。
@@ -490,63 +487,35 @@ const renderQuotaUsage = (text, record, t) => {
 const renderOperations = (
   text,
   record,
-  onOpenLink,
+  openTestModal,
+  openCCSwitchModal,
   setEditingToken,
   setShowEdit,
   manageToken,
   refresh,
   t,
 ) => {
-  let chatsArray = [];
-  try {
-    const raw = localStorage.getItem('chats');
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      for (let i = 0; i < parsed.length; i++) {
-        const item = parsed[i];
-        const name = Object.keys(item)[0];
-        if (!name) continue;
-        chatsArray.push({
-          node: 'item',
-          key: i,
-          name,
-          value: item[name],
-          onClick: () => onOpenLink(name, item[name], record),
-        });
-      }
-    }
-  } catch (_) {
-    showError(t('聊天链接配置错误，请联系管理员'));
-  }
-
+  // 原来的「聊天 + 聊天下拉」整体让位给「测试」：聊天链接依赖管理员在设置里
+  // 配置，没配就只能报错，而用户创建完令牌真正需要的是确认这个 key 能不能用。
+  // CC Switch 单独留一个直达按钮（往桌面客户端投递密钥，和聊天链接配置无关）。
   return (
     <Space wrap>
-      <SplitButtonGroup
-        className='overflow-hidden'
-        aria-label={t('项目操作按钮组')}
+      <Button
+        size='small'
+        type='tertiary'
+        onClick={() => openTestModal(record)}
       >
-        <Button
-          size='small'
-          type='tertiary'
-          onClick={() => {
-            if (chatsArray.length === 0) {
-              showError(t('请联系管理员配置聊天链接'));
-            } else {
-              const first = chatsArray[0];
-              onOpenLink(first.name, first.value, record);
-            }
-          }}
-        >
-          {t('聊天')}
-        </Button>
-        <Dropdown trigger='click' position='bottomRight' menu={chatsArray}>
-          <Button
-            type='tertiary'
-            icon={<IconTreeTriangleDown />}
-            size='small'
-          ></Button>
-        </Dropdown>
-      </SplitButtonGroup>
+        {t('测试')}
+      </Button>
+
+      <Button
+        size='small'
+        type='tertiary'
+        onClick={() => openCCSwitchModal(record)}
+      >
+        {/* CC Switch 是产品名，不进翻译词表 */}
+        {'CC Switch'}
+      </Button>
 
       {record.status === 1 ? (
         <Button
@@ -613,7 +582,8 @@ export const getTokensColumns = ({
   copyTokenKey,
   copyTokenConnectionString,
   manageToken,
-  onOpenLink,
+  openTestModal,
+  openCCSwitchModal,
   setEditingToken,
   setShowEdit,
   refresh,
@@ -714,7 +684,8 @@ export const getTokensColumns = ({
         renderOperations(
           text,
           record,
-          onOpenLink,
+          openTestModal,
+          openCCSwitchModal,
           setEditingToken,
           setShowEdit,
           manageToken,
