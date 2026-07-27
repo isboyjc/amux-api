@@ -20,13 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Modal } from '@douyinfe/semi-ui';
-import {
-  API,
-  copy,
-  showError,
-  showSuccess,
-  encodeToBase64,
-} from '../../helpers';
+import { API, copy, showError, showSuccess } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import {
@@ -36,7 +30,7 @@ import {
   encodeChannelConnectionString,
 } from '../../helpers/token';
 
-export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
+export const useTokensData = () => {
   const { t } = useTranslation();
 
   // Basic state
@@ -218,55 +212,6 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     await copyText(connStr);
   };
 
-  // Open link function for chat integrations
-  const onOpenLink = async (type, url, record) => {
-    const fullKey = await fetchTokenKey(record);
-    if (url && url.startsWith('ccswitch')) {
-      openCCSwitchModal(fullKey);
-      return;
-    }
-    if (url && url.startsWith('fluent')) {
-      openFluentNotification(fullKey);
-      return;
-    }
-    let status = localStorage.getItem('status');
-    let serverAddress = '';
-    if (status) {
-      status = JSON.parse(status);
-      serverAddress = status.server_address;
-    }
-    if (serverAddress === '') {
-      serverAddress = window.location.origin;
-    }
-    if (url.includes('{cherryConfig}') === true) {
-      let cherryConfig = {
-        id: 'new-api',
-        baseUrl: serverAddress,
-        apiKey: `sk-${fullKey}`,
-      };
-      let encodedConfig = encodeURIComponent(
-        encodeToBase64(JSON.stringify(cherryConfig)),
-      );
-      url = url.replaceAll('{cherryConfig}', encodedConfig);
-    } else if (url.includes('{aionuiConfig}') === true) {
-      let aionuiConfig = {
-        platform: 'new-api',
-        baseUrl: serverAddress,
-        apiKey: `sk-${fullKey}`,
-      };
-      let encodedConfig = encodeURIComponent(
-        encodeToBase64(JSON.stringify(aionuiConfig)),
-      );
-      url = url.replaceAll('{aionuiConfig}', encodedConfig);
-    } else {
-      let encodedServerAddress = encodeURIComponent(serverAddress);
-      url = url.replaceAll('{address}', encodedServerAddress);
-      url = url.replaceAll('{key}', `sk-${fullKey}`);
-    }
-
-    window.open(url, '_blank');
-  };
-
   // Manage token function (delete, enable, disable)
   const manageToken = async (id, action, record) => {
     setLoading(true);
@@ -373,9 +318,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     }));
 
     const params =
-      group && group !== 'auto'
-        ? `?group=${encodeURIComponent(group)}`
-        : '';
+      group && group !== 'auto' ? `?group=${encodeURIComponent(group)}` : '';
     const req = API.get(`/api/user/models${params}`)
       .then((res) => {
         const { success, message, data } = res.data || {};
@@ -418,8 +361,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   // Search tokens function
   const searchTokens = async (page = 1, size = pageSize) => {
     const normalizedPage = Number.isInteger(page) && page > 0 ? page : 1;
-    const normalizedSize =
-      Number.isInteger(size) && size > 0 ? size : pageSize;
+    const normalizedSize = Number.isInteger(size) && size > 0 ? size : pageSize;
 
     const { searchKeyword, searchToken } = getFormValues();
     if (searchKeyword === '' && searchToken === '') {
@@ -476,8 +418,8 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
 
   // Row selection handlers
   const rowSelection = {
-    onSelect: (record, selected) => { },
-    onSelectAll: (selected, selectedRows) => { },
+    onSelect: (record, selected) => {},
+    onSelectAll: (selected, selectedRows) => {},
     onChange: (selectedRowKeys, selectedRows) => {
       setSelectedKeys(selectedRows);
     },
@@ -575,12 +517,14 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
               disabled: info.model_count === 0,
             });
           }
-          options.sort((a, b) => (a.value === 'auto' ? -1 : b.value === 'auto' ? 1 : 0));
+          options.sort((a, b) =>
+            a.value === 'auto' ? -1 : b.value === 'auto' ? 1 : 0,
+          );
           setGroupRatios(ratios);
           setGroupOptions(options);
         }
       })
-      .catch(() => { });
+      .catch(() => {});
   }, [pageSize]);
 
   return {
@@ -628,7 +572,6 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     toggleTokenVisibility,
     copyTokenKey,
     copyTokenConnectionString,
-    onOpenLink,
     manageToken,
     updateTokenGroup,
     fetchGroupModels,
