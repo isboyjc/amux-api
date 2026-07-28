@@ -73,24 +73,18 @@ export const useTokenTest = ({ fetchTokenKey }) => {
 
     setLoadingModels(true);
     try {
-      // 令牌能用哪些模型，按令牌自身的配置来算，而不是列全站模型。
+      // 令牌能用哪些模型由后端算（GET /api/token/:id/models）：开了
+      // model_limits 就是白名单，否则是 service.ResolveGroupChain 解析出的
+      // 分组链的模型并集。
       //
-      // 1) 开了 model_limits：白名单就是全集，直接用。注意不要在前端拿它
-      //    反过来预判「这个模型会被拒」—— 后端校验前会过
-      //    ratio_setting.FormatMatchingModelName 归一化（match gpts &
-      //    thinking-*），字面比较会算错，判断留给后端。
-      // 2) 没开：查分组链的模型并集。链是有序的、失败会 fallback
-      //    （service.ResolveGroupChain），所以能用的是整条链的并集而不是
-      //    链首那一个 —— 后端 ?groups=a,b,c 就是干这个的。
-      // 3) auto 分组：链由 GetUserAutoGroup 运行时算，前端算不出来，不传
-      //    groups 参数退回全部可用分组的并集（同 EditTokenModal）。
-      const chain = Array.isArray(target?.groups) ? target.groups : [];
-      const usable = chain.filter((g) => g && g !== 'auto');
-      const params = usable.length
-        ? `?detail=true&groups=${encodeURIComponent(usable.join(','))}`
-        : '?detail=true';
-
-      const res = await API.get(`/api/user/models${params}`);
+      // 这件事不能在前端拼 /api/user/models?groups=... 来做。列表里的
+      // record.groups 只有「用户显式配过链」的令牌才非空，旧版 auto 与单分组
+      // 令牌都是空数组，拼不出 groups 参数就会退化成「全部可用分组的并集」，
+      // 也就是把用户根本调不到的模型也列出来。链的四条解析路径（显式链 /
+      // auto / 单分组 / 用户分组）只有后端拿得全，交给它。
+      const res = await API.get(
+        `/api/token/${encodeURIComponent(target?.id)}/models`,
+      );
       const { success, message, data } = res.data || {};
       if (!success) {
         showError(message);
@@ -98,27 +92,18 @@ export const useTokenTest = ({ fetchTokenKey }) => {
       }
 
       const map = {};
+      const names = [];
       (Array.isArray(data) ? data : []).forEach((item) => {
         if (typeof item === 'string') {
           map[item] = { modality: 'text' };
+          names.push(item);
         } else if (item?.name) {
           map[item.name] = { modality: item.modality || 'text' };
+          names.push(item.name);
         }
       });
       setModalityMap(map);
-
-      if (target?.model_limits_enabled && target?.model_limits) {
-        // 白名单模型可能不在 detail 结果里（比如分组下已下架），modality
-        // 查不到就按 text 兜底。
-        setModels(
-          target.model_limits
-            .split(',')
-            .map((m) => m.trim())
-            .filter(Boolean),
-        );
-      } else {
-        setModels(Object.keys(map));
-      }
+      setModels(names);
     } finally {
       setLoadingModels(false);
     }

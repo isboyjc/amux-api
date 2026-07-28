@@ -8,12 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/mysql"
@@ -537,5 +541,200 @@ func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
 	}
 	if strings.Contains(unauthorizedRecorder.Body.String(), token.Key) {
 		t.Fatalf("unauthorized key response leaked raw token key: %s", unauthorizedRecorder.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/token/:id/models —— 令牌测试弹窗的模型集合
+// ---------------------------------------------------------------------------
+
+type tokenModelItem struct {
+	Name     string `json:"name"`
+	Modality string `json:"modality"`
+}
+
+// setupTokenModelsTestEnv 灌好分组、倍率、用户与 ability。
+// 分组能力刻意做成不对称，好让「链上并集」和「全部可用分组并集」能被区分开 ——
+// 前者才是令牌真正能调的模型。
+func setupTokenModelsTestEnv(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	db := setupTokenControllerTestDB(t)
+	model.InitCommonColumnsForTest()
+
+	prevMemoryCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	prevUsable := setting.UserUsableGroups2JSONString()
+	prevRatio := ratio_setting.GroupRatio2JSONString()
+	prevAuto := setting.AutoGroups2JsonString()
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = prevMemoryCache
+		_ = setting.UpdateUserUsableGroupsByJSONString(prevUsable)
+		_ = ratio_setting.UpdateGroupRatioByJSONString(prevRatio)
+		_ = setting.UpdateAutoGroupsByJsonString(prevAuto)
+	})
+
+	if err := db.AutoMigrate(&model.User{}, &model.Ability{}, &model.Channel{}); err != nil {
+		t.Fatalf("failed to migrate: %v", err)
+	}
+	if err := setting.UpdateUserUsableGroupsByJSONString(
+		`{"premium":"p","premium/openai":"po","special":"s","default":"d"}`); err != nil {
+		t.Fatalf("failed to seed usable groups: %v", err)
+	}
+	if err := ratio_setting.UpdateGroupRatioByJSONString(
+		`{"premium":1,"premium/openai":1,"special":1,"default":1}`); err != nil {
+		t.Fatalf("failed to seed group ratio: %v", err)
+	}
+	if err := setting.UpdateAutoGroupsByJsonString(`["special","premium"]`); err != nil {
+		t.Fatalf("failed to seed auto groups: %v", err)
+	}
+
+	if err := db.Create(&model.User{
+		Id: 1, Username: "owner", Group: "default",
+		Status: common.UserStatusEnabled, Role: common.RoleCommonUser,
+	}).Error; err != nil {
+		t.Fatalf("failed to create user: %v", err)
+	}
+	if err := db.Create(&model.Channel{
+		Id: 1, Status: common.ChannelStatusEnabled, Name: "c1",
+	}).Error; err != nil {
+		t.Fatalf("failed to create channel: %v", err)
+	}
+	if err := db.Create(&[]model.Ability{
+		{Group: "premium", Model: "premium-only", ChannelId: 1, Enabled: true},
+		{Group: "premium", Model: "shared", ChannelId: 1, Enabled: true},
+		{Group: "premium/openai", Model: "shared", ChannelId: 1, Enabled: true},
+		{Group: "special", Model: "special-only", ChannelId: 1, Enabled: true},
+		{Group: "default", Model: "default-only", ChannelId: 1, Enabled: true},
+	}).Error; err != nil {
+		t.Fatalf("failed to create abilities: %v", err)
+	}
+	return db
+}
+
+func requestTokenModels(t *testing.T, tokenID int, userID int) tokenAPIResponse {
+	t.Helper()
+
+	target := "/api/token/" + strconv.Itoa(tokenID) + "/models"
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, target, nil, userID)
+	ctx.Params = gin.Params{{Key: "id", Value: strconv.Itoa(tokenID)}}
+	GetTokenModels(ctx)
+	return decodeAPIResponse(t, recorder)
+}
+
+func decodeTokenModelNames(t *testing.T, response tokenAPIResponse) []string {
+	t.Helper()
+
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+	var items []tokenModelItem
+	if err := common.Unmarshal(response.Data, &items); err != nil {
+		t.Fatalf("failed to decode token models response: %v", err)
+	}
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		names = append(names, item.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func TestGetTokenModelsResolvesGroupChain(t *testing.T) {
+	db := setupTokenModelsTestEnv(t)
+
+	explicitChain := seedToken(t, db, 1, "chain", "chain1234chain5678")
+	explicitChain.Group = "premium/openai"
+	if err := explicitChain.SetGroups([]string{"premium/openai", "premium"}); err != nil {
+		t.Fatalf("failed to set groups: %v", err)
+	}
+	if err := db.Save(explicitChain).Error; err != nil {
+		t.Fatalf("failed to save chain token: %v", err)
+	}
+
+	single := seedToken(t, db, 1, "single", "single1234single5678")
+	single.Group = "special"
+	if err := db.Save(single).Error; err != nil {
+		t.Fatalf("failed to save single token: %v", err)
+	}
+
+	legacyAuto := seedToken(t, db, 1, "auto", "auto1234auto5678")
+	legacyAuto.Group = "auto"
+	if err := db.Save(legacyAuto).Error; err != nil {
+		t.Fatalf("failed to save auto token: %v", err)
+	}
+
+	userGroupToken := seedToken(t, db, 1, "usergroup", "user1234user5678")
+	userGroupToken.Group = ""
+	if err := db.Save(userGroupToken).Error; err != nil {
+		t.Fatalf("failed to save user-group token: %v", err)
+	}
+
+	limited := seedToken(t, db, 1, "limited", "limit1234limit5678")
+	limited.Group = "premium"
+	limited.ModelLimitsEnabled = true
+	limited.ModelLimits = "shared, premium-only"
+	if err := db.Save(limited).Error; err != nil {
+		t.Fatalf("failed to save limited token: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		tokenID  int
+		expected []string
+	}{
+		// 链上两个分组的并集，而不是链首那一个
+		{"explicit chain", explicitChain.Id, []string{"premium-only", "shared"}},
+		// 单分组令牌只有该分组的模型，不是全部可用分组
+		{"legacy single group", single.Id, []string{"special-only"}},
+		// auto 展开成管理员配置的 special → premium
+		{"legacy auto", legacyAuto.Id, []string{"premium-only", "shared", "special-only"}},
+		// 空分组回落到用户自身等级分组
+		{"user group fallback", userGroupToken.Id, []string{"default-only"}},
+		// 白名单优先于分组
+		{"model limits", limited.Id, []string{"premium-only", "shared"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			names := decodeTokenModelNames(t, requestTokenModels(t, tc.tokenID, 1))
+			if !reflect.DeepEqual(names, tc.expected) {
+				t.Fatalf("expected models %v, got %v", tc.expected, names)
+			}
+		})
+	}
+}
+
+// 关键回归：单分组 / auto / 空链令牌此前在前端被算成「全部可用分组的并集」，
+// 弹窗里列出了令牌根本调不到的模型。
+func TestGetTokenModelsExcludesUnreachableModels(t *testing.T) {
+	db := setupTokenModelsTestEnv(t)
+
+	token := seedToken(t, db, 1, "single", "excl1234excl5678")
+	token.Group = "special"
+	if err := db.Save(token).Error; err != nil {
+		t.Fatalf("failed to save token: %v", err)
+	}
+
+	names := decodeTokenModelNames(t, requestTokenModels(t, token.Id, 1))
+	for _, unreachable := range []string{"premium-only", "shared", "default-only"} {
+		for _, got := range names {
+			if got == unreachable {
+				t.Fatalf("token scoped to %q must not list %q, got %v",
+					token.Group, unreachable, names)
+			}
+		}
+	}
+}
+
+func TestGetTokenModelsRequiresOwnership(t *testing.T) {
+	db := setupTokenModelsTestEnv(t)
+
+	token := seedToken(t, db, 1, "owned", "own1234own5678")
+	token.Group = "premium"
+	if err := db.Save(token).Error; err != nil {
+		t.Fatalf("failed to save token: %v", err)
+	}
+
+	if response := requestTokenModels(t, token.Id, 2); response.Success {
+		t.Fatalf("expected cross-user model listing to fail")
 	}
 }

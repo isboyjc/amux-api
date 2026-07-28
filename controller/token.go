@@ -145,6 +145,55 @@ func GetToken(c *gin.Context) {
 	common.ApiSuccess(c, buildMaskedTokenResponse(token))
 }
 
+// GetTokenModels 返回某个令牌真正能调用的模型集合，供令牌测试弹窗使用。
+//
+// 前端算不出这个集合，所以必须由后端来定：
+//
+//  1. 开了 model_limits：白名单即全集。白名单是「分组能力 ∩ 用户勾选」的结果，
+//     不再与分组求交 —— 分组下已下架的模型仍然列出来，测试会如实报错，这比
+//     悄悄把它从列表里抹掉更有助于排查。
+//  2. 没开：走 service.ResolveGroupChain 拿到实际选路链，取链上分组的模型并集。
+//     显式链 / 旧版 auto / 单分组 / 用户分组四条路径都收敛到这里，前端不必
+//     再各自还原一遍旧语义 —— 这正是它此前对 auto 与空链令牌算错的地方。
+func GetTokenModels(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	userId := c.GetInt("id")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	token, err := model.GetTokenByIds(id, userId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	if token.ModelLimitsEnabled {
+		limits := make([]string, 0)
+		for _, name := range token.GetModelLimits() {
+			if name = strings.TrimSpace(name); name != "" {
+				limits = append(limits, name)
+			}
+		}
+		common.ApiSuccess(c, buildModelDetailItems(limits))
+		return
+	}
+
+	userGroup, err := model.GetUserGroup(userId, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	chain, err := service.ResolveGroupChain(token, userGroup)
+	if err != nil {
+		// 分组全部失效 / auto 未启用等。这是令牌本身的配置问题，
+		// 原样透出给用户，比返回一个空列表让人以为「没有模型」清楚。
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, buildModelDetailItems(service.GetChainEnabledModels(chain.Groups)))
+}
+
 func GetTokenKey(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	userId := c.GetInt("id")
