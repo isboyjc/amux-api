@@ -39,54 +39,70 @@ function TokensPage() {
   // 只在弹窗生命周期内留在 hook 的 ref 里。
   const tokenTest = useTokenTest({ fetchTokenKey: tokensData.fetchTokenKey });
   const [modelOptions, setModelOptions] = useState([]);
+  const [loadingModelOptions, setLoadingModelOptions] = useState(false);
   const [ccSwitchVisible, setCCSwitchVisible] = useState(false);
   const [ccSwitchKey, setCCSwitchKey] = useState('');
   const [ccSwitchTokenName, setCCSwitchTokenName] = useState('');
 
-  const loadModels = async () => {
+  // 某个令牌真正能调用的模型，由后端按 model_limits / 分组链算（同测试弹窗）。
+  // 不能用 /api/user/models：那是「用户全部可用分组的并集」，会把该令牌调不到
+  // 的模型也塞进 CC Switch 的下拉里，用户选了之后在客户端才报错。
+  const loadTokenModels = async (record) => {
+    // 先清空：否则在请求返回前，下拉里还挂着上一个令牌的模型，用户可能选中一个
+    // 本令牌调不到的模型。
+    setModelOptions([]);
+    setLoadingModelOptions(true);
     try {
-      const res = await API.get('/api/user/models');
+      const res = await API.get(
+        `/api/token/${encodeURIComponent(record?.id)}/models`,
+      );
       const { success, message, data } = res.data || {};
-      if (success) {
-        const categories = getModelCategories(tokensData.t);
-        const options = (data || []).map((model) => {
-          let icon = null;
-          for (const [key, category] of Object.entries(categories)) {
-            if (key !== 'all' && category.filter({ model_name: model })) {
-              icon = category.icon;
-              break;
-            }
-          }
-          return {
-            label: (
-              <span className='flex items-center gap-1'>
-                {icon}
-                {model}
-              </span>
-            ),
-            value: model,
-          };
-        });
-        setModelOptions(options);
-      } else {
+      if (!success) {
         showError(tokensData.t(message));
+        setModelOptions([]);
+        return;
       }
+      const categories = getModelCategories(tokensData.t);
+      const options = (data || []).map((item) => {
+        // 该端点返回 [{name, modality}]，只取模型名
+        const model = typeof item === 'string' ? item : item?.name;
+        let icon = null;
+        for (const [key, category] of Object.entries(categories)) {
+          if (key !== 'all' && category.filter({ model_name: model })) {
+            icon = category.icon;
+            break;
+          }
+        }
+        return {
+          label: (
+            <span className='flex items-center gap-1'>
+              {icon}
+              {model}
+            </span>
+          ),
+          value: model,
+        };
+      });
+      setModelOptions(options);
     } catch (e) {
       showError(e.message || 'Failed to load models');
+      setModelOptions([]);
+    } finally {
+      setLoadingModelOptions(false);
     }
   };
 
   // CC Switch 需要令牌明文 key 和令牌名（默认名字用「令牌名 Amux API」），
   // key 通过 tokensData.fetchTokenKey 现取（带缓存），不在这里持久化。
   const openCCSwitchModal = async (record) => {
-    if (modelOptions.length === 0) {
-      loadModels();
-    }
     try {
       const fullKey = await tokensData.fetchTokenKey(record);
       setCCSwitchKey(fullKey || '');
       setCCSwitchTokenName(record?.name || '');
       setCCSwitchVisible(true);
+      // 每次都按当前令牌重新取：模型集合是「每令牌」的，缓存住第一个令牌的
+      // 结果会让之后打开的令牌看到别人的模型列表。
+      loadTokenModels(record);
     } catch (_) {
       // fetchTokenKey 失败已经在 hook 内部 toast 过了
     }
@@ -136,6 +152,7 @@ function TokensPage() {
         tokenKey={ccSwitchKey}
         tokenName={ccSwitchTokenName}
         modelOptions={modelOptions}
+        loadingModels={loadingModelOptions}
       />
 
       <TokenTestModal

@@ -89,6 +89,7 @@ export default function CCSwitchModal({
   tokenKey,
   tokenName,
   modelOptions,
+  loadingModels = false,
 }) {
   const { t } = useTranslation();
   const [app, setApp] = useState('claude');
@@ -188,7 +189,8 @@ export default function CCSwitchModal({
               style={{ width: '100%' }}
               showClear
               searchable
-              emptyContent={t('暂无数据')}
+              loading={loadingModels}
+              emptyContent={loadingModels ? t('加载中...') : t('暂无可用模型')}
             />
           </div>
         ))}
