@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -200,6 +201,43 @@ func loadOptionsFromDatabase() {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
 	}
+	migrateLegacyConcurrencyOption()
+}
+
+// migrateLegacyConcurrencyOption 把旧键 token_setting.max_token_concurrency
+// 搬到新键 token_setting.default_user_max_concurrency。
+//
+// 必须真的落库改键，不能只在读取时做兼容：管理面板显示的是新键的原始值，
+// 若只在 GetDefaultUserMaxConcurrency 里做回落，管理员会看到 0（以为没配过），
+// 而实际限流按 1000 在跑 —— 显示与行为不一致。
+//
+// 幂等：搬完即删除旧键，重复调用（SyncOptions 每隔一段时间会再跑一次）无副作用。
+func migrateLegacyConcurrencyOption() {
+	const legacyKey = "token_setting.max_token_concurrency"
+	const newKey = "token_setting.default_user_max_concurrency"
+
+	ts := operation_setting.GetTokenSetting()
+	if ts.MaxTokenConcurrency <= 0 {
+		return // 没有存量值，无需迁移
+	}
+	legacyValue := ts.MaxTokenConcurrency
+
+	// 新键已被显式配置过时不覆盖，只清理旧键
+	if ts.DefaultUserMaxConcurrency <= 0 {
+		if err := UpdateOption(newKey, strconv.Itoa(legacyValue)); err != nil {
+			common.SysLog("failed to migrate legacy concurrency option: " + err.Error())
+			return
+		}
+		common.SysLog(fmt.Sprintf("migrated %s=%d to %s", legacyKey, legacyValue, newKey))
+	}
+
+	ts.MaxTokenConcurrency = 0
+	if err := DB.Where("key = ?", legacyKey).Delete(&Option{}).Error; err != nil {
+		common.SysLog("failed to delete legacy concurrency option: " + err.Error())
+	}
+	common.OptionMapRWMutex.Lock()
+	delete(common.OptionMap, legacyKey)
+	common.OptionMapRWMutex.Unlock()
 }
 
 func SyncOptions(frequency int) {

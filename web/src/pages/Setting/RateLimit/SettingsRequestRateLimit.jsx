@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useEffect, useState, useRef } from 'react';
-import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { Button, Col, Form, Row, Spin, Typography } from '@douyinfe/semi-ui';
 import {
   compareObjects,
   API,
@@ -33,13 +33,18 @@ export default function RequestRateLimit(props) {
   const { t } = useTranslation();
 
   const [loading, setLoading] = useState(false);
-  const [inputs, setInputs] = useState({
+  // 单独抽出来：useEffect 里要用它做基底，保证「后端还没存过的配置项」也留在
+  // state 中，否则 compareObjects 检测不到该项的变化（见下方 useEffect 注释）
+  const getDefaultInputs = () => ({
     ModelRequestRateLimitEnabled: false,
     ModelRequestRateLimitCount: -1,
     ModelRequestRateLimitSuccessCount: 1000,
     ModelRequestRateLimitDurationMinutes: 1,
     ModelRequestRateLimitGroup: '',
+    'token_setting.default_user_max_concurrency': 0,
   });
+
+  const [inputs, setInputs] = useState(getDefaultInputs());
   const refForm = useRef();
   const [inputsRow, setInputsRow] = useState(inputs);
 
@@ -86,9 +91,14 @@ export default function RequestRateLimit(props) {
   }
 
   useEffect(() => {
-    const currentInputs = {};
+    // 从默认值起手再覆盖后端返回的键，而不是只保留后端存在的键。
+    // 原写法（currentInputs 只收 props.options 里有的 key）有个坑：某个配置项
+    // 从未被保存过时后端不返回它，该键就被从 state 里整个丢掉，于是
+    // compareObjects(inputs, inputsRow) 两边都没有这个 key、永远判定「未修改」，
+    // 用户改了值点保存只会看到「你似乎并没有修改什么」。
+    const currentInputs = { ...getDefaultInputs() };
     for (let key in props.options) {
-      if (Object.keys(inputs).includes(key)) {
+      if (Object.keys(currentInputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
     }
@@ -232,6 +242,45 @@ export default function RequestRateLimit(props) {
             <Row>
               <Button size='default' onClick={onSubmit}>
                 {t('保存模型速率限制')}
+              </Button>
+            </Row>
+          </Form.Section>
+          <Form.Section text={t('并发数限制')}>
+            <Row>
+              <Col span={24}>
+                <Typography.Text type='tertiary'>
+                  {t(
+                    '与上方「请求速率限制」的区别：速率限制管的是一段时间内的请求次数（如 1 分钟最多 100 次），并发限制管的是同一时刻未完成的请求数（如 同时最多 5 个）。两者独立生效。',
+                  )}
+                </Typography.Text>
+              </Col>
+            </Row>
+            <Row style={{ marginTop: 10 }}>
+              <Col xs={24} sm={12} md={8} lg={8} xl={8}>
+                <Form.InputNumber
+                  label={t('默认账户并发数')}
+                  field={'token_setting.default_user_max_concurrency'}
+                  step={1}
+                  min={0}
+                  max={100000}
+                  suffix={t('个')}
+                  extraText={t(
+                    '未单独配置的用户默认可同时进行的请求数上限，0 表示不限制。可在「用户管理」中为单个用户单独设置；令牌的并发数不会超过其所属账户的上限',
+                  )}
+                  placeholder={'0'}
+                  onChange={(value) =>
+                    setInputs({
+                      ...inputs,
+                      'token_setting.default_user_max_concurrency':
+                        String(value),
+                    })
+                  }
+                />
+              </Col>
+            </Row>
+            <Row>
+              <Button size='default' onClick={onSubmit}>
+                {t('保存并发限制')}
               </Button>
             </Row>
           </Form.Section>

@@ -36,7 +36,10 @@ func InitRedisClient() (err error) {
 	if err != nil {
 		FatalLog("failed to parse Redis connection string: " + err.Error())
 	}
-	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 10)
+	// 默认 50：中继热路径上每个请求已有多次 Redis 往返（令牌缓存、用户缓存、
+	// 额度预扣/回补，开启限流后还有限流判断），10 条连接在高并发下会排队等连接。
+	// 需要更大/更小可用 REDIS_POOL_SIZE 覆盖。
+	opt.PoolSize = GetEnvOrDefault("REDIS_POOL_SIZE", 50)
 	RDB = redis.NewClient(opt)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

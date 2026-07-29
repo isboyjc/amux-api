@@ -187,19 +187,24 @@ func GetStatus(c *gin.Context) {
 		"blindbox_enabled":            operation_setting.GetBlindBoxSetting().Enabled,
 		// 工单系统总开关。前端用这个字段决定是否渲染"我的工单"/"工单管理"侧边栏
 		// 入口以及头部红点按钮。后端接口本身也会按 enabled 拒绝建单/回复。
-		"ticket_enabled":              operation_setting.GetTicketSetting().Enabled,
-		"AffShowInvitees":             common.OptionMap["AffShowInvitees"],
-		"AffRebateRatio":              common.OptionMap["AffRebateRatio"],
+		"ticket_enabled":  operation_setting.GetTicketSetting().Enabled,
+		"AffShowInvitees": common.OptionMap["AffShowInvitees"],
+		"AffRebateRatio":  common.OptionMap["AffRebateRatio"],
 
 		// 对象存储「显示侧优化」给前端用：
 		//   - storage_public_base_url：判断哪些 URL 来自我们桶、可以套 cdn-cgi
 		//   - storage_image_transform_enabled：admin 是否打开 CF Image Resizing 开关
 		// 不暴露任何凭证；纯展示用配置
-		"storage_public_base_url":          system_setting.GetStorageSettings().R2PublicBaseURL,
-		"storage_image_transform_enabled":  system_setting.GetStorageSettings().ImageTransformEnabled,
+		"storage_public_base_url":         system_setting.GetStorageSettings().R2PublicBaseURL,
+		"storage_image_transform_enabled": system_setting.GetStorageSettings().ImageTransformEnabled,
 
 		"_qn": "new-api",
 	}
+	// 全局默认账户级并发上限。0 = 并发限制整体关闭，前端据此决定是否渲染相关入口。
+	// 注意这只是「默认值」：某用户被管理员单独配置过时，实际生效值由
+	// /api/user/self 的 effective_max_concurrency 给出，不能用这个字段代替。
+	// 单独赋值而不写进上面的字面量，是为了不让 gofmt 因这个较长的 key 重排整块 map。
+	data["default_user_max_concurrency"] = operation_setting.GetDefaultUserMaxConcurrency()
 
 	// 公告横幅：登录前后都要看得到，所以放 status 走匿名可访问通道。
 	// version 用于前端 dismiss 比对——内容改变时 version 跟着变，已点过

@@ -33,6 +33,10 @@ type Token struct {
 	// commonGroupCol 来绕这个坑，没必要再引入一个。
 	GroupsJSON         string         `json:"-" gorm:"column:group_chain;type:text"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"`                // 跨分组重试
+	// MaxConcurrency 令牌级最大并发（同时在途）请求数，0 表示不限制。
+	// 与 setting.ModelRequestRateLimit 的「周期内最多 N 次」是两回事：这里限制的是
+	// 同一时刻未完成的请求数，超限直接 429，不排队。
+	MaxConcurrency     int            `json:"max_concurrency" gorm:"default:0"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
@@ -349,7 +353,8 @@ func (token *Token) Update() (err error) {
 	}()
 	// Select 里列出的字段即使是零值也会被写入，清空分组链依赖这个语义
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "group_chain", "cross_group_retry").Updates(token).Error
+		"model_limits_enabled", "model_limits", "allow_ips", "group", "group_chain", "cross_group_retry",
+		"max_concurrency").Updates(token).Error
 	return err
 }
 

@@ -65,6 +65,27 @@ type tokenRequest struct {
 	Groups *[]string `json:"groups"`
 }
 
+// resolveTokenMaxConcurrency 归一化用户设置的令牌并发值。
+//
+// 静默夹紧到该用户的账户级实际值，不报错。典型场景：用户先给令牌设了 50，
+// 管理员之后把该用户账户级调到 10 —— 此时应按 10 生效，而不是让用户在下次编辑
+// 任何字段（哪怕只是改个名字）时收到一句「不能超过 10」的报错。
+//
+// 账户级为 0（不限制）时令牌级原样保留：此时并发功能对该用户整体关闭，
+// 令牌上残留的值不生效，但也没必要抹掉 —— 管理员将来重新开启时它还能用。
+func resolveTokenMaxConcurrency(c *gin.Context, value int) int {
+	if value < 0 {
+		return 0
+	}
+	userSetting, err := model.GetUserSetting(c.GetInt("id"), false)
+	if err != nil {
+		// 读不到用户设置时不阻断令牌保存，交给中间件运行时夹紧兜底
+		common.SysLog("failed to load user setting for concurrency clamp: " + err.Error())
+		return value
+	}
+	return service.ClampTokenMaxConcurrency(value, service.ResolveUserMaxConcurrency(userSetting))
+}
+
 // applyGroupChain 校验并把分组链写入令牌。
 //
 // Group 始终与链首保持同步：middleware/auth.go 的权限校验、限流分组、渠道亲和
@@ -325,6 +346,7 @@ func AddToken(c *gin.Context) {
 		common.SysLog("failed to generate token key: " + err.Error())
 		return
 	}
+	maxConcurrency := resolveTokenMaxConcurrency(c, token.MaxConcurrency)
 	cleanToken := model.Token{
 		UserId:             c.GetInt("id"),
 		Name:               token.Name,
@@ -339,6 +361,7 @@ func AddToken(c *gin.Context) {
 		AllowIps:           token.AllowIps,
 		Group:              token.Group,
 		CrossGroupRetry:    token.CrossGroupRetry,
+		MaxConcurrency:     maxConcurrency,
 	}
 	if err := applyGroupChain(c, &cleanToken, req.Groups); err != nil {
 		common.ApiError(c, err)
@@ -422,6 +445,7 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		cleanToken.MaxConcurrency = resolveTokenMaxConcurrency(c, token.MaxConcurrency)
 		if err := applyGroupChain(c, cleanToken, req.Groups); err != nil {
 			common.ApiError(c, err)
 			return

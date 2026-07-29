@@ -66,6 +66,11 @@ services:
       # 示例: redis://amux-redis:6379
       - REDIS_CONN_STRING=${REDIS_CONN_STRING}
       
+      # Redis 连接池大小（可选，默认 50）
+      # 中继热路径每个请求有多次 Redis 往返，连接数不足会排队等连接。
+      # 不设则用代码默认值 50；Redis 服务端 maxclients 较小时可调低。
+      - REDIS_POOL_SIZE=${REDIS_POOL_SIZE:-50}
+      
       # ==================== 安全配置（必须与主节点相同）====================
       # 会话加密密钥（必需，必须与主节点相同）
       - SESSION_SECRET=${SESSION_SECRET}
