@@ -540,6 +540,21 @@ func GetTokenKeysByIds(ids []int, userId int) ([]Token, error) {
 	return tokens, err
 }
 
+// FilterOwnedTokenIds 从传入的 id 里挑出确实属于该用户的那些。
+//
+// 只 Select id，不取任何其他列 —— 调用方（在途并发数查询）只需要「这些 id 里
+// 哪些是你的」这一个信息，不该为此把整行令牌捞出来。
+func FilterOwnedTokenIds(ids []int, userId int) ([]int, error) {
+	owned := make([]int, 0, len(ids))
+	if len(ids) == 0 {
+		return owned, nil
+	}
+	err := DB.Model(&Token{}).
+		Where("user_id = ? AND id IN (?)", userId, ids).
+		Pluck("id", &owned).Error
+	return owned, err
+}
+
 // InvalidateUserTokensCache 清理指定用户所有令牌在 Redis 中的缓存，
 // 配合 InvalidateUserCache 使用，可在用户被禁用/删除时立即阻断其令牌的请求。
 // 下一次请求将从数据库重新加载令牌及用户状态，从而立即识别出被禁用的用户。

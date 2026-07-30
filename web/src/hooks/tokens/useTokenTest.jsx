@@ -19,9 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API, showError, showInfo } from '../../helpers';
+import { API, copy, showError, showInfo, showSuccess } from '../../helpers';
 import { getServerAddress } from '../../helpers/token';
-import { resolveTestProfile } from '../../constants/tokenTest';
+import { buildTestCurl, resolveTestProfile } from '../../constants/tokenTest';
 
 // 批量测试的串行间隔。/v1/* 上挂了 ModelRequestRateLimit（按分组限流），
 // 渠道测试走的 /api/channel/test/:id 没有这个中间件，所以那边可以 5 路并发无
@@ -53,6 +53,8 @@ export const useTokenTest = ({ fetchTokenKey }) => {
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [selectedKeys, setSelectedKeys] = useState([]);
+  // 剪贴板不可用时的兜底：{ model, command }，由 UI 弹出让用户手动复制
+  const [curlFallback, setCurlFallback] = useState(null);
 
   const stopBatchRef = useRef(false);
   // 令牌明文只在弹窗生命周期内留在 ref 里，不进 state、不持久化。
@@ -66,6 +68,7 @@ export const useTokenTest = ({ fetchTokenKey }) => {
     setPage(1);
     setSelectedKeys([]);
     setIsStream(false);
+    setCurlFallback(null);
     keyRef.current = '';
     // close() 会把它置为 true 来中断在跑的批量测试，这里必须清掉，
     // 否则重新打开弹窗后 testModel 一进来就直接 return，点什么都没反应。
@@ -117,6 +120,7 @@ export const useTokenTest = ({ fetchTokenKey }) => {
     setModalityMap({});
     setResults({});
     setIsBatchTesting(false);
+    setCurlFallback(null);
     keyRef.current = '';
   }, []);
 
@@ -256,6 +260,42 @@ export const useTokenTest = ({ fetchTokenKey }) => {
     [ensureKey, isStream, modalityMap, t],
   );
 
+  // 复制等价的 curl 命令，让用户能在自己的终端里复现同一个请求。
+  //
+  // 命令里含明文 key，所以和测试一样要先 ensureKey（走 /api/token/:id/key）。
+  // 不做二次确认：用户主动点的就是「复制密钥所在命令」，且弹窗里本来就能看到
+  // 明文 key。
+  const copyCurl = useCallback(
+    async (model) => {
+      const modality = modalityMap[model]?.modality || 'text';
+      const { profile } = resolveTestProfile(model, modality);
+      if (!profile) {
+        showError(t('该模型无法自动测试，也无法生成 cURL'));
+        return;
+      }
+      try {
+        const fullKey = await ensureKey();
+        const command = buildTestCurl(
+          model,
+          profile,
+          `sk-${fullKey}`,
+          getServerAddress(),
+          isStream,
+        );
+        if (await copy(command)) {
+          showSuccess(t('cURL 命令已复制到剪贴板'));
+        } else {
+          // copy 失败（无剪贴板权限 / 非安全上下文）时不能静默：命令较长，
+          // 这里把它显示出来让用户手动复制。
+          setCurlFallback({ model, command });
+        }
+      } catch (error) {
+        showError(error?.message || t('生成 cURL 命令失败'));
+      }
+    },
+    [ensureKey, isStream, modalityMap, t],
+  );
+
   // 批量测试只跑传进来的这批（调用方传当前页 / 已选），串行 + 留间隔。
   const batchTest = useCallback(
     async (targets) => {
@@ -316,9 +356,12 @@ export const useTokenTest = ({ fetchTokenKey }) => {
     setPage,
     selectedKeys,
     setSelectedKeys,
+    curlFallback,
+    setCurlFallback,
     open,
     close,
     testModel,
+    copyCurl,
     batchTest,
     stopBatch,
   };

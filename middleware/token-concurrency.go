@@ -36,11 +36,32 @@ const tokenConcurrencyTTLSeconds = 600
 // 只应挂在「提交类」请求上。任务查询类端点（RelayTaskFetch）绝对不能占槽位，
 // 否则用户轮询任务状态会把自己的并发打满。
 //
-// 性能：这个中间件在每个中继请求上都会执行，所以未配置任何并发限制时必须是
-// 零成本的 —— 见下面的快速退出。配置了的情况也只有 2 次 Redis 往返
-// （acquire 1 次 + release 1 次），与只配一级时相同。
+// 性能：这个中间件在每个中继请求上都会执行，所以未配置任何并发限制时几乎是
+// 零成本的 —— 只有一次进程内在途计数（分片锁 + 整数自增，供管理页展示），
+// 不碰 Redis。配置了的情况也只有 2 次 Redis 往返（acquire 1 次 + release 1 次），
+// 与只配一级时相同。
 func TokenConcurrencyLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// ── 在途计数（观测用，与下面的限制逻辑无关）────────────────────
+		//
+		// 只在「确定放行」时计数，被 429 拒掉的请求一次都不计 —— 它并没有在调
+		// 上游，算进在途数在语义上是错的。所以下面每条 c.Next() 之前都要先
+		// countInflight()，而不是在中间件入口处统一 Inc。
+		//
+		// 覆盖所有令牌（含未配并发上限的），因为管理页要显示全部令牌的在途数。
+		// 开销是一次分片锁 + 一次整数自增，不碰 Redis（跨实例汇总由
+		// service.StartInflightReporter 定期上报，与 QPS 解耦）。
+		//
+		// 返回的 release 必须 defer 调用；未计数时返回的是空函数，调用无副作用。
+		countInflight := func() func() {
+			tokenId := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+			if tokenId <= 0 {
+				return func() {}
+			}
+			limiter.IncInflight(tokenId)
+			return func() { limiter.DecInflight(tokenId) }
+		}
+
 		// ── 快速退出：绝大多数请求走这条路径 ──────────────────────────
 		// 两次 map 查找 + 一次类型断言，无 Redis、无锁、无内存分配。
 		// UserSetting 在 middleware/auth.go 的 userCache.WriteContext(c) 里
@@ -49,6 +70,7 @@ func TokenConcurrencyLimit() gin.HandlerFunc {
 		userSetting, _ := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 		userLimit := service.ResolveUserMaxConcurrency(userSetting)
 		if tokenLimit <= 0 && userLimit <= 0 {
+			defer countInflight()()
 			c.Next()
 			return
 		}
@@ -67,6 +89,7 @@ func TokenConcurrencyLimit() gin.HandlerFunc {
 			tokenKey = limiter.TokenConcurrencyKey(tokenId)
 		}
 		if userKey == "" && tokenKey == "" {
+			defer countInflight()()
 			c.Next()
 			return
 		}
@@ -82,13 +105,16 @@ func TokenConcurrencyLimit() gin.HandlerFunc {
 				// Redis < 3.2 也会走到这里（脚本里的 TIME 被拒），表现为并发限制
 				// 静默失效而非请求失败 —— 日志里能看到原因。
 				common.SysLog("concurrency check failed, allowing request: " + err.Error())
+				defer countInflight()()
 				c.Next()
 				return
 			}
 			if outcome != limiter.AcquireOK {
+				// 注意：这条路径上没有计过数，被拒的请求不进在途统计
 				abortWithConcurrencyExceeded(c, outcome, userLimit, tokenLimit)
 				return
 			}
+			defer countInflight()()
 			defer func() {
 				if err := limiter.ReleaseConcurrencySlots(ctx, common.RDB, userKey, tokenKey, member); err != nil {
 					common.SysLog("failed to release concurrency slots: " + err.Error())
@@ -97,15 +123,21 @@ func TokenConcurrencyLimit() gin.HandlerFunc {
 		} else {
 			outcome := limiter.AcquireMemoryConcurrencySlots(userKey, userLimit, tokenKey, tokenLimit)
 			if outcome != limiter.AcquireOK {
+				// 同上：被拒的请求不进在途统计
 				abortWithConcurrencyExceeded(c, outcome, userLimit, tokenLimit)
 				return
 			}
+			defer countInflight()()
 			defer limiter.ReleaseMemoryConcurrencySlots(userKey, tokenKey)
 		}
 
 		c.Next()
 	}
 }
+
+// inflightRejectProbe 仅测试用：在 429 写出后、请求仍处于中间件内部时被调用，
+// 让用例能在这个时刻采样在途计数（验证被拒请求不计入）。生产环境恒为 nil。
+var inflightRejectProbe func()
 
 // abortWithConcurrencyExceeded 返回 429，按触发的层级给出不同的错误码与文案，
 // 否则用户不知道该调令牌并发还是找管理员调账户并发。
@@ -137,4 +169,7 @@ func abortWithConcurrencyExceeded(c *gin.Context, outcome limiter.AcquireOutcome
 	// 落一条用户可见的使用日志，带节流（同一主体频繁超限时窗口逐级拉长），
 	// 详见 token-concurrency-log.go
 	logConcurrencyReject(c, outcome, limit)
+	if inflightRejectProbe != nil {
+		inflightRejectProbe()
+	}
 }

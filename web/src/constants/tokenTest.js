@@ -46,9 +46,28 @@ export const TEST_PROFILES = {
     body: (model) => ({
       model,
       messages: [{ role: 'user', content: 'hi' }],
-      max_tokens: 8,
+      // 给到 64 而不是个位数：推理模型会先消耗推理 token，额度太小会在还没轮到
+      // 可见输出时就被 finish_reason=length 截断，返回一个 content 为空的
+      // 「成功」响应 —— 用户看到一片空白，误以为模型坏了。
+      // 64 对普通模型仍是极小用量，对推理模型也未必够（见下面 extract 的说明）。
+      max_tokens: 64,
     }),
-    extract: (r) => r?.choices?.[0]?.message?.content || '',
+    extract: (r) => {
+      const choice = r?.choices?.[0];
+      const content = choice?.message?.content || '';
+      if (content) return content;
+
+      // 空 content 但请求成功：连通性其实是通的，必须说清楚原因，
+      // 否则「成功」配一个空摘要是最让人困惑的组合。
+      const reasoning =
+        r?.usage?.completion_tokens_details?.reasoning_tokens || 0;
+      if (choice?.finish_reason === 'length') {
+        return reasoning > 0
+          ? `连通正常：${reasoning} 个 token 全部用于推理，未产生可见输出（推理模型的正常现象）`
+          : '连通正常：输出被 max_tokens 截断，未返回可见内容';
+      }
+      return '连通正常：模型返回了空内容';
+    },
   },
   image: {
     path: '/v1/images/generations',
@@ -129,4 +148,42 @@ export const resolveTestProfile = (modelName, modality) => {
     profile: TEST_PROFILES[key] || TEST_PROFILES.text,
     untestable: null,
   };
+};
+
+// 单引号包裹的 shell 字面量里，唯一有特殊含义的字符就是单引号本身。
+// 收尾 → 插入转义的单引号 → 重开，是 POSIX sh 里的标准写法。
+const shellSingleQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
+
+/**
+ * 生成与「点击测试」完全等价的 curl 命令，供用户复制到终端自行执行。
+ *
+ * 复用同一份 profile（path / body / stream），所以复制出来的命令和 UI 里
+ * 实际发出的请求是同一个 —— 否则用户拿 curl 复现不出弹窗里看到的结果，
+ * 这个按钮就是误导。
+ *
+ * 二进制响应（TTS）额外带 --output：不加的话音频字节会直接糊进终端。
+ *
+ * @param {string} model
+ * @param {object} profile - resolveTestProfile 返回的 profile
+ * @param {string} key - 完整 API key（含 sk- 前缀）
+ * @param {string} baseUrl - 服务器地址
+ * @param {boolean} isStream - 是否启用流式（仅对声明了 stream 的 profile 生效）
+ * @returns {string}
+ */
+export const buildTestCurl = (model, profile, key, baseUrl, isStream) => {
+  const body = profile.body(model);
+  if (profile.stream && isStream) body.stream = true;
+
+  const url = `${String(baseUrl).replace(/\/+$/, '')}${profile.path}`;
+  const lines = [
+    `curl ${shellSingleQuote(url)} \\`,
+    `  -H 'Content-Type: application/json' \\`,
+    `  -H ${shellSingleQuote(`Authorization: Bearer ${key}`)} \\`,
+  ];
+  if (profile.binary) {
+    lines.push(`  --output ${shellSingleQuote(`${model}.mp3`)} \\`);
+  }
+  // JSON 里可能有单引号（prompt 之类），统一走同一套转义
+  lines.push(`  -d ${shellSingleQuote(JSON.stringify(body))}`);
+  return lines.join('\n');
 };

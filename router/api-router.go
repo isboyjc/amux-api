@@ -344,6 +344,9 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.DELETE("/:id", controller.DeleteToken)
 			tokenRoute.POST("/batch", controller.DeleteTokenBatch)
 			tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
+			// 前端按可见页轮询（约 5s 一次），不能挂 CriticalRateLimit —— 那个额度
+			// 是给密钥读取之类的敏感低频操作留的，轮询会把它打满。
+			tokenRoute.POST("/inflight", middleware.DisableCache(), controller.GetTokenInflight)
 		}
 
 		usageRoute := apiRouter.Group("/usage")

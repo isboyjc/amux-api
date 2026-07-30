@@ -48,6 +48,28 @@ export async function fetchTokenKeysBatch(tokenIds) {
 }
 
 /**
+ * 查询指定令牌当前的在途请求数（跨实例汇总）。
+ *
+ * 只查传入的 id（当页那几个），后端上限 100。
+ *
+ * @param {number[]} tokenIds
+ * @returns {Promise<{inflight: Record<number, number>, clusterWide: boolean}>}
+ *   inflight 只含在途数 > 0 的令牌；clusterWide 为 false 表示未启用 Redis，
+ *   数字只代表当前实例，UI 需给出说明。
+ */
+export async function fetchTokenInflight(tokenIds) {
+  const response = await API.post('/api/token/inflight', { ids: tokenIds });
+  const { success, data, message } = response.data || {};
+  if (!success) {
+    throw new Error(message || 'Failed to fetch token inflight');
+  }
+  return {
+    inflight: data?.inflight || {},
+    clusterWide: data?.cluster_wide !== false,
+  };
+}
+
+/**
  * 获取可用的 token keys
  * @returns {Promise<string[]>} 返回 active 状态的不带 sk- 前缀的真实 token key 数组
  */
@@ -95,7 +117,10 @@ export function getServerAddress() {
   return serverAddress;
 }
 
-export const CHANNEL_CONN_CLIPBOARD_TYPE = 'newapi_channel_conn';
+export const CHANNEL_CONN_CLIPBOARD_TYPE = 'amuxapi_channel_conn';
+
+// 兼容改名前已复制到剪贴板的旧标识，仅解析时接受
+const CHANNEL_CONN_CLIPBOARD_TYPE_LEGACY = 'newapi_channel_conn';
 
 /**
  * @param {string} key - 完整的 API key（含 sk- 前缀）
@@ -121,7 +146,8 @@ export function parseChannelConnectionString(text) {
     if (
       parsed &&
       typeof parsed === 'object' &&
-      parsed._type === CHANNEL_CONN_CLIPBOARD_TYPE &&
+      (parsed._type === CHANNEL_CONN_CLIPBOARD_TYPE ||
+        parsed._type === CHANNEL_CONN_CLIPBOARD_TYPE_LEGACY) &&
       typeof parsed.key === 'string' &&
       typeof parsed.url === 'string'
     ) {

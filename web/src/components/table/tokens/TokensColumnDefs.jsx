@@ -380,20 +380,50 @@ const renderModelLimits = (text, record, t) => {
   }
 };
 
-// Render IP restrictions column
-const renderMaxConcurrency = (text, t) => {
+// 渲染「当前在途 / 最大并发」列。
+//
+// 在途数来自 useTokenInflight 的轮询，最多滞后一个上报周期，所以这是个近实时
+// 数字而不是精确瞬时值 —— tooltip 里讲清楚，免得用户拿它和自己的客户端计数
+// 逐一对账。
+//
+// 未配上限（value<=0）时仍显示在途数：中间件对所有令牌都计数，「无限制」说的是
+// 不拦，不是不统计。
+const renderMaxConcurrency = (text, record, inflight, clusterWide, t) => {
   const value = Number(text);
-  if (!Number.isFinite(value) || value <= 0) {
-    return (
-      <Tag color='white' shape='circle'>
-        {t('无限制')}
-      </Tag>
-    );
-  }
+  const current = Number(inflight?.[record?.id]) || 0;
+  const unlimited = !Number.isFinite(value) || value <= 0;
+
+  // 无限制用 ∞ 而不是「无限制」三个字：列很窄，文字会把 "3 / 无限制" 挤成两行，
+  // 而 ∞ 与数字同宽，整列能对齐。语义交给 tooltip 兜底。
+  const limitLabel = unlimited ? '∞' : value;
+
+  const baseTip = clusterWide
+    ? t('当前在途请求数（约 5 秒刷新一次，可能有数秒延迟）')
+    : t('未启用 Redis，该数字只统计当前实例；多实例部署下不是全局在途数。');
+  // ∞ 是符号，读屏和不熟悉的用户未必能对上语义，tooltip 里补一句文字说明
+  const tip = unlimited ? `${baseTip}\n${t('该令牌未设并发上限')}` : baseTip;
+
+  // 打满时标红，让用户一眼看到「就是这里在卡」
+  const atLimit = !unlimited && current >= value;
+
   return (
-    <Tag color='blue' shape='circle'>
-      {value}
-    </Tag>
+    <Tooltip content={tip} position='top'>
+      <Tag
+        color={atLimit ? 'red' : current > 0 ? 'blue' : 'white'}
+        shape='circle'
+        aria-label={
+          unlimited
+            ? t('当前 {{current}} 个在途请求，未设上限', { current })
+            : t('当前 {{current}} 个在途请求，上限 {{max}}', {
+                current,
+                max: value,
+              })
+        }
+      >
+        {`${current} / ${limitLabel}`}
+        {!clusterWide && ' *'}
+      </Tag>
+    </Tooltip>
   );
 };
 
@@ -608,6 +638,8 @@ export const getTokensColumns = ({
   updateTokenGroup,
   groupModelsCache = {},
   fetchGroupModels,
+  inflight = {},
+  inflightClusterWide = true,
 }) => {
   return [
     {
@@ -668,9 +700,10 @@ export const getTokensColumns = ({
       render: (text) => renderAllowIps(text, t),
     },
     {
-      title: t('最大并发数'),
+      title: t('并发数'),
       dataIndex: 'max_concurrency',
-      render: (text) => renderMaxConcurrency(text, t),
+      render: (text, record) =>
+        renderMaxConcurrency(text, record, inflight, inflightClusterWide, t),
     },
     {
       title: t('创建时间'),
