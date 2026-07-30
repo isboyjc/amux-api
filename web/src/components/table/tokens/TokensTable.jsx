@@ -25,6 +25,7 @@ import {
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
 import { getTokensColumns } from './TokensColumnDefs';
+import { useTokenInflight } from '../../../hooks/tokens/useTokenInflight';
 
 const TokensTable = (tokensData) => {
   const {
@@ -58,6 +59,15 @@ const TokensTable = (tokensData) => {
     t,
   } = tokensData;
 
+  // 当页令牌的在途请求数。只查当页可见的 id —— 令牌多的用户翻页时不必为
+  // 看不见的行付代价。
+  const visibleTokenIds = useMemo(
+    () => (tokens || []).map((token) => token.id).filter(Boolean),
+    [tokens],
+  );
+  const { inflight, clusterWide: inflightClusterWide } =
+    useTokenInflight(visibleTokenIds);
+
   // Get all columns
   const columns = useMemo(() => {
     return getTokensColumns({
@@ -79,6 +89,8 @@ const TokensTable = (tokensData) => {
       updateTokenGroup,
       groupModelsCache,
       fetchGroupModels,
+      inflight,
+      inflightClusterWide,
     });
   }, [
     t,
@@ -99,6 +111,8 @@ const TokensTable = (tokensData) => {
     updateTokenGroup,
     groupModelsCache,
     fetchGroupModels,
+    inflight,
+    inflightClusterWide,
   ]);
 
   // Handle compact mode by removing fixed positioning

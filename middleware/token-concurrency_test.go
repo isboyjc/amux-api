@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/common/limiter"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -156,5 +157,203 @@ func TestTokenConcurrency_Returns429WithRetryAfter(t *testing.T) {
 	if got := w.Header().Get("Retry-After"); got != "1" {
 		t.Fatalf("应带 Retry-After: 1，实际 %q", got)
 	}
+	close(released)
+}
+
+// ── 在途计数（观测）─────────────────────────────────────────────────────
+//
+// 这套计数与限流是两条独立路径，测试要点是「限流不生效的情况下计数照样发生」，
+// 因为这正是管理页要展示所有令牌在途数的前提。
+
+// 未配任何并发上限（限流走快速退出）时，在途数仍必须被统计到。
+// 这条是整个观测方案的核心前提，回归了就等于该列对大多数令牌恒显示 0。
+func TestInflight_CountedEvenWhenNoLimitConfigured(t *testing.T) {
+	origRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	concurrencyLogAsyncDisabled = true
+	defer func() {
+		common.RedisEnabled = origRedis
+		concurrencyLogAsyncDisabled = false
+	}()
+
+	// 账户级与令牌级都为 0 → 限流中间件走快速退出
+	origCap := operation_setting.GetTokenSetting().DefaultUserMaxConcurrency
+	operation_setting.GetTokenSetting().DefaultUserMaxConcurrency = 0
+	defer func() { operation_setting.GetTokenSetting().DefaultUserMaxConcurrency = origCap }()
+
+	const tokenId = 9101
+	observed := make(chan int, 1)
+	blocked := make(chan struct{})
+	released := make(chan struct{})
+	r := newConcurrencyRouter(tokenId, 0, func(c *gin.Context) {
+		observed <- limiter.SnapshotInflight()[tokenId]
+		close(blocked)
+		<-released
+		c.Status(http.StatusOK)
+	})
+
+	go func() {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t?rid=i1", nil))
+	}()
+	<-blocked
+
+	if got := <-observed; got != 1 {
+		t.Fatalf("未配上限的令牌在途数应为 1，实际 %d —— 观测计数不能跟着限流一起被跳过", got)
+	}
+
+	close(released)
+}
+
+// 请求结束后在途数必须归零（正常返回路径）。
+func TestInflight_ReleasedAfterRequest(t *testing.T) {
+	origRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	concurrencyLogAsyncDisabled = true
+	defer func() {
+		common.RedisEnabled = origRedis
+		concurrencyLogAsyncDisabled = false
+	}()
+
+	const tokenId = 9102
+	r := newConcurrencyRouter(tokenId, 0, func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t?rid=i2", nil))
+
+	if got := limiter.SnapshotInflight()[tokenId]; got != 0 {
+		t.Fatalf("请求结束后在途数应归零，实际 %d", got)
+	}
+}
+
+// handler panic 时在途数也必须归零 —— 否则一次 panic 就让该令牌的展示值永久偏高。
+func TestInflight_ReleasedOnPanic(t *testing.T) {
+	origRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	concurrencyLogAsyncDisabled = true
+	defer func() {
+		common.RedisEnabled = origRedis
+		concurrencyLogAsyncDisabled = false
+	}()
+
+	const tokenId = 9103
+	r := newConcurrencyRouter(tokenId, 0, func(c *gin.Context) {
+		panic("boom")
+	})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t?rid=i3", nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("panic 应被 recovery 兜成 500，实际 %d", w.Code)
+	}
+
+	if got := limiter.SnapshotInflight()[tokenId]; got != 0 {
+		t.Fatalf("panic 后在途数应归零，实际 %d", got)
+	}
+}
+
+// 被限流拒绝（429）的请求不应留下在途计数：它没有真的在跑。
+func TestInflight_ReleasedOnRejectedRequest(t *testing.T) {
+	origRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	concurrencyLogAsyncDisabled = true
+	defer func() {
+		common.RedisEnabled = origRedis
+		concurrencyLogAsyncDisabled = false
+	}()
+
+	origCap := operation_setting.GetTokenSetting().DefaultUserMaxConcurrency
+	operation_setting.GetTokenSetting().DefaultUserMaxConcurrency = 10
+	defer func() { operation_setting.GetTokenSetting().DefaultUserMaxConcurrency = origCap }()
+
+	const tokenId = 9104
+	blocked := make(chan struct{})
+	released := make(chan struct{})
+	r := newConcurrencyRouter(tokenId, 1, func(c *gin.Context) {
+		close(blocked)
+		<-released
+		c.Status(http.StatusOK)
+	})
+
+	go func() {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t?rid=i4a", nil))
+	}()
+	<-blocked
+
+	// 第二个请求会被 429 拒掉
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t?rid=i4b", nil))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("应被限流拒绝，实际 %d", w.Code)
+	}
+	// 此刻只有第一个请求真的在跑
+	if got := limiter.SnapshotInflight()[tokenId]; got != 1 {
+		t.Fatalf("被拒的请求不应计入在途，期望 1，实际 %d", got)
+	}
+
+	close(released)
+}
+
+// 被限流拒绝的请求，在**处理过程中**（而不只是结束后）也绝不能计入在途数。
+//
+// 这是 TestInflight_ReleasedOnRejectedRequest 漏掉的场景：那个用例只在请求
+// 返回后检查最终态，而早期实现是「进中间件就 Inc、走到拒绝分支再靠 defer Dec」，
+// 最终态同样是干净的，所以它验不出中途的虚高。
+//
+// 采样点必须在被拒请求**仍在中间件内部**时：放在 c.Next() 之后是无效的（那时
+// 中间件已返回，defer Dec 早已执行，旧实现看起来也是干净的）。这里挂在
+// inflightRejectProbe 上 —— 它在 abortWithConcurrencyExceeded 内部、紧挨着
+// 429 写出的位置被调用。
+func TestInflight_RejectedRequestNeverCountedDuringHandling(t *testing.T) {
+	origRedis := common.RedisEnabled
+	common.RedisEnabled = false
+	concurrencyLogAsyncDisabled = true
+	defer func() {
+		common.RedisEnabled = origRedis
+		concurrencyLogAsyncDisabled = false
+	}()
+
+	origCap := operation_setting.GetTokenSetting().DefaultUserMaxConcurrency
+	operation_setting.GetTokenSetting().DefaultUserMaxConcurrency = 10
+	defer func() { operation_setting.GetTokenSetting().DefaultUserMaxConcurrency = origCap }()
+
+	const tokenId = 9105
+	sampled := make(chan int, 4)
+	inflightRejectProbe = func() {
+		sampled <- limiter.SnapshotInflight()[tokenId]
+	}
+	defer func() { inflightRejectProbe = nil }()
+
+	blocked := make(chan struct{})
+	released := make(chan struct{})
+	r := newConcurrencyRouter(tokenId, 1, func(c *gin.Context) {
+		close(blocked)
+		<-released
+		c.Status(http.StatusOK)
+	})
+
+	go func() {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t?rid=j1", nil))
+	}()
+	<-blocked // 第一个请求已占住唯一槽位
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/t?rid=j2", nil))
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("应被限流拒绝，实际 %d", w.Code)
+	}
+
+	select {
+	case during := <-sampled:
+		if during != 1 {
+			t.Fatalf("被拒请求处理过程中在途数应仍为 1（只有真正在跑的那个），实际 %d "+
+				"—— 被 429 拒掉的请求不该计入在途", during)
+		}
+	default:
+		t.Fatal("拒绝路径未触发采样钩子")
+	}
+
 	close(released)
 }

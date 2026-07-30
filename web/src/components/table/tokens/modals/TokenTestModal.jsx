@@ -29,7 +29,7 @@ import {
   Banner,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import { IconSearch, IconInfoCircle } from '@douyinfe/semi-icons';
+import { IconSearch, IconInfoCircle, IconCopy } from '@douyinfe/semi-icons';
 import { MODEL_TABLE_PAGE_SIZE } from '../../../../constants';
 import {
   WORKSPACE_COLOR,
@@ -58,8 +58,11 @@ const TokenTestModal = ({
   setPage,
   selectedKeys,
   setSelectedKeys,
+  curlFallback,
+  setCurlFallback,
   onClose,
   onTestModel,
+  onCopyCurl,
   onBatchTest,
   onStopBatch,
   isMobile,
@@ -207,15 +210,31 @@ const TokenTestModal = ({
           );
         }
         return (
-          <Button
-            type='tertiary'
-            size='small'
-            loading={testing.has(r.model)}
-            disabled={isBatchTesting}
-            onClick={() => onTestModel(r.model)}
-          >
-            {t('测试')}
-          </Button>
+          <div className='flex items-center gap-1'>
+            <Button
+              type='tertiary'
+              size='small'
+              loading={testing.has(r.model)}
+              disabled={isBatchTesting}
+              onClick={() => onTestModel(r.model)}
+            >
+              {t('测试')}
+            </Button>
+            {/* 复制的命令与「测试」发出的请求完全一致（含当前流式开关状态），
+                用户可直接在终端复现 */}
+            <Tooltip content={t('复制等价的 cURL 命令')} position='top'>
+              <Button
+                type='tertiary'
+                size='small'
+                icon={<IconCopy />}
+                aria-label={t('复制等价的 cURL 命令')}
+                onClick={() => onCopyCurl(r.model)}
+              >
+                {/* cURL 是工具名，不进翻译词表 */}
+                cURL
+              </Button>
+            </Tooltip>
+          </div>
         );
       },
     },
@@ -236,111 +255,136 @@ const TokenTestModal = ({
   };
 
   return (
-    <Modal
-      title={
-        record ? (
-          <div className='flex items-center gap-2 flex-wrap'>
-            <Typography.Text
-              strong
-              className='!text-[var(--semi-color-text-0)] !text-base'
+    <>
+      <Modal
+        title={
+          record ? (
+            <div className='flex items-center gap-2 flex-wrap'>
+              <Typography.Text
+                strong
+                className='!text-[var(--semi-color-text-0)] !text-base'
+              >
+                {record.name} {t('的可用性测试')}
+              </Typography.Text>
+              <Typography.Text type='tertiary' size='small'>
+                {t('共')} {models.length} {t('个模型')}
+              </Typography.Text>
+            </div>
+          ) : null
+        }
+        visible={visible}
+        onCancel={onClose}
+        footer={
+          <div className='flex justify-end gap-2'>
+            {isBatchTesting ? (
+              <Button type='danger' onClick={onStopBatch}>
+                {t('停止测试')}
+              </Button>
+            ) : (
+              <Button type='tertiary' onClick={onClose}>
+                {t('关闭')}
+              </Button>
+            )}
+            <Button
+              onClick={handleBatch}
+              loading={isBatchTesting}
+              disabled={isBatchTesting || filtered.length === 0}
             >
-              {record.name} {t('的可用性测试')}
-            </Typography.Text>
-            <Typography.Text type='tertiary' size='small'>
-              {t('共')} {models.length} {t('个模型')}
-            </Typography.Text>
+              {selectedKeys.length > 0
+                ? t('测试已选 ${count} 个').replace(
+                    '${count}',
+                    selectedKeys.length,
+                  )
+                : t('测试当前页 ${count} 个').replace(
+                    '${count}',
+                    pageModels.length,
+                  )}
+            </Button>
           </div>
-        ) : null
-      }
-      visible={visible}
-      onCancel={onClose}
-      footer={
-        <div className='flex justify-end gap-2'>
-          {isBatchTesting ? (
-            <Button type='danger' onClick={onStopBatch}>
-              {t('停止测试')}
-            </Button>
-          ) : (
-            <Button type='tertiary' onClick={onClose}>
-              {t('关闭')}
-            </Button>
-          )}
-          <Button
-            onClick={handleBatch}
-            loading={isBatchTesting}
-            disabled={isBatchTesting || filtered.length === 0}
-          >
-            {selectedKeys.length > 0
-              ? t('测试已选 ${count} 个').replace(
-                  '${count}',
-                  selectedKeys.length,
-                )
-              : t('测试当前页 ${count} 个').replace(
-                  '${count}',
-                  pageModels.length,
-                )}
-          </Button>
-        </div>
-      }
-      maskClosable={!isBatchTesting}
-      className='!rounded-lg'
-      size={isMobile ? 'full-width' : 'large'}
-    >
-      <div className='flex flex-col gap-2'>
-        <Banner
-          type='warning'
-          closeIcon={null}
-          icon={<IconInfoCircle />}
-          className='!rounded-lg'
-          description={t(
-            '测试会使用该令牌真实调用上游并产生费用（用量极小），同时会在使用日志中留下记录。分组由令牌自身配置决定，此处不可更改。',
-          )}
-        />
-
-        <div className='flex flex-col sm:flex-row sm:items-center gap-2 w-full'>
-          <Input
-            placeholder={t('搜索模型...')}
-            value={keyword}
-            onChange={(v) => {
-              setKeyword(v);
-              setPage(1);
-            }}
-            className='!w-full sm:!flex-1'
-            prefix={<IconSearch />}
-            showClear
+        }
+        maskClosable={!isBatchTesting}
+        className='!rounded-lg'
+        size={isMobile ? 'full-width' : 'large'}
+      >
+        <div className='flex flex-col gap-2'>
+          <Banner
+            type='warning'
+            closeIcon={null}
+            icon={<IconInfoCircle />}
+            className='!rounded-lg'
+            description={t(
+              '测试会使用该令牌真实调用上游并产生费用（用量极小），同时会在使用日志中留下记录。分组由令牌自身配置决定，此处不可更改。',
+            )}
           />
-          <div className='flex items-center justify-end gap-2 shrink-0'>
-            <Typography.Text strong className='shrink-0'>
-              {t('流式')}:
-            </Typography.Text>
-            <Switch
-              checked={isStream}
-              onChange={setIsStream}
-              size='small'
-              disabled={!streamApplicable || isBatchTesting}
-              aria-label={t('流式')}
-            />
-          </div>
-        </div>
 
-        <Table
-          columns={columns}
-          dataSource={dataSource}
-          loading={loadingModels}
-          rowSelection={{
-            selectedRowKeys: selectedKeys,
-            onChange: (keys) => setSelectedKeys(keys || []),
-          }}
-          pagination={{
-            currentPage: page,
-            pageSize: MODEL_TABLE_PAGE_SIZE,
-            total: filtered.length,
-            showSizeChanger: false,
-            onPageChange: (p) => setPage(p),
-          }}
-        />
-      </div>
-    </Modal>
+          <div className='flex flex-col sm:flex-row sm:items-center gap-2 w-full'>
+            <Input
+              placeholder={t('搜索模型...')}
+              value={keyword}
+              onChange={(v) => {
+                setKeyword(v);
+                setPage(1);
+              }}
+              className='!w-full sm:!flex-1'
+              prefix={<IconSearch />}
+              showClear
+            />
+            <div className='flex items-center justify-end gap-2 shrink-0'>
+              <Typography.Text strong className='shrink-0'>
+                {t('流式')}:
+              </Typography.Text>
+              <Switch
+                checked={isStream}
+                onChange={setIsStream}
+                size='small'
+                disabled={!streamApplicable || isBatchTesting}
+                aria-label={t('流式')}
+              />
+            </div>
+          </div>
+
+          <Table
+            columns={columns}
+            dataSource={dataSource}
+            loading={loadingModels}
+            rowSelection={{
+              selectedRowKeys: selectedKeys,
+              onChange: (keys) => setSelectedKeys(keys || []),
+            }}
+            pagination={{
+              currentPage: page,
+              pageSize: MODEL_TABLE_PAGE_SIZE,
+              total: filtered.length,
+              showSizeChanger: false,
+              onPageChange: (p) => setPage(p),
+            }}
+          />
+        </div>
+      </Modal>
+
+      {/* 剪贴板不可用时（无权限 / 非 HTTPS 上下文）的兜底，让用户手动复制 */}
+      <Modal
+        title={t('请手动复制 cURL 命令')}
+        visible={Boolean(curlFallback)}
+        onCancel={() => setCurlFallback(null)}
+        footer={
+          <Button type='tertiary' onClick={() => setCurlFallback(null)}>
+            {t('关闭')}
+          </Button>
+        }
+        size={isMobile ? 'full-width' : 'large'}
+        className='!rounded-lg'
+      >
+        <Typography.Paragraph
+          copyable={{ content: curlFallback?.command || '' }}
+          className='!mb-0'
+        >
+          <pre className='whitespace-pre-wrap break-all !text-xs !m-0'>
+            {curlFallback?.command || ''}
+          </pre>
+        </Typography.Paragraph>
+      </Modal>
+    </>
   );
 };
 

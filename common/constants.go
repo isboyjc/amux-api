@@ -124,6 +124,16 @@ var IsMasterNode bool
 // 用于审计日志中标识节点身份，在容器/K8s 部署时比自动探测到的容器内网 IP 更具可读性。
 var NodeName = ""
 
+// InstanceId 本进程的唯一标识，进程启动时生成，重启即变。
+//
+// 与 NodeName 的区别：NodeName 是运维配置的、可读的、可能重复（甚至为空）的
+// 名字；InstanceId 保证唯一，用于需要「一进程一份数据」的场景（如在途请求数
+// 的分实例上报，见 service/inflight_reporter.go）。
+//
+// 必须是进程级唯一而非节点级：同一台机器上跑两个实例、或容器重启后新老进程
+// 短暂共存时，共用一个 id 会让两份数据互相覆盖。
+var InstanceId = uuid.New().String()
+
 var requestInterval int
 var RequestInterval time.Duration
 

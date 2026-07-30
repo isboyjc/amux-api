@@ -508,3 +508,41 @@ func GetTokenKeysBatch(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{"keys": keysMap})
 }
+
+// GetTokenInflight 返回指定令牌当前的在途请求数，供令牌列表「当前/最大并发」列
+// 轮询展示。
+//
+// 设计要点见 service/inflight_reporter.go：计数在请求路径上是纯进程内的，这里
+// 读的是各实例定期上报的快照汇总，所以本接口的成本与网关 QPS 无关。
+//
+// 只接受调用方显式传入的 id（当页那几个），不做全量返回：令牌多的用户翻页时
+// 不必为看不见的行付代价。上限 100 与 GetTokenKeysBatch 保持一致。
+//
+// 必须做归属过滤：id 是客户端传的，不核对 user_id 就等于把「任意令牌当前有多少
+// 请求在跑」这个信息泄露给任何登录用户。
+func GetTokenInflight(c *gin.Context) {
+	tokenBatch := TokenBatch{}
+	if err := c.ShouldBindJSON(&tokenBatch); err != nil || len(tokenBatch.Ids) == 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if len(tokenBatch.Ids) > 100 {
+		common.ApiErrorI18n(c, i18n.MsgBatchTooMany, map[string]any{"Max": 100})
+		return
+	}
+	ownedIds, err := model.FilterOwnedTokenIds(tokenBatch.Ids, c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	inflight, err := service.GetInflightByTokens(ownedIds)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"inflight": inflight,
+		// 无 Redis 的单机模式下这个数字只代表当前实例，前端据此加提示
+		"cluster_wide": service.InflightIsClusterWide(),
+	})
+}

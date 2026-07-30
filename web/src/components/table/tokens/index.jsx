@@ -172,8 +172,11 @@ function TokensPage() {
         setPage={tokenTest.setPage}
         selectedKeys={tokenTest.selectedKeys}
         setSelectedKeys={tokenTest.setSelectedKeys}
+        curlFallback={tokenTest.curlFallback}
+        setCurlFallback={tokenTest.setCurlFallback}
         onClose={tokenTest.close}
         onTestModel={tokenTest.testModel}
+        onCopyCurl={tokenTest.copyCurl}
         onBatchTest={tokenTest.batchTest}
         onStopBatch={tokenTest.stopBatch}
         isMobile={isMobile}

@@ -183,6 +183,10 @@ func main() {
 	// Channel upstream model update check task
 	controller.StartChannelUpstreamModelUpdateTask()
 
+	// 在途请求数上报（供令牌列表的「当前/最大并发」列）。必须在每个节点上跑，
+	// 不能加 IsMasterNode 守卫 —— 每个实例只知道自己进程内的在途数。
+	service.StartInflightReporter()
+
 	if common.IsMasterNode && constant.UpdateTask {
 		// 视频结果 R2 归档 worker 池：把大视频的下载+上传从轮询循环里搬出来，
 		// 避免阻塞轮询。仅主节点启动（轮询本身也只在主节点跑）。
