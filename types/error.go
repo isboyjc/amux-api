@@ -85,6 +85,10 @@ const (
 	// quota error
 	ErrorCodeInsufficientUserQuota      ErrorCode = "insufficient_user_quota"
 	ErrorCodePreConsumeTokenQuotaFailed ErrorCode = "pre_consume_token_quota_failed"
+
+	// rate limit error
+	ErrorCodeTokenConcurrencyExceeded ErrorCode = "token_concurrency_exceeded"
+	ErrorCodeUserConcurrencyExceeded  ErrorCode = "user_concurrency_exceeded"
 )
 
 type NewAPIError struct {

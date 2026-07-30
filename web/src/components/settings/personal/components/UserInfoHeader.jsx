@@ -32,7 +32,7 @@ import {
   renderQuota,
   stringToColor,
 } from '../../../../helpers';
-import { Coins, BarChart2, Users } from 'lucide-react';
+import { Coins, BarChart2, Users, Gauge } from 'lucide-react';
 
 const UserInfoHeader = ({ t, userState }) => {
   const getUsername = () => {
@@ -50,6 +50,13 @@ const UserInfoHeader = ({ t, userState }) => {
     }
     return 'NA';
   };
+
+  // 账户级并发上限。后端在 /api/user/self 里已算好实际生效值（用户单独配置 ??
+  // 全局默认），前端不重复拼这个逻辑。0 或缺失表示不限制，此时整块不渲染。
+  const maxConcurrency = Number(
+    userState?.user?.effective_max_concurrency ?? 0,
+  );
+  const showConcurrency = Number.isFinite(maxConcurrency) && maxConcurrency > 0;
 
   return (
     <Card
@@ -162,6 +169,20 @@ const UserInfoHeader = ({ t, userState }) => {
                   {userState?.user?.group || t('默认')}
                 </Typography.Text>
               </div>
+              {showConcurrency && (
+                <>
+                  <Divider layout='vertical' />
+                  <div className='flex items-center gap-2'>
+                    <Gauge size={16} />
+                    <Typography.Text size='small' type='tertiary'>
+                      {t('并发限制')}
+                    </Typography.Text>
+                    <Typography.Text size='small' type='tertiary' strong>
+                      {maxConcurrency}
+                    </Typography.Text>
+                  </div>
+                </>
+              )}
             </div>
           </Card>
         </div>
@@ -210,6 +231,22 @@ const UserInfoHeader = ({ t, userState }) => {
                 {userState?.user?.group || t('默认')}
               </Typography.Text>
             </div>
+            {showConcurrency && (
+              <>
+                <Divider margin='8px' />
+                <div className='flex items-center justify-between'>
+                  <div className='flex items-center gap-2'>
+                    <Gauge size={16} />
+                    <Typography.Text size='small' type='tertiary'>
+                      {t('并发限制')}
+                    </Typography.Text>
+                  </div>
+                  <Typography.Text size='small' type='tertiary' strong>
+                    {maxConcurrency}
+                  </Typography.Text>
+                </div>
+              </>
+            )}
           </div>
         </Card>
       </div>

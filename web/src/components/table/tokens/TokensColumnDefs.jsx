@@ -381,6 +381,22 @@ const renderModelLimits = (text, record, t) => {
 };
 
 // Render IP restrictions column
+const renderMaxConcurrency = (text, t) => {
+  const value = Number(text);
+  if (!Number.isFinite(value) || value <= 0) {
+    return (
+      <Tag color='white' shape='circle'>
+        {t('无限制')}
+      </Tag>
+    );
+  }
+  return (
+    <Tag color='blue' shape='circle'>
+      {value}
+    </Tag>
+  );
+};
+
 const renderAllowIps = (text, t) => {
   if (!text || text.trim() === '') {
     return (
@@ -650,6 +666,11 @@ export const getTokensColumns = ({
       title: t('IP限制'),
       dataIndex: 'allow_ips',
       render: (text) => renderAllowIps(text, t),
+    },
+    {
+      title: t('最大并发数'),
+      dataIndex: 'max_concurrency',
+      render: (text) => renderMaxConcurrency(text, t),
     },
     {
       title: t('创建时间'),

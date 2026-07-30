@@ -494,6 +494,10 @@ func GetSelf(c *gin.Context) {
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,                // 新增权限字段
+		// 账户级并发上限的「实际生效值」，由后端统一计算（用户单独配置 ?? 全局默认）。
+		// 前端只负责展示：>0 才渲染，0 表示不限制。不要让前端自己拼这个逻辑，
+		// 否则和中间件的判定口径容易不一致。
+		"effective_max_concurrency": service.ResolveUserMaxConcurrency(userSetting),
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -712,9 +716,23 @@ func UpdateUser(c *gin.Context) {
 		updatedUser.Password = "" // rollback to what it should be
 	}
 	updatePassword := updatedUser.Password != ""
+	// 必须在 Edit 之前取出：Edit 内部的 DB.First(&user, user.Id) 是指针接收者，
+	// 会用库里的旧记录回填 updatedUser，把前端传来的 Setting 覆盖成旧值。
+	incomingSetting := updatedUser.Setting
 	if err := updatedUser.Edit(updatePassword); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	// 账户级并发上限单独更新：Edit 的字段白名单不含 setting，而整体覆盖 setting
+	// 会抹掉用户自己的通知配置。这个字段只有管理员能改（用户自助接口会保留原值）。
+	if incomingSetting != "" {
+		var incoming dto.UserSetting
+		if err := common.UnmarshalJsonStr(incomingSetting, &incoming); err == nil {
+			if err := model.UpdateUserMaxConcurrency(updatedUser.Id, incoming.MaxConcurrency); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
 	}
 	// 与 originUser 做 diff 决定要发哪类事件；group 变化与 profile 变化是两件事，分别发。
 	var profileChanged []string
@@ -1506,6 +1524,16 @@ func UpdateUserSetting(c *gin.Context) {
 			settings.GotifyPriority = req.GotifyPriority
 		}
 	}
+
+	// settings 是从零构建的，会整体替换 user.setting。所以这里必须把「本接口不负责
+	// 的字段」从 existingSettings 搬回来，否则用户保存一次通知设置就会把它们抹掉。
+	//
+	// MaxConcurrency 尤其重要：它只能由管理员配置，绝不能被用户自助接口改写或清空
+	// （被清空等于账户级并发限制静默失效）。
+	settings.MaxConcurrency = existingSettings.MaxConcurrency
+	settings.SidebarModules = existingSettings.SidebarModules
+	settings.BillingPreference = existingSettings.BillingPreference
+	settings.Language = existingSettings.Language
 
 	// 更新用户设置
 	user.SetSetting(settings)

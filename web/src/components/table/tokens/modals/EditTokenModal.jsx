@@ -60,6 +60,8 @@ import { useTranslation } from 'react-i18next';
 
 const { Text, Title } = Typography;
 
+
+
 const EditTokenModal = (props) => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -74,6 +76,9 @@ const EditTokenModal = (props) => {
   // 该令牌用的还是旧版 auto 分组（groups 为空且 group === 'auto'）。
   // 这类令牌保持原行为运行，只有用户在这里保存后才会转成显式分组链。
   const [isLegacyAuto, setIsLegacyAuto] = useState(false);
+  // 账户级并发上限（实际生效值，后端算好）。令牌并发不能超过它，所以它同时是
+  // 输入框的 max。0 表示账户级不限制 → 并发功能对该用户关闭，不渲染该字段。
+  const [maxTokenConcurrency, setMaxTokenConcurrency] = useState(0);
 
   const getInitValues = () => ({
     name: '',
@@ -88,6 +93,7 @@ const EditTokenModal = (props) => {
     // 实际是替用户做了一个他没表达过的决定，而且一上来就选满十来个分组也没意义。
     groups: [],
     cross_group_retry: true,
+    max_concurrency: 0,
     tokenCount: 1,
   });
 
@@ -190,6 +196,16 @@ const EditTokenModal = (props) => {
     }
   };
 
+  const loadAccountConcurrency = async () => {
+    try {
+      const res = await API.get('/api/user/self');
+      const value = Number(res?.data?.data?.effective_max_concurrency ?? 0);
+      setMaxTokenConcurrency(Number.isFinite(value) && value > 0 ? value : 0);
+    } catch (e) {
+      setMaxTokenConcurrency(0); // 拉不到就不显示，后端仍会夹紧兜底
+    }
+  };
+
   const loadToken = async () => {
     setLoading(true);
     let res = await API.get(`/api/token/${props.editingToken.id}`);
@@ -206,6 +222,7 @@ const EditTokenModal = (props) => {
       data.remain_amount = Number(
         quotaToDisplayAmount(data.remain_quota || 0).toFixed(6),
       );
+
 
       // 分组链回填。存量令牌 groups 为空，按 group 字段的旧语义还原：
       //   - group === 'auto' → 用当前 auto 顺序预填，并提示用户保存后会转成
@@ -249,6 +266,7 @@ const EditTokenModal = (props) => {
 
   useEffect(() => {
     if (props.visiable) {
+      loadAccountConcurrency();
       if (isEdit) {
         loadToken();
       } else {
@@ -259,6 +277,17 @@ const EditTokenModal = (props) => {
       formApiRef.current?.reset();
     }
   }, [props.visiable, props.editingToken.id]);
+
+  // 账户上限是异步拿的，到位后再夹紧表单里的值。
+  // 场景：用户先给令牌设了 50，管理员之后把账户级调到 10 —— 打开弹窗应显示 10，
+  // 而不是显示 50 然后保存时被后端静默改成 10（用户会以为没生效）。
+  useEffect(() => {
+    if (maxTokenConcurrency <= 0) return;
+    const current = Number(formApiRef.current?.getValue('max_concurrency'));
+    if (Number.isFinite(current) && current > maxTokenConcurrency) {
+      formApiRef.current?.setValue('max_concurrency', maxTokenConcurrency);
+    }
+  }, [maxTokenConcurrency]);
 
   // 旧版 auto 令牌的分组链预填。loadToken 与 loadGroups 是两个独立的异步流程，
   // 谁先完成不确定，所以在这里等 autoGroupOrder 到位后补一次。
@@ -783,6 +812,24 @@ const EditTokenModal = (props) => {
                       )}
                       showClear
                       style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={24}>
+                    <Form.InputNumber
+                      field='max_concurrency'
+                      label={t('最大并发数')}
+                      step={1}
+                      min={0}
+                      max={maxTokenConcurrency > 0 ? maxTokenConcurrency : undefined}
+                      style={{ width: '100%' }}
+                      extraText={
+                        maxTokenConcurrency > 0
+                          ? t(
+                              '该令牌同时进行中的请求数上限，0 表示不限制，不能超过账户上限 {{max}}',
+                              { max: maxTokenConcurrency },
+                            )
+                          : t('该令牌同时进行中的请求数上限，0 表示不限制')
+                      }
                     />
                   </Col>
                 </Row>

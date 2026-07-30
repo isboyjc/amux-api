@@ -16,6 +16,13 @@ type UserSetting struct {
 	SidebarModules                   string  `json:"sidebar_modules,omitempty"`                      // SidebarModules 左侧边栏模块配置
 	BillingPreference                string  `json:"billing_preference,omitempty"`                   // BillingPreference 扣费策略（订阅/钱包）
 	Language                         string  `json:"language,omitempty"`                             // Language 用户语言偏好 (zh, en)
+	// MaxConcurrency 账户级最大并发（同时在途）请求数，统计该用户名下所有令牌之和。
+	// 仅管理员可写（用户自助更新接口必须显式忽略该字段）。
+	// 用指针区分三态：
+	//   nil → 未单独配置，跟随全局默认 DefaultUserMaxConcurrency
+	//   0   → 管理员显式设为不限制（即使全局默认 > 0 也不限制）
+	//   >0  → 该用户的账户级上限
+	MaxConcurrency *int `json:"max_concurrency,omitempty"`
 }
 
 var (

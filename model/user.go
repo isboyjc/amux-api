@@ -64,11 +64,11 @@ type User struct {
 // 与原查询同量级）。
 type UserListItem struct {
 	User
-	TopupCount        int      `json:"topup_count" gorm:"column:topup_count"`
-	TopupAmount       float64  `json:"topup_amount" gorm:"column:topup_amount"`
-	AffRiskLevel      *string  `json:"aff_risk_level" gorm:"column:aff_risk_level"`
-	AffRiskReasons    *string  `json:"aff_risk_reasons" gorm:"column:aff_risk_reasons"`
-	AffRiskComputedAt *int64   `json:"aff_risk_computed_at" gorm:"column:aff_risk_computed_at"`
+	TopupCount        int     `json:"topup_count" gorm:"column:topup_count"`
+	TopupAmount       float64 `json:"topup_amount" gorm:"column:topup_amount"`
+	AffRiskLevel      *string `json:"aff_risk_level" gorm:"column:aff_risk_level"`
+	AffRiskReasons    *string `json:"aff_risk_reasons" gorm:"column:aff_risk_reasons"`
+	AffRiskComputedAt *int64  `json:"aff_risk_computed_at" gorm:"column:aff_risk_computed_at"`
 }
 
 // UserExportItem 供 email 营销系统同步用户数据，包含充值聚合和 language 字段。
@@ -891,6 +891,27 @@ func (user *User) Edit(updatePassword bool) error {
 	return updateUserCache(*user)
 }
 
+// UpdateUserMaxConcurrency 只更新账户级并发上限（存在 setting JSON 里）。
+//
+// 单独一个方法而不是走 Edit：Edit 的 updates 是显式白名单且不含 setting，
+// 而直接整体覆盖 setting 会抹掉用户自己的通知配置等字段。这里读-改-写单个字段。
+//
+// limit 传 nil 表示「清除单独配置、回落到全局默认」。
+func UpdateUserMaxConcurrency(userId int, limit *int) error {
+	user, err := GetUserById(userId, true)
+	if err != nil {
+		return err
+	}
+	setting := user.GetSetting()
+	setting.MaxConcurrency = limit
+	user.SetSetting(setting)
+	if err := DB.Model(user).Update("setting", user.Setting).Error; err != nil {
+		return err
+	}
+	// 缓存里存的是 setting 字符串，不刷新的话中间件会继续按旧值限流
+	return updateUserCache(*user)
+}
+
 func (user *User) ClearBinding(bindingType string) error {
 	if user.Id == 0 {
 		return errors.New("user id is empty")
@@ -1501,7 +1522,7 @@ func GetInvitees(inviterId int, pageInfo *common.PageInfo) (invitees []*InviteeI
 		TopupAmount float64
 	}
 	var usersWithTopup []*UserWithTopup
-	
+
 	err = tx.Table("users").
 		Select("users.id, users.username, users.display_name, COALESCE(SUM(top_ups.money), 0) as topup_amount").
 		Joins("LEFT JOIN top_ups ON users.id = top_ups.user_id AND top_ups.status = ?", common.TopUpStatusSuccess).

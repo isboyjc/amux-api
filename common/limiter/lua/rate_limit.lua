@@ -37,8 +37,11 @@ if tokens >= requested then
     allowed = true
 end
 
----- 更新桶状态并设置过期时间
+-- 更新桶状态并设置过期时间
 redis.call('HMSET', key, 'tokens', tokens, 'last_time', last_time)
---redis.call('EXPIRE', key, math.ceil(capacity / rate) + 60) -- 适当延长过期时间
+-- 必须设过期时间：EXPIRE 之前被注释掉，导致每个活跃用户的 rateLimit:<uid> hash
+-- 永久驻留 Redis，只增不减。取「桶完全回满所需时间 + 60s」，桶满即等价于无限制状态，
+-- 此时丢弃状态不改变限流语义。
+redis.call('EXPIRE', key, math.ceil(capacity / rate) + 60)
 
 return allowed and 1 or 0

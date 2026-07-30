@@ -94,6 +94,7 @@ const EditUserModal = (props) => {
     quota_amount: 0,
     group: 'default',
     remark: '',
+    max_concurrency: '',
   });
 
   const fetchGroups = async () => {
@@ -117,6 +118,17 @@ const EditUserModal = (props) => {
       data.quota_amount = Number(
         quotaToDisplayAmount(data.quota || 0).toFixed(6),
       );
+      // 账户级并发存在 setting JSON 里。留空表示未单独配置、跟随全局默认，
+      // 所以这里要区分「没有这个键」和「显式设为 0（不限制）」。
+      try {
+        const parsed = data.setting ? JSON.parse(data.setting) : {};
+        data.max_concurrency =
+          parsed.max_concurrency === undefined || parsed.max_concurrency === null
+            ? ''
+            : parsed.max_concurrency;
+      } catch (e) {
+        data.max_concurrency = '';
+      }
       setInputs({ ...getInitValues(), ...data });
     } else {
       showError(message);
@@ -150,6 +162,24 @@ const EditUserModal = (props) => {
     let payload = { ...values };
     delete payload.quota;
     delete payload.quota_amount;
+    // 账户级并发写回 setting JSON。后端只取这一个字段做单独更新，
+    // 不会用它覆盖用户自己的通知等配置。
+    if (userId) {
+      let parsed = {};
+      try {
+        parsed = inputs.setting ? JSON.parse(inputs.setting) : {};
+      } catch (e) {
+        parsed = {};
+      }
+      const raw = values.max_concurrency;
+      if (raw === '' || raw === null || raw === undefined) {
+        delete parsed.max_concurrency; // 清除单独配置 → 回落全局默认
+      } else {
+        parsed.max_concurrency = Number(raw);
+      }
+      payload.setting = JSON.stringify(parsed);
+    }
+    delete payload.max_concurrency;
     if (userId) {
       payload.id = parseInt(userId);
     }
@@ -365,6 +395,22 @@ const EditUserModal = (props) => {
                           allowAdditions
                           search
                           rules={[{ required: true, message: t('请选择分组') }]}
+                        />
+                      </Col>
+
+                      <Col span={24}>
+                        <Form.InputNumber
+                          field='max_concurrency'
+                          label={t('账户并发数')}
+                          placeholder={t('留空则使用全局默认值')}
+                          min={0}
+                          max={100000}
+                          step={1}
+                          style={{ width: '100%' }}
+                          extraText={t(
+                            '该账户所有令牌同时进行中的请求数上限。留空跟随全局默认，填 0 表示不限制',
+                          )}
+                          showClear
                         />
                       </Col>
 

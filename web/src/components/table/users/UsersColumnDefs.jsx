@@ -55,6 +55,63 @@ const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
 /**
  * Render user role
  */
+// 全局默认账户并发。0 / 缺失表示未配置全局默认（此时未单独配置的用户显示 "-"）。
+const getDefaultUserMaxConcurrency = () => {
+  try {
+    const raw = localStorage.getItem('status');
+    if (raw) {
+      const value = Number(JSON.parse(raw).default_user_max_concurrency);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+  } catch (_) {}
+  return 0;
+};
+
+// 账户级并发存在 setting JSON 里，三态展示：
+//   单独配了正值 → 蓝色数字
+//   单独配了 0   → 「不限制」
+//   没单独配     → 回落全局默认：全局>0 显示「N (默认)」，全局也没设则显示 "-"
+// 这一列始终显示：即使全局默认没配，管理员依然可以给单个用户单独设并发，
+// 按全局是否配置来决定显不显示会让这些单独配置完全看不见。
+const renderMaxConcurrency = (record, globalDefault, t) => {
+  let own = null;
+  try {
+    const parsed = record.setting ? JSON.parse(record.setting) : {};
+    if (parsed.max_concurrency !== undefined && parsed.max_concurrency !== null) {
+      own = Number(parsed.max_concurrency);
+    }
+  } catch (_) {}
+
+  if (own !== null && Number.isFinite(own)) {
+    if (own <= 0) {
+      return (
+        <Tag color='white' shape='circle'>
+          {t('不限制')}
+        </Tag>
+      );
+    }
+    return (
+      <Tag color='blue' shape='circle'>
+        {own}
+      </Tag>
+    );
+  }
+
+  // 未单独配置 → 跟随全局默认；全局也没配则确实不限制
+  if (globalDefault > 0) {
+    return (
+      <Tag color='grey' shape='circle'>
+        {globalDefault} ({t('默认')})
+      </Tag>
+    );
+  }
+  return (
+    <Tag color='white' shape='circle'>
+      {t('无限制')}
+    </Tag>
+  );
+};
+
 const renderRole = (role, t) => {
   switch (role) {
     case 1:
@@ -450,6 +507,12 @@ export const getUsersColumns = ({
       render: (text, record, index) => {
         return <div>{renderGroup(text)}</div>;
       },
+    },
+    {
+      title: t('并发限制'),
+      dataIndex: 'max_concurrency',
+      render: (text, record) =>
+        renderMaxConcurrency(record, getDefaultUserMaxConcurrency(), t),
     },
     {
       title: t('角色'),
