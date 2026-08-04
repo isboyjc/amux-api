@@ -140,6 +140,44 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	return &userCache, nil
 }
 
+// cacheUpdateUserProfileFields 刷新缓存里的资料列，刻意不碰 Quota。
+//
+// 不能用 updateUserCache：那是整对象 HSET，会把 UserBase.Quota 一起写回调用方读到的
+// 旧值，覆盖掉计费侧的原子 HINCRBY（cacheDecrUserQuota），效果等同于给用户退钱。
+// 缓存里的 Quota 只允许由计费路径自增自减，或在缓存缺失时从 DB 整体回填。
+//
+// 用 RedisHSetFields 一次写完：它只在 key 存在且有 TTL 时才写，缓存未命中时整体
+// no-op（下次读走 DB 回填），且所有字段在同一条 HSET 里落地，不会出现「Group 已更新、
+// Status 还是旧的」这种半更新缓存。
+func cacheUpdateUserProfileFields(user User) error {
+	if !common.RedisEnabled {
+		return nil
+	}
+	return common.RedisHSetFields(getUserCacheKey(user.Id), map[string]interface{}{
+		"Group":    user.Group,
+		"Email":    user.Email,
+		"Status":   user.Status,
+		"Username": user.Username,
+		"Setting":  user.Setting,
+	})
+}
+
+// cacheSetUserSetting 只刷新缓存里的 Setting 字段。
+func cacheSetUserSetting(userId int, settingJSON string) error {
+	if !common.RedisEnabled {
+		return nil
+	}
+	return common.RedisHSetField(getUserCacheKey(userId), "Setting", settingJSON)
+}
+
+// cacheSetUserGroup 只刷新缓存里的 Group 字段。
+func cacheSetUserGroup(userId int, group string) error {
+	if !common.RedisEnabled {
+		return nil
+	}
+	return common.RedisHSetField(getUserCacheKey(userId), "Group", group)
+}
+
 // Add atomic quota operations using hash fields
 func cacheIncrUserQuota(userId int, delta int64) error {
 	if !common.RedisEnabled {

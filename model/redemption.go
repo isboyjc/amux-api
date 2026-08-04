@@ -126,9 +126,16 @@ func Redeem(key string, userId int) (quota int, err error) {
 	if common.UsingPostgreSQL {
 		keyCol = `"key"`
 	}
-	common.RandomSleep()
+	// 这里原本有一句 common.RandomSleep()（随机 sleep 0-3000ms）。它是当年为了「错开
+	// 并发兑换」加的土办法：既挡不住竞态（只是降低撞上的概率，反而把读与写之间的窗口
+	// 拉得更宽），又给每一次正常兑换平白加了最多 3 秒延迟，期间还占着上层 TopUp 的
+	// per-user trylock。下面改成真正的原子认领后它没有存在意义，删掉。
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := tx.Set("gorm:query_option", "FOR UPDATE").Where(keyCol+" = ?", key).First(redemption).Error
+		// 先读一遍：拿面额、Id，并给出可区分的错误文案。
+		// 注意这一步不构成任何并发保护——原来这里挂的
+		// tx.Set("gorm:query_option", "FOR UPDATE") 是 GORM v1 的 API，v2 下是空操作，
+		// 生成的 SQL 里没有 FOR UPDATE，所谓行锁并不存在。
+		err := tx.Where(keyCol+" = ?", key).First(redemption).Error
 		if err != nil {
 			return errors.New("无效的兑换码")
 		}
@@ -138,14 +145,33 @@ func Redeem(key string, userId int) (quota int, err error) {
 		if redemption.ExpiredTime != 0 && redemption.ExpiredTime < common.GetTimestamp() {
 			return errors.New("该兑换码已过期")
 		}
-		err = tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", redemption.Quota)).Error
-		if err != nil {
-			return err
+
+		// 真正的并发保护在这里：把「状态仍为可用」写进 WHERE，用一条 UPDATE 原子认领。
+		// 谁先把 enabled 翻成 used 谁赢，输的一方 RowsAffected 为 0。
+		//
+		// 必须先认领、后到账：反过来的话，两个并发请求会双双通过状态判断，各自给自己
+		// 的账户加满一次额度，同一张码到账两次。上层 TopUp 的 trylock 是 per-user 的
+		// 进程内锁，挡不住「不同账号提交同一张码」，也跨不了节点。
+		redeemedTime := common.GetTimestamp()
+		claim := tx.Model(&Redemption{}).
+			Where("id = ? AND status = ?", redemption.Id, common.RedemptionCodeStatusEnabled).
+			Updates(map[string]interface{}{
+				"status":        common.RedemptionCodeStatusUsed,
+				"redeemed_time": redeemedTime,
+				"used_user_id":  userId,
+			})
+		if claim.Error != nil {
+			return claim.Error
 		}
-		redemption.RedeemedTime = common.GetTimestamp()
+		if claim.RowsAffected == 0 {
+			return errors.New("该兑换码已被使用")
+		}
+		redemption.RedeemedTime = redeemedTime
 		redemption.Status = common.RedemptionCodeStatusUsed
 		redemption.UsedUserId = userId
-		if err := tx.Save(redemption).Error; err != nil {
+
+		err = tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", redemption.Quota)).Error
+		if err != nil {
 			return err
 		}
 

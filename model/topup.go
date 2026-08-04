@@ -124,6 +124,39 @@ func GetTopUpByTradeNo(tradeNo string) *TopUp {
 	return topUp
 }
 
+// claimPendingTopUpTx 原子地把充值订单从 Pending 翻成 Success，返回是否抢到。
+//
+// 各支付回调原来的写法都是「读订单 -> 判 status == Pending -> tx.Save 标成功 -> 加额度」，
+// 依赖 tx.Set("gorm:query_option", "FOR UPDATE") 来串行化。但那是 GORM v1 的 API，v2 下
+// 是空操作，生成的 SQL 里没有 FOR UPDATE——两个并发回调会双双读到 Pending，各自加一次
+// 额度，同一笔订单重复到账。支付网关本来就会在超时/非 2xx 时重试回调，这不是理论风险。
+//
+// 把「状态仍为 Pending」写进 WHERE 之后，UPDATE 语句自身的行锁保证只有一个事务能翻转
+// 成功（三种库的 UPDATE 都是先取锁、再对最新版本重新求值 WHERE），输的一方 RowsAffected
+// 为 0。调用方据此决定是幂等返回还是报错。
+//
+// claimed=false 时一并返回订单的当前状态，供调用方区分「被并发回调抢先完成」和
+// 「订单本来就不是待支付」。
+func claimPendingTopUpTx(tx *gorm.DB, topUpId int, completeTime int64) (claimed bool, currentStatus string, err error) {
+	res := tx.Model(&TopUp{}).
+		Where("id = ? AND status = ?", topUpId, common.TopUpStatusPending).
+		Updates(map[string]interface{}{
+			"status":        common.TopUpStatusSuccess,
+			"complete_time": completeTime,
+		})
+	if res.Error != nil {
+		return false, "", res.Error
+	}
+	if res.RowsAffected > 0 {
+		return true, common.TopUpStatusSuccess, nil
+	}
+	var cur TopUp
+	if err := tx.Select("status").Where("id = ?", topUpId).First(&cur).Error; err != nil {
+		return false, "", err
+	}
+	return false, cur.Status, nil
+}
+
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
 	if referenceId == "" {
 		return errors.New("未提供支付单号")
@@ -138,7 +171,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", referenceId).First(topUp).Error
+		err := tx.Where(refCol+" = ?", referenceId).First(topUp).Error
 		if err != nil {
 			return errors.New("充值订单不存在")
 		}
@@ -151,12 +184,18 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return errors.New("充值订单状态错误")
 		}
 
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		err = tx.Save(topUp).Error
+		// 原子认领：并发回调只有一个能把 Pending 翻成 Success，其余的到不了账
+		completeTime := common.GetTimestamp()
+		claimed, _, err := claimPendingTopUpTx(tx, topUp.Id, completeTime)
 		if err != nil {
 			return err
 		}
+		if !claimed {
+			// 与上面 status != Pending 保持同一套语义
+			return errors.New("充值订单状态错误")
+		}
+		topUp.CompleteTime = completeTime
+		topUp.Status = common.TopUpStatusSuccess
 
 		quota = float64(topUp.Amount) * common.QuotaPerUnit
 		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(map[string]interface{}{"stripe_customer": customerId, "quota": gorm.Expr("quota + ?", quota)}).Error
@@ -403,8 +442,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
-		// 行级锁，避免并发补单
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
+		if err := tx.Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
 			return errors.New("充值订单不存在")
 		}
 
@@ -426,12 +464,22 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return errors.New("无效的充值额度")
 		}
 
-		// 标记完成
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
+		// 标记完成：原子认领，避免并发补单/回调重复到账
+		completeTime := common.GetTimestamp()
+		claimed, curStatus, err := claimPendingTopUpTx(tx, topUp.Id, completeTime)
+		if err != nil {
 			return err
 		}
+		if !claimed {
+			// 被并发的回调抢先完成了，按上面同样的幂等语义返回
+			if curStatus == common.TopUpStatusSuccess {
+				quotaToAdd = 0
+				return nil
+			}
+			return errors.New("订单状态不是待支付，无法补单")
+		}
+		topUp.CompleteTime = completeTime
+		topUp.Status = common.TopUpStatusSuccess
 
 		// 增加用户额度（立即写库，保持一致性）
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
@@ -460,6 +508,13 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 
 	if err != nil {
 		return err
+	}
+
+	// userId 只在真正完成补单的那条路径上被赋值。订单早已成功（幂等返回）或被并发
+	// 回调抢先认领时它仍是 0，这时不能继续往下走：否则会记一条挂在用户 0 上的假充值
+	// 日志、按 0 元跑一次邀请返现、再对 userId=0 调用一次自动升组。
+	if userId <= 0 {
+		return nil
 	}
 
 	// 事务外记录日志，避免阻塞
@@ -491,7 +546,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", referenceId).First(topUp).Error
+		err := tx.Where(refCol+" = ?", referenceId).First(topUp).Error
 		if err != nil {
 			return errors.New("充值订单不存在")
 		}
@@ -504,12 +559,17 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 			return errors.New("充值订单状态错误")
 		}
 
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		err = tx.Save(topUp).Error
+		// 原子认领：并发回调只有一个能翻转成功
+		completeTime := common.GetTimestamp()
+		claimed, _, err := claimPendingTopUpTx(tx, topUp.Id, completeTime)
 		if err != nil {
 			return err
 		}
+		if !claimed {
+			return errors.New("充值订单状态错误")
+		}
+		topUp.CompleteTime = completeTime
+		topUp.Status = common.TopUpStatusSuccess
 
 		// Creem 直接使用 Amount 作为充值额度（整数）
 		quota = topUp.Amount
@@ -586,7 +646,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	}
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error
+		err := tx.Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
 			return errors.New("充值订单不存在")
 		}
@@ -610,11 +670,22 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return errors.New("无效的充值额度")
 		}
 
-		topUp.CompleteTime = common.GetTimestamp()
-		topUp.Status = common.TopUpStatusSuccess
-		if err := tx.Save(topUp).Error; err != nil {
+		// 原子认领：并发回调只有一个能翻转成功
+		completeTime := common.GetTimestamp()
+		claimed, curStatus, err := claimPendingTopUpTx(tx, topUp.Id, completeTime)
+		if err != nil {
 			return err
 		}
+		if !claimed {
+			// 与上面的幂等分支保持一致
+			if curStatus == common.TopUpStatusSuccess {
+				quotaToAdd = 0
+				return nil
+			}
+			return errors.New("充值订单状态错误")
+		}
+		topUp.CompleteTime = completeTime
+		topUp.Status = common.TopUpStatusSuccess
 
 		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
 			return err
@@ -701,10 +772,12 @@ func CheckAndUpgradeUserGroup(userId int) error {
 		// 1. 当前分组匹配源分组
 		// 2. 累计充值金额达到或超过阈值
 		if user.Group == rule.FromGroup && totalAmount >= rule.Threshold {
-			// 执行升级
+			// 执行升级：只写 group 单列。
+			// 这里紧跟在充值到账之后，整行写回会把 T0 快照里的 quota 落库，
+			// 等于把刚充的钱抹掉。
 			fromGroup := user.Group
 			user.Group = rule.ToGroup
-			err = user.Update(false)
+			err = UpdateUserGroupColumn(userId, rule.ToGroup)
 			if err != nil {
 				return err
 			}

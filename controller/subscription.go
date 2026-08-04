@@ -79,7 +79,9 @@ func UpdateSubscriptionPreference(c *gin.Context) {
 	current := user.GetSetting()
 	current.BillingPreference = pref
 	user.SetSetting(current)
-	if err := user.Update(false); err != nil {
+	// 只写 setting 单列：整行写回会把 T0 快照里的 quota/used_quota 一并落库，
+	// 高并发切换账单偏好即可回滚计费结算。
+	if err := model.UpdateUserSettingColumn(user.Id, user.Setting); err != nil {
 		common.ApiError(c, err)
 		return
 	}

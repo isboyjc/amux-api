@@ -557,22 +557,26 @@ func HardDeleteUserById(id int) error {
 }
 
 func inviteUser(inviterId int, fromUserId int) (err error) {
-	user, err := GetUserById(inviterId, true)
-	if err != nil {
-		return err
-	}
-	user.AffCount++
-	user.AffQuota += common.QuotaForInviter
-	user.AffHistoryQuota += common.QuotaForInviter
-
 	tx := DB.Begin()
 	if tx.Error != nil {
 		return tx.Error
 	}
 	defer tx.Rollback()
 
-	if err = tx.Save(user).Error; err != nil {
-		return err
+	// 用原子表达式自增，不要「读整行 -> 改字段 -> tx.Save」：Save 会写回全部列（含
+	// quota / used_quota），把这期间邀请人自己的消费结算抹掉。
+	res := tx.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
+		"aff_count":   gorm.Expr("aff_count + ?", 1),
+		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
+		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	// 原来这里靠 GetUserById 报错来拦截不存在/已删除的邀请人，改成条件更新后
+	// 用 RowsAffected 顶上，否则会给不存在的 inviter 记一条返现流水。
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("邀请人 %d 不存在", inviterId)
 	}
 
 	// 仅在确实有奖励额度时写入注册返现流水，避免产生 quota=0 的脏记录
@@ -685,28 +689,36 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	}
 	defer tx.Rollback() // 确保在函数退出时事务能回滚
 
-	// 加锁查询用户以确保数据一致性
-	err := tx.Set("gorm:query_option", "FOR UPDATE").First(&user, user.Id).Error
-	if err != nil {
-		return err
+	// 条件更新 + RowsAffected 判定，一条语句里完成「校验余额充足」和「转移」，
+	// 三种库通用且天然原子。
+	//
+	// 原来的写法是 tx.Set("gorm:query_option", "FOR UPDATE").First(...) 再 tx.Save(user)，
+	// 有两个问题：
+	//  1. "gorm:query_option" 是 GORM v1 的 API，v2 已移除，这行是空操作，生成的 SQL
+	//     里根本没有 FOR UPDATE，所谓「加锁查询」并不存在（v2 要用 clause.Locking）；
+	//  2. tx.Save 是整行写回，会把 T0 快照里的 used_quota / request_count 一并写回去，
+	//     抹掉这期间的计费结算。
+	res := tx.Model(&User{}).Where("id = ? AND aff_quota >= ?", user.Id, quota).Updates(map[string]interface{}{
+		"aff_quota": gorm.Expr("aff_quota - ?", quota),
+		"quota":     gorm.Expr("quota + ?", quota),
+	})
+	if res.Error != nil {
+		return res.Error
 	}
-
-	// 再次检查用户的AffQuota是否足够
-	if user.AffQuota < quota {
+	if res.RowsAffected == 0 {
 		return errors.New("邀请额度不足！")
 	}
 
-	// 更新用户额度
-	user.AffQuota -= quota
-	user.Quota += quota
-
-	// 保存用户状态
-	if err := tx.Save(user).Error; err != nil {
+	if err := tx.Commit().Error; err != nil {
 		return err
 	}
 
-	// 提交事务
-	return tx.Commit().Error
+	// 余额缓存是 HINCRBY 维护的，这里必须同步补上，否则中间件在 TTL 内仍按旧余额放行。
+	// 缓存不存在时 RedisHIncrBy 是 no-op，下次读会从 DB 整体回填。
+	if err := cacheIncrUserQuota(user.Id, int64(quota)); err != nil {
+		common.SysError(fmt.Sprintf("TransferAffQuotaToQuota: sync quota cache for user %d failed: %s", user.Id, err))
+	}
+	return nil
 }
 
 func (user *User) Insert(inviterId int) error {
@@ -746,7 +758,8 @@ func (user *User) Insert(inviterId int) error {
 			currentSetting := createdUser.GetSetting()
 			currentSetting.SidebarModules = defaultSidebarConfig
 			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
+			// 单列写：这段紧跟在新用户/被邀请人赠额之后，整行写回会把刚发的额度抹掉
+			_ = UpdateUserSettingColumn(createdUser.Id, createdUser.Setting)
 			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
 		}
 	}
@@ -814,7 +827,8 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 			currentSetting := createdUser.GetSetting()
 			currentSetting.SidebarModules = defaultSidebarConfig
 			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
+			// 单列写：这段紧跟在新用户/被邀请人赠额之后，整行写回会把刚发的额度抹掉
+			_ = UpdateUserSettingColumn(createdUser.Id, createdUser.Setting)
 			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
 		}
 	}
@@ -848,7 +862,11 @@ func (user *User) Update(updatePassword bool) error {
 	}
 	newUser := *user
 	DB.First(&user, user.Id)
-	if err = DB.Model(user).Updates(newUser).Error; err != nil {
+	// Omit 计费列：newUser 是调用方在请求开始时读出的整行快照，GORM 结构体更新会写入
+	// 所有非零字段，于是 quota / used_quota / request_count 会被写回 T0 的旧值，把这期间
+	// 计费侧的原子自增（decreaseUserQuota / updateUserUsedQuotaAndRequestCount）整段抹掉。
+	// 并发调用本方法即可让余额复原、消费不计账。资料写入路径一律不得触碰计费列。
+	if err = DB.Model(user).Omit(billingColumns...).Updates(newUser).Error; err != nil {
 		return err
 	}
 
@@ -858,8 +876,9 @@ func (user *User) Update(updatePassword bool) error {
 		revokePasswordResetTokens(user.Id)
 	}
 
-	// Update cache
-	return updateUserCache(*user)
+	// 缓存同理：updateUserCache 会把整个 UserBase（含 Quota）HSET 回去，覆盖掉计费侧的
+	// 原子 HINCRBY。这里只逐字段刷新资料列，Quota 留给计费路径自己维护。
+	return cacheUpdateUserProfileFields(*user)
 }
 
 func (user *User) Edit(updatePassword bool) error {
@@ -887,8 +906,55 @@ func (user *User) Edit(updatePassword bool) error {
 		return err
 	}
 
-	// Update cache
-	return updateUserCache(*user)
+	// updates 是显式白名单，DB 层本就不会碰计费列；缓存层也必须逐字段刷新，
+	// 否则整对象 HSET 会把 Quota 覆盖成 DB.First 那一刻的旧值。
+	return cacheUpdateUserProfileFields(*user)
+}
+
+// billingColumns 是计费/统计列，只允许计费路径以原子表达式（quota + ?）写入。
+//
+// 任何「读整行 -> 改某个资料字段 -> 写回」的路径都必须把这些列排除掉：那种写法
+// 携带的是请求开始时的旧值，落库即回滚掉这期间发生的所有计费自增，等于余额复原、
+// 消费不计账。用户自助接口可高频触发，属于可直接变现的资金漏洞。
+var billingColumns = []string{
+	"quota",
+	"used_quota",
+	"request_count",
+	"aff_quota",
+	"aff_count",
+	"aff_history",
+}
+
+// UpdateUserSettingColumn 只写 users.setting 单列，并逐字段同步缓存。
+//
+// 所有「改用户设置」的入口（侧边栏、语言、通知配置、账单偏好、账户级并发）都必须走
+// 这里，不要用 User.Update()/DB.Save() 这类整行写回 —— 见 billingColumns 的说明。
+//
+// 注意调用方仍需自己做「读 setting -> 改目标字段 -> 序列化」，因为 setting 是一整块
+// JSON；本函数只保证写入范围收敛到这一列。
+func UpdateUserSettingColumn(userId int, settingJSON string) error {
+	if userId == 0 {
+		return errors.New("id 为空！")
+	}
+	if err := DB.Model(&User{}).Where("id = ?", userId).Update("setting", settingJSON).Error; err != nil {
+		return err
+	}
+	return cacheSetUserSetting(userId, settingJSON)
+}
+
+// UpdateUserGroupColumn 只写 users.group 单列，并同步缓存。
+//
+// 充值后自动升组会紧跟在额度到账之后发生，整行写回会把刚充的钱抹掉，所以必须单列写。
+func UpdateUserGroupColumn(userId int, group string) error {
+	if userId == 0 {
+		return errors.New("id 为空！")
+	}
+	// 列名用裸 "group" 交给 GORM 按方言加引号（Edit() 的 updates map 同样这么写）；
+	// commonGroupCol 是给拼接原生 SQL 的 Where 用的，混用会导致引号叠加。
+	if err := DB.Model(&User{}).Where("id = ?", userId).Update("group", group).Error; err != nil {
+		return err
+	}
+	return cacheSetUserGroup(userId, group)
 }
 
 // UpdateUserMaxConcurrency 只更新账户级并发上限（存在 setting JSON 里）。
@@ -905,11 +971,8 @@ func UpdateUserMaxConcurrency(userId int, limit *int) error {
 	setting := user.GetSetting()
 	setting.MaxConcurrency = limit
 	user.SetSetting(setting)
-	if err := DB.Model(user).Update("setting", user.Setting).Error; err != nil {
-		return err
-	}
 	// 缓存里存的是 setting 字符串，不刷新的话中间件会继续按旧值限流
-	return updateUserCache(*user)
+	return UpdateUserSettingColumn(user.Id, user.Setting)
 }
 
 func (user *User) ClearBinding(bindingType string) error {
@@ -940,7 +1003,9 @@ func (user *User) ClearBinding(bindingType string) error {
 		return err
 	}
 
-	return updateUserCache(*user)
+	// 逐字段刷新而不是整对象 HSET：后者会把上面这次 First 读到的 Quota 写回缓存，
+	// 覆盖掉这之间计费侧的原子 HINCRBY。
+	return cacheUpdateUserProfileFields(*user)
 }
 
 func (user *User) Delete() error {
