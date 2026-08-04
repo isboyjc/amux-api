@@ -510,6 +510,13 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		return err
 	}
 
+	// userId 只在真正完成补单的那条路径上被赋值。订单早已成功（幂等返回）或被并发
+	// 回调抢先认领时它仍是 0，这时不能继续往下走：否则会记一条挂在用户 0 上的假充值
+	// 日志、按 0 元跑一次邀请返现、再对 userId=0 调用一次自动升组。
+	if userId <= 0 {
+		return nil
+	}
+
 	// 事务外记录日志，避免阻塞
 	RecordTopupLog(userId, fmt.Sprintf("管理员补单成功，充值金额: %v，支付金额：%f", logger.FormatQuota(quotaToAdd), payMoney), callerIp, paymentMethod, "admin")
 

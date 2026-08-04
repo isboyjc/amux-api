@@ -350,3 +350,70 @@ func TestRedeem_ClaimIsGuardedByStatus(t *testing.T) {
 		t.Fatalf("B 应当到账 5000，实际 %d", b.Quota)
 	}
 }
+
+// 订阅额度的周期性重置必须只生效一次，且输掉 CAS 的一方必须把内存中的 sub
+// 与库里对齐。
+//
+// 后半句是重构时踩过的坑：如果在 CAS 之前就把 sub.AmountUsed 改成 0，输掉之后内存里
+// 是 0、库里却是赢家写的值。调用方 PreConsumeUserSubscription 紧接着就拿 sub.AmountUsed
+// 做额度预判，会误判成额度充足；ResetDueSubscriptions 的计数也会翻倍虚高。
+func TestMaybeResetUserSubscription_ClaimOnceAndKeepsStructInSync(t *testing.T) {
+	db := newMoneyPathTestDB(t, &UserSubscription{}, &SubscriptionPlan{})
+
+	now := common.GetTimestamp()
+	plan := &SubscriptionPlan{Title: "p", QuotaResetPeriod: SubscriptionResetDaily,
+		DurationUnit: SubscriptionDurationMonth, DurationValue: 1, TotalAmount: 1000}
+	if err := db.Create(plan).Error; err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	sub := &UserSubscription{
+		UserId: 1, PlanId: plan.Id, AmountTotal: 1000, AmountUsed: 700, Status: "active",
+		StartTime: now - 86400*3, EndTime: now + 86400*30,
+		LastResetTime: now - 86400*2, NextResetTime: now - 10, // 已到重置时间
+	}
+	if err := db.Create(sub).Error; err != nil {
+		t.Fatalf("create sub: %v", err)
+	}
+
+	// 两个「实例」拿着同一份快照同时来重置
+	a := *sub
+	b := *sub
+
+	wonA, err := maybeResetUserSubscriptionWithPlanTx(db, &a, plan, now)
+	if err != nil {
+		t.Fatalf("reset A: %v", err)
+	}
+
+	// 关键：A 重置完之后又发生了真实消费。这样库里的 amount_used 就不再等于
+	// B 自己算出来的 0——只有让「赢家写入的值」和「输家算出的值」不同，才能真正
+	// 检验输家有没有把库里的真值读回来。否则两边算出同一个值，bug 会被掩盖。
+	if err := PostConsumeUserSubscriptionDelta(sub.Id, 400); err != nil {
+		t.Fatalf("consume after reset: %v", err)
+	}
+
+	wonB, err := maybeResetUserSubscriptionWithPlanTx(db, &b, plan, now)
+	if err != nil {
+		t.Fatalf("reset B: %v", err)
+	}
+
+	if !wonA || wonB {
+		t.Fatalf("应当只有先到的那次重置成功：wonA=%v wonB=%v", wonA, wonB)
+	}
+
+	var after UserSubscription
+	if err := db.First(&after, sub.Id).Error; err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if after.AmountUsed != 400 {
+		t.Fatalf("期望重置清零后再消费 400，实际 %d", after.AmountUsed)
+	}
+	if after.NextResetTime <= now {
+		t.Fatalf("next_reset_time 应当被推到将来，实际 %d（now=%d）", after.NextResetTime, now)
+	}
+
+	// 输掉的一方必须已经把库里的真值读回来，而不是停留在自己算出的 0
+	if b.NextResetTime != after.NextResetTime || b.AmountUsed != after.AmountUsed {
+		t.Fatalf("输掉 CAS 的一方内存与库不一致：内存 used=%d next=%d，库 used=%d next=%d",
+			b.AmountUsed, b.NextResetTime, after.AmountUsed, after.NextResetTime)
+	}
+}

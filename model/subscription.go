@@ -1016,15 +1016,16 @@ func (r *SubscriptionPreConsumeRecord) BeforeUpdate(tx *gorm.DB) error {
 	return nil
 }
 
-func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, plan *SubscriptionPlan, now int64) error {
+// 返回值 reset 表示本次是否真的执行了「清空已用额度」的重置（抢到 CAS 才算）。
+func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, plan *SubscriptionPlan, now int64) (reset bool, err error) {
 	if tx == nil || sub == nil || plan == nil {
-		return errors.New("invalid reset args")
+		return false, errors.New("invalid reset args")
 	}
 	if sub.NextResetTime > 0 && sub.NextResetTime > now {
-		return nil
+		return false, nil
 	}
 	if NormalizeResetPeriod(plan.QuotaResetPeriod) == SubscriptionResetNever {
-		return nil
+		return false, nil
 	}
 	baseUnix := sub.LastResetTime
 	if baseUnix <= 0 {
@@ -1048,41 +1049,65 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 	//     被清零两轮，等于白送一个周期的订阅额度。
 	//  2. tx.Save 会把 status / end_time / amount_total 等整行字段按快照重写。
 	prevNextResetTime := sub.NextResetTime
-	claim := func(updates map[string]interface{}) error {
+	// claim 只有真正抢到时才回填内存中的 sub；输掉时必须把库里的最新值读回来。
+	//
+	// 否则会出现「内存说 AmountUsed=0、库里其实是赢家写的值」这种不一致，调用方
+	// PreConsumeUserSubscription 紧接着就用 sub.AmountUsed 做额度预判，会误判成额度
+	// 充足（真正的扣减带 WHERE 条件，不会超扣，但会从"换下一个订阅"退化成直接报错），
+	// ResetDueSubscriptions 的计数也会虚高。
+	claim := func(updates map[string]interface{}) (bool, error) {
 		res := tx.Model(&UserSubscription{}).
 			Where("id = ? AND next_reset_time = ?", sub.Id, prevNextResetTime).
 			Updates(updates)
 		if res.Error != nil {
-			return res.Error
+			return false, res.Error
 		}
 		if res.RowsAffected == 0 {
-			// 已被并发的重置抢先处理，本次跳过即可
-			return nil
+			// 已被并发的重置抢先处理：回读库里的真值，保持内存与库一致
+			var fresh UserSubscription
+			if err := tx.Where("id = ?", sub.Id).First(&fresh).Error; err != nil {
+				return false, err
+			}
+			*sub = fresh
+			return false, nil
 		}
-		return nil
+		return true, nil
 	}
 
 	if !advanced {
 		if sub.NextResetTime == 0 && next > 0 {
-			sub.NextResetTime = next
-			sub.LastResetTime = base.Unix()
-			return claim(map[string]interface{}{
+			won, err := claim(map[string]interface{}{
 				"next_reset_time": next,
 				"last_reset_time": base.Unix(),
 				"updated_at":      now,
 			})
+			if err != nil {
+				return false, err
+			}
+			if won {
+				sub.NextResetTime = next
+				sub.LastResetTime = base.Unix()
+			}
+			// 这一支只是补齐 next_reset_time，没有清空额度，不算一次「重置」
+			return false, nil
 		}
-		return nil
+		return false, nil
 	}
-	sub.AmountUsed = 0
-	sub.LastResetTime = base.Unix()
-	sub.NextResetTime = next
-	return claim(map[string]interface{}{
+	won, err := claim(map[string]interface{}{
 		"amount_used":     0,
 		"next_reset_time": next,
 		"last_reset_time": base.Unix(),
 		"updated_at":      now,
 	})
+	if err != nil {
+		return false, err
+	}
+	if won {
+		sub.AmountUsed = 0
+		sub.LastResetTime = base.Unix()
+		sub.NextResetTime = next
+	}
+	return won, nil
 }
 
 // PreConsumeUserSubscription pre-consumes from any active subscription total quota.
@@ -1140,7 +1165,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			if err != nil {
 				return err
 			}
-			if err := maybeResetUserSubscriptionWithPlanTx(tx, &sub, plan, now); err != nil {
+			if _, err := maybeResetUserSubscriptionWithPlanTx(tx, &sub, plan, now); err != nil {
 				return err
 			}
 			usedBefore := sub.AmountUsed
@@ -1269,10 +1294,15 @@ func ResetDueSubscriptions(limit int) (int, error) {
 				First(&locked).Error; err != nil {
 				return nil
 			}
-			if err := maybeResetUserSubscriptionWithPlanTx(tx, &locked, plan, now); err != nil {
+			// 只统计真正抢到 CAS、确实清空了额度的那一次；输给并发实例的不算，
+			// 否则多实例同时跑时报出来的重置数会成倍虚高。
+			didReset, err := maybeResetUserSubscriptionWithPlanTx(tx, &locked, plan, now)
+			if err != nil {
 				return err
 			}
-			resetCount++
+			if didReset {
+				resetCount++
+			}
 			return nil
 		})
 		if err != nil {
