@@ -553,7 +553,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 	var upgradeGroup string
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var order SubscriptionOrder
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
+		if err := tx.Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
 		if expectedPaymentProvider != "" && !order.MatchesPaymentProvider(expectedPaymentProvider) {
@@ -565,6 +565,30 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if order.Status != common.TopUpStatusPending {
 			return ErrSubscriptionOrderStatusInvalid
 		}
+
+		// 先原子认领订单，再发放订阅权益。
+		//
+		// 原来依赖 tx.Set("gorm:query_option", "FOR UPDATE")，那是 GORM v1 的 API，
+		// v2 下是空操作，没有任何行锁。两个并发回调会双双通过上面的 Pending 判断，
+		// 各自跑一遍 CreateUserSubscriptionFromPlanTx——用户白拿两份订阅额度。
+		// 认领放在权益发放之前，输的一方直接按幂等返回，不会产生任何副作用。
+		completeTime := common.GetTimestamp()
+		claim := tx.Model(&SubscriptionOrder{}).
+			Where("id = ? AND status = ?", order.Id, common.TopUpStatusPending).
+			Updates(map[string]interface{}{
+				"status":        common.TopUpStatusSuccess,
+				"complete_time": completeTime,
+			})
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected == 0 {
+			// 被并发回调抢先完成（或已被置为其它状态），与上面的幂等分支保持一致
+			return nil
+		}
+		order.Status = common.TopUpStatusSuccess
+		order.CompleteTime = completeTime
+
 		plan, err := GetSubscriptionPlanById(order.PlanId)
 		if err != nil {
 			return err
@@ -580,13 +604,15 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
 			return err
 		}
-		order.Status = common.TopUpStatusSuccess
-		order.CompleteTime = common.GetTimestamp()
+		// status / complete_time 已由上面的原子认领写入，这里只补 provider payload。
+		// 不能再用 tx.Save(&order) 整行写回：那会把 order 结构体上的全部字段按快照
+		// 重写一遍，也失去了认领语义。
 		if providerPayload != "" {
 			order.ProviderPayload = providerPayload
-		}
-		if err := tx.Save(&order).Error; err != nil {
-			return err
+			if err := tx.Model(&SubscriptionOrder{}).Where("id = ?", order.Id).
+				Update("provider_payload", providerPayload).Error; err != nil {
+				return err
+			}
 		}
 		logUserId = order.UserId
 		logPlanTitle = plan.Title
@@ -660,7 +686,7 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentProvider string) err
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var order SubscriptionOrder
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
+		if err := tx.Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
 		if expectedPaymentProvider != "" && !order.MatchesPaymentProvider(expectedPaymentProvider) {
@@ -669,9 +695,15 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentProvider string) err
 		if order.Status != common.TopUpStatusPending {
 			return nil
 		}
-		order.Status = common.TopUpStatusExpired
-		order.CompleteTime = common.GetTimestamp()
-		return tx.Save(&order).Error
+		// 条件更新而不是「判断 + tx.Save 整行写回」：置过期与支付成功回调可能同时到达，
+		// 没有约束的话两者会互相覆盖——最坏情况是订单已发放权益却被标成 expired，
+		// 或已过期的订单被回调重新标成 success。这里只允许 Pending -> Expired。
+		return tx.Model(&SubscriptionOrder{}).
+			Where("id = ? AND status = ?", order.Id, common.TopUpStatusPending).
+			Updates(map[string]interface{}{
+				"status":        common.TopUpStatusExpired,
+				"complete_time": common.GetTimestamp(),
+			}).Error
 	})
 }
 
@@ -770,17 +802,24 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var sub UserSubscription
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").
-			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+		if err := tx.Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
 			return err
 		}
 		userId = sub.UserId
-		if err := tx.Model(&sub).Updates(map[string]interface{}{
-			"status":     "cancelled",
-			"end_time":   now,
-			"updated_at": now,
-		}).Error; err != nil {
-			return err
+		// 条件更新：只有仍未取消的订阅才执行作废 + 降级。管理员重复点击或与定时
+		// 过期任务撞车时，输的一方 RowsAffected 为 0，直接返回，不会重复降级分组。
+		res := tx.Model(&UserSubscription{}).
+			Where("id = ? AND status <> ?", userSubscriptionId, "cancelled").
+			Updates(map[string]interface{}{
+				"status":     "cancelled",
+				"end_time":   now,
+				"updated_at": now,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return nil
 		}
 		target, err := downgradeUserGroupForSubscriptionTx(tx, &sub, now)
 		if err != nil {
@@ -815,11 +854,19 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 	var userId int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var sub UserSubscription
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").
-			Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+		if err := tx.Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
 			return err
 		}
 		userId = sub.UserId
+		// 先删除并用 RowsAffected 认领，再做降级：并发重复删除时只有一个能删掉，
+		// 输的一方直接返回，避免把分组降级执行两遍。
+		del := tx.Where("id = ?", userSubscriptionId).Delete(&UserSubscription{})
+		if del.Error != nil {
+			return del.Error
+		}
+		if del.RowsAffected == 0 {
+			return nil
+		}
 		target, err := downgradeUserGroupForSubscriptionTx(tx, &sub, now)
 		if err != nil {
 			return err
@@ -827,9 +874,6 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 		if target != "" {
 			cacheGroup = target
 			downgradeGroup = target
-		}
-		if err := tx.Where("id = ?", userSubscriptionId).Delete(&UserSubscription{}).Error; err != nil {
-			return err
 		}
 		return nil
 	})
@@ -994,18 +1038,51 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 		base = time.Unix(next, 0)
 		next = calcNextResetTime(base, plan, sub.EndTime)
 	}
+
+	// 所有写入都用「CAS 掉 next_reset_time 旧值」来认领，而不是 tx.Save 整行写回。
+	//
+	// 两个原因：
+	//  1. 调用方（PreConsumeUserSubscription / ResetDueSubscriptions）原先靠
+	//     tx.Set("gorm:query_option", "FOR UPDATE") 串行化，而那在 GORM v2 下是空操作。
+	//     两个实例的定时任务、或定时任务与用户请求撞在一起时会重置两次——AmountUsed
+	//     被清零两轮，等于白送一个周期的订阅额度。
+	//  2. tx.Save 会把 status / end_time / amount_total 等整行字段按快照重写。
+	prevNextResetTime := sub.NextResetTime
+	claim := func(updates map[string]interface{}) error {
+		res := tx.Model(&UserSubscription{}).
+			Where("id = ? AND next_reset_time = ?", sub.Id, prevNextResetTime).
+			Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// 已被并发的重置抢先处理，本次跳过即可
+			return nil
+		}
+		return nil
+	}
+
 	if !advanced {
 		if sub.NextResetTime == 0 && next > 0 {
 			sub.NextResetTime = next
 			sub.LastResetTime = base.Unix()
-			return tx.Save(sub).Error
+			return claim(map[string]interface{}{
+				"next_reset_time": next,
+				"last_reset_time": base.Unix(),
+				"updated_at":      now,
+			})
 		}
 		return nil
 	}
 	sub.AmountUsed = 0
 	sub.LastResetTime = base.Unix()
 	sub.NextResetTime = next
-	return tx.Save(sub).Error
+	return claim(map[string]interface{}{
+		"amount_used":     0,
+		"next_reset_time": next,
+		"last_reset_time": base.Unix(),
+		"updated_at":      now,
+	})
 }
 
 // PreConsumeUserSubscription pre-consumes from any active subscription total quota.
@@ -1045,8 +1122,10 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			return nil
 		}
 
+		// 这里不再假装加锁（GORM v2 下 query_option 是空操作）。真正的并发保护下沉到
+		// 了写入处：额度自增带「不超总额」条件，重置对 next_reset_time 做 CAS。
 		var subs []UserSubscription
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").
+		if err := tx.
 			Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
 			Order("end_time asc, id asc").
 			Find(&subs).Error; err != nil {
@@ -1093,15 +1172,19 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				}
 				return err
 			}
-			sub.AmountUsed += amount
-			if err := tx.Save(&sub).Error; err != nil {
+			// 原来是 sub.AmountUsed += amount 再 tx.Save(&sub)：整行写回 + 内存里累加，
+			// 上面那个 FOR UPDATE 又是空操作，两个并发预扣会各自读到同一个 AmountUsed
+			// 覆盖对方，用户白嫖一笔订阅额度。requestId 唯一索引只能保证同一个请求幂等，
+			// 挡不住不同请求。这里换成带「不超总额」条件的原子自增；真撞上超额时整个
+			// 事务回滚（含刚创建的幂等记录），失败方向是拒绝而不是放行。
+			if err := postConsumeUserSubscriptionDeltaTx(tx, sub.Id, amount); err != nil {
 				return err
 			}
 			returnValue.UserSubscriptionId = sub.Id
 			returnValue.PreConsumed = amount
 			returnValue.AmountTotal = sub.AmountTotal
 			returnValue.AmountUsedBefore = usedBefore
-			returnValue.AmountUsedAfter = sub.AmountUsed
+			returnValue.AmountUsedAfter = usedBefore + amount
 			return nil
 		}
 		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
@@ -1119,22 +1202,37 @@ func RefundSubscriptionPreConsume(requestId string) error {
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var record SubscriptionPreConsumeRecord
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").
-			Where("request_id = ?", requestId).First(&record).Error; err != nil {
+		if err := tx.Where("request_id = ?", requestId).First(&record).Error; err != nil {
 			return err
 		}
 		if record.Status == "refunded" {
 			return nil
 		}
+
+		// 先原子认领「consumed -> refunded」，再退额度。
+		//
+		// 原来是「判断 status != refunded -> 退额度 -> tx.Save 标 refunded」，依赖的
+		// FOR UPDATE 在 GORM v2 下是空操作。两个并发退款会双双通过判断，把同一笔预扣
+		// 退两次，订阅额度凭空多出来。认领放在退款之前，输的一方直接返回，不退第二次。
+		claim := tx.Model(&SubscriptionPreConsumeRecord{}).
+			Where("id = ? AND status = ?", record.Id, "consumed").
+			Updates(map[string]interface{}{
+				"status":     "refunded",
+				"updated_at": common.GetTimestamp(),
+			})
+		if claim.Error != nil {
+			return claim.Error
+		}
+		if claim.RowsAffected == 0 {
+			// 已被并发退款处理，幂等返回
+			return nil
+		}
 		if record.PreConsumed <= 0 {
-			record.Status = "refunded"
-			return tx.Save(&record).Error
+			return nil
 		}
-		if err := PostConsumeUserSubscriptionDelta(record.UserSubscriptionId, -record.PreConsumed); err != nil {
-			return err
-		}
-		record.Status = "refunded"
-		return tx.Save(&record).Error
+		// 用 tx 版本：退额度与上面的状态认领必须同生共死，否则「已退款但记录仍是
+		// consumed」的中间态会在重试时被再退一次。
+		return postConsumeUserSubscriptionDeltaTx(tx, record.UserSubscriptionId, -record.PreConsumed)
 	})
 }
 
@@ -1162,8 +1260,11 @@ func ResetDueSubscriptions(limit int) (int, error) {
 			continue
 		}
 		err = DB.Transaction(func(tx *gorm.DB) error {
+			// 读取不加锁（原来的 FOR UPDATE 是空操作）；重置的互斥由
+			// maybeResetUserSubscriptionWithPlanTx 内部对 next_reset_time 的 CAS 保证，
+			// 多实例同时跑也只会有一个真正重置成功。
 			var locked UserSubscription
-			if err := tx.Set("gorm:query_option", "FOR UPDATE").
+			if err := tx.
 				Where("id = ? AND next_reset_time > 0 AND next_reset_time <= ?", subCopy.Id, now).
 				First(&locked).Error; err != nil {
 				return nil
@@ -1222,27 +1323,65 @@ func GetSubscriptionPlanInfoByUserSubscriptionId(userSubscriptionId int) (*Subsc
 
 // Update subscription used amount by delta (positive consume more, negative refund).
 func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error {
+	return postConsumeUserSubscriptionDeltaTx(DB, userSubscriptionId, delta)
+}
+
+// postConsumeUserSubscriptionDeltaTx 是上面的事务内版本。
+// 退款路径需要「标记 refunded」和「退还额度」落在同一个事务里，否则退款已生效但外层
+// 提交失败时，重试会把同一笔预扣退两次。
+func postConsumeUserSubscriptionDeltaTx(db *gorm.DB, userSubscriptionId int, delta int64) error {
 	if userSubscriptionId <= 0 {
 		return errors.New("invalid userSubscriptionId")
 	}
 	if delta == 0 {
 		return nil
 	}
-	return DB.Transaction(func(tx *gorm.DB) error {
-		var sub UserSubscription
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").
-			Where("id = ?", userSubscriptionId).
-			First(&sub).Error; err != nil {
+	// 这是订阅额度的结算热路径，每个请求都会走，并发度最高。
+	//
+	// 原来的写法是「读整行 -> newUsed = sub.AmountUsed + delta -> tx.Save(&sub)」，
+	// 而它依赖的 tx.Set("gorm:query_option", "FOR UPDATE") 是 GORM v1 的 API，v2 下是
+	// 空操作（生成的 SQL 里没有 FOR UPDATE）。两个并发结算各自读到同一个 AmountUsed，
+	// 后写的覆盖先写的，消费就丢了——和资料整行写回回滚 used_quota 是同一类丢失更新。
+	// tx.Save 还是整行写回，会把 AmountTotal 等字段一并写成快照值。
+	//
+	// 改成单列原子表达式：扣减把「不超总额」写进 WHERE，用 RowsAffected 判定；
+	// 退款用 CASE WHEN 在 SQL 里夹到 0，三种库都支持。
+	if delta > 0 {
+		res := db.Model(&UserSubscription{}).
+			Where("id = ? AND (amount_total <= 0 OR amount_used + ? <= amount_total)", userSubscriptionId, delta).
+			Update("amount_used", gorm.Expr("amount_used + ?", delta))
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			// 要么订阅不存在，要么这一笔会超总额。回读一次给出可诊断的错误。
+			var sub UserSubscription
+			if err := db.Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+				return err
+			}
+			return fmt.Errorf("subscription used exceeds total, used=%d delta=%d total=%d",
+				sub.AmountUsed, delta, sub.AmountTotal)
+		}
+		return nil
+	}
+
+	res := db.Model(&UserSubscription{}).
+		Where("id = ?", userSubscriptionId).
+		Update("amount_used", gorm.Expr("CASE WHEN amount_used + ? < 0 THEN 0 ELSE amount_used + ? END", delta, delta))
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		// 退款路径不能直接把 RowsAffected==0 当成「订阅不存在」：MySQL 默认不开
+		// CLIENT_FOUND_ROWS，当 amount_used 已经是 0、CASE WHEN 又夹回 0 时，新旧值
+		// 相同，受影响行数同样是 0。必须回查一次才能区分两种情况。
+		var cnt int64
+		if err := db.Model(&UserSubscription{}).Where("id = ?", userSubscriptionId).Count(&cnt).Error; err != nil {
 			return err
 		}
-		newUsed := sub.AmountUsed + delta
-		if newUsed < 0 {
-			newUsed = 0
+		if cnt == 0 {
+			return fmt.Errorf("subscription %d not found", userSubscriptionId)
 		}
-		if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
-			return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
-		}
-		sub.AmountUsed = newUsed
-		return tx.Save(&sub).Error
-	})
+	}
+	return nil
 }
