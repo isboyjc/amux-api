@@ -302,6 +302,37 @@ func RedisHIncrBy(key, field string, delta int64) error {
 	return nil
 }
 
+// RedisHSetFields 一次写入多个 hash 字段，语义与 RedisHSetField 相同（key 不存在或
+// 无 TTL 时整体跳过，不会凭空造出残缺 hash），区别是全部字段在同一个 HSET 里落地。
+//
+// 逐字段调用 RedisHSetField 有两个问题：每个字段都要各自查一次 TTL 再开一次事务，
+// 往返次数是字段数的两倍；中途报错还会留下「一半字段更新、一半没更新」的缓存。
+func RedisHSetFields(key string, fields map[string]interface{}) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	if DebugEnabled {
+		SysLog(fmt.Sprintf("Redis HSET fields: key=%s, fields=%+v", key, fields))
+	}
+	ttl, err := RDB.TTL(context.Background(), key).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return fmt.Errorf("failed to get TTL: %w", err)
+	}
+	if ttl <= 0 {
+		return nil
+	}
+
+	ctx := context.Background()
+	txn := RDB.TxPipeline()
+	// go-redis 支持把 map 直接传给 HSet，展开成一条 HSET key f1 v1 f2 v2 ...
+	if err := txn.HSet(ctx, key, fields).Err(); err != nil {
+		return err
+	}
+	txn.Expire(ctx, key, ttl)
+	_, err = txn.Exec(ctx)
+	return err
+}
+
 func RedisHSetField(key, field string, value interface{}) error {
 	if DebugEnabled {
 		SysLog(fmt.Sprintf("Redis HSET field: key=%s, field=%s, value=%v", key, field, value))

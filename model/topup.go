@@ -701,10 +701,12 @@ func CheckAndUpgradeUserGroup(userId int) error {
 		// 1. 当前分组匹配源分组
 		// 2. 累计充值金额达到或超过阈值
 		if user.Group == rule.FromGroup && totalAmount >= rule.Threshold {
-			// 执行升级
+			// 执行升级：只写 group 单列。
+			// 这里紧跟在充值到账之后，整行写回会把 T0 快照里的 quota 落库，
+			// 等于把刚充的钱抹掉。
 			fromGroup := user.Group
 			user.Group = rule.ToGroup
-			err = user.Update(false)
+			err = UpdateUserGroupColumn(userId, rule.ToGroup)
 			if err != nil {
 				return err
 			}

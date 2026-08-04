@@ -811,6 +811,14 @@ func AdminClearUserBinding(c *gin.Context) {
 	})
 }
 
+// 用户自助写入 setting 的长度上限。正常侧边栏配置是几百字节的 JSON，语言是 zh-CN
+// 这类短标签；设上限是为了让这两个字段没法被当成任意长度的写入放大器（历史事件里
+// 攻击者往 sidebar_modules 塞了 1500 个 "A" 纯粹为了触发写操作）。
+const (
+	maxSidebarModulesLength = 4096
+	maxLanguageLength       = 16
+)
+
 func UpdateSelf(c *gin.Context) {
 	var requestData map[string]interface{}
 	err := json.NewDecoder(c.Request.Body).Decode(&requestData)
@@ -820,6 +828,10 @@ func UpdateSelf(c *gin.Context) {
 	}
 
 	// 检查是否是用户设置更新请求 (sidebar_modules 或 language)
+	//
+	// 这两个分支必须走 UpdateUserSettingColumn（只写 setting 单列），不能用
+	// user.Update() 那种整行写回：后者会把请求开始时读到的 quota / used_quota 一并
+	// 写回去，高并发调用即可回滚计费系统的原子自增，属于可直接变现的资金漏洞。
 	if sidebarModules, sidebarExists := requestData["sidebar_modules"]; sidebarExists {
 		userId := c.GetInt("id")
 		user, err := model.GetUserById(userId, false)
@@ -833,12 +845,16 @@ func UpdateSelf(c *gin.Context) {
 
 		// 更新sidebar_modules字段
 		if sidebarModulesStr, ok := sidebarModules.(string); ok {
+			if len(sidebarModulesStr) > maxSidebarModulesLength {
+				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				return
+			}
 			currentSetting.SidebarModules = sidebarModulesStr
 		}
 
 		// 保存更新后的设置
 		user.SetSetting(currentSetting)
-		if err := user.Update(false); err != nil {
+		if err := model.UpdateUserSettingColumn(user.Id, user.Setting); err != nil {
 			common.ApiErrorI18n(c, i18n.MsgUpdateFailed)
 			return
 		}
@@ -861,12 +877,16 @@ func UpdateSelf(c *gin.Context) {
 
 		// 更新language字段
 		if langStr, ok := language.(string); ok {
+			if len(langStr) > maxLanguageLength {
+				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				return
+			}
 			currentSetting.Language = langStr
 		}
 
 		// 保存更新后的设置
 		user.SetSetting(currentSetting)
-		if err := user.Update(false); err != nil {
+		if err := model.UpdateUserSettingColumn(user.Id, user.Setting); err != nil {
 			common.ApiErrorI18n(c, i18n.MsgUpdateFailed)
 			return
 		}
@@ -1211,6 +1231,12 @@ func ManageUser(c *gin.Context) {
 				common.ApiError(c, err)
 				return
 			}
+			// add / subtract 走 Increase/DecreaseUserQuota，内部会同步 HINCRBY 缓存；
+			// override 是直接写库的绝对值，没有对应的缓存增量可用，必须让缓存失效，
+			// 否则中间件在 TTL 内仍按旧余额放行（调低额度后用户还能接着花）。
+			if err := model.InvalidateUserCache(user.Id); err != nil {
+				common.SysLog(fmt.Sprintf("failed to invalidate user cache after quota override for user %d: %s", user.Id, err.Error()))
+			}
 			// override 的 delta 可正可负，按差值记录
 			model.RecordQuotaLogWithAdminInfo(user.Id, model.LogTypeManage, req.Value-oldQuota,
 				fmt.Sprintf("管理员覆盖用户额度从 %s 为 %s", logger.LogQuota(oldQuota), logger.LogQuota(req.Value)), adminInfo)
@@ -1535,9 +1561,9 @@ func UpdateUserSetting(c *gin.Context) {
 	settings.BillingPreference = existingSettings.BillingPreference
 	settings.Language = existingSettings.Language
 
-	// 更新用户设置
+	// 更新用户设置：只写 setting 单列，绝不整行写回（会回滚计费列，见 UpdateSelf 注释）
 	user.SetSetting(settings)
-	if err := user.Update(false); err != nil {
+	if err := model.UpdateUserSettingColumn(user.Id, user.Setting); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUpdateFailed)
 		return
 	}
