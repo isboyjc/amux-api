@@ -619,6 +619,9 @@ func buildModelDetailItems(models []string) []modelDetailItem {
 		} else if m := ruleMap[name]; m != nil {
 			it.ParamSchema = m.ParamSchema
 		}
+		if it.ParamSchema == "" {
+			it.ParamSchema = constant.GetDefaultModelParamSchema(name)
+		}
 		out = append(out, it)
 	}
 	return out

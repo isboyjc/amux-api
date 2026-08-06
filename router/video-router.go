@@ -62,4 +62,14 @@ func SetVideoRouter(router *gin.Engine) {
 		doubaoV3Router.POST("/tasks", middleware.TokenConcurrencyLimit(), middleware.Distribute(), controller.RelayTask)
 		doubaoV3Router.GET("/tasks/:task_id", middleware.Distribute(), controller.RelayTaskFetch)
 	}
+
+	// DashScope official-compatible video routes. Clients can point the
+	// DashScope SDK base URL at this gateway while task IDs remain gateway IDs.
+	aliVideoV1Router := router.Group("/api/v1")
+	aliVideoV1Router.Use(middleware.RouteTag("relay"))
+	aliVideoV1Router.Use(middleware.AliVideoRequestConvert(), middleware.TokenAuth())
+	{
+		aliVideoV1Router.POST("/services/aigc/video-generation/video-synthesis", middleware.TokenConcurrencyLimit(), middleware.Distribute(), controller.RelayTask)
+		aliVideoV1Router.GET("/tasks/:task_id", middleware.Distribute(), controller.RelayTaskFetch)
+	}
 }

@@ -129,7 +129,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 	req := v.(relaycommon.TaskSubmitReq)
 
-	seconds := geminitask.ResolveVeoDuration(req.Metadata, req.Duration, req.Seconds)
+	seconds := geminitask.ResolveVeoDuration(req.Metadata, req.GetDuration(), req.Seconds)
 	resolution := geminitask.ResolveVeoResolution(req.Metadata, req.Size)
 	resRatio := geminitask.VeoResolutionRatio(info.UpstreamModelName, resolution)
 
@@ -161,8 +161,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, params); err != nil {
 		return nil, fmt.Errorf("unmarshal metadata failed: %w", err)
 	}
-	if params.DurationSeconds == 0 && req.Duration > 0 {
-		params.DurationSeconds = req.Duration
+	if params.DurationSeconds == 0 && req.Duration != nil && *req.Duration > 0 {
+		params.DurationSeconds = *req.Duration
 	}
 	if params.Resolution == "" && req.Size != "" {
 		params.Resolution = geminitask.SizeToVeoResolution(req.Size)

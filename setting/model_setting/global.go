@@ -92,6 +92,7 @@ var DefaultCustomModalityPatterns = map[string][]string{
 		"minimax-video",
 		"t2v-01",
 		"i2v-01",
+		"prefix:happyhorse-",  // 阿里百炼 HappyHorse 文生视频
 		"prefix:hunyuanvideo", // hunyuanvideo-1.5
 		"hunyuan-video",
 		"prefix:cogvideo", // cogvideox, cogvideo-pro

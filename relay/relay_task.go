@@ -181,6 +181,11 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
+	if validator, ok := adaptor.(channel.MappedTaskValidator); ok {
+		if taskErr := validator.ValidateMappedRequestAndSetAction(c, info); taskErr != nil {
+			return nil, taskErr
+		}
+	}
 
 	// 3. 预生成公开 task ID（仅首次）
 	if info.PublicTaskID == "" {
@@ -290,10 +295,10 @@ func recalcQuotaFromRatios(info *relaycommon.RelayInfo, ratios map[string]float6
 }
 
 var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp *dto.TaskError){
-	relayconstant.RelayModeSunoFetchByID:      sunoFetchByIDRespBodyBuilder,
-	relayconstant.RelayModeSunoFetch:           sunoFetchRespBodyBuilder,
-	relayconstant.RelayModeVideoFetchByID:      videoFetchByIDRespBodyBuilder,
-	relayconstant.RelayModeSTTAsyncFetchByID:   sttFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSunoFetchByID:     sunoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSunoFetch:         sunoFetchRespBodyBuilder,
+	relayconstant.RelayModeVideoFetchByID:    videoFetchByIDRespBodyBuilder,
+	relayconstant.RelayModeSTTAsyncFetchByID: sttFetchByIDRespBodyBuilder,
 }
 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
@@ -377,6 +382,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskId = c.GetString("task_id")
 	}
 	userId := c.GetInt("id")
+	isAliVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/api/v1/tasks/")
 
 	originTask, exist, err := model.GetByTaskId(userId, taskId)
 	if err != nil {
@@ -384,6 +390,10 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		return
 	}
 	if !exist {
+		if isAliVideoAPI {
+			respBody = buildAliUnknownTaskResponse(taskId, c.GetString(common.RequestIdKey))
+			return
+		}
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 		return
 	}
@@ -393,14 +403,16 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	// /v1/videos/:task_id 走同一条格式分支。
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/") ||
 		strings.HasPrefix(c.Request.RequestURI, "/pg/video/generations/")
+	isGenericVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/video/generations/")
 
 	// 火山方舟 v3 协议查询端点：返回火山官方 v3 结构（由 adaptor 转换）
 	isDoubaoV3API := strings.HasPrefix(c.Request.RequestURI, "/api/v3/contents/generations/tasks/")
+	// DashScope 官方兼容查询端点：返回 output.task_status / video_url 结构。
 
 	// Gemini/Vertex/Doubao 支持实时查询：用户 fetch 时直接从上游拉取最新状态。
 	// OpenAI 与 Doubao v3 格式由各自的转换分支负责构建响应体，因此让实时查询
 	// 只负责刷新+结算 task（skipCustomResponse=true），不构建自定义格式响应。
-	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI || isDoubaoV3API); len(realtimeResp) > 0 {
+	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI || isDoubaoV3API || isAliVideoAPI); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
 	}
@@ -448,6 +460,21 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		// adaptor 未实现 v3 转换时回退到通用 TaskDto 格式
 	}
 
+	if isAliVideoAPI {
+		respBody, err = buildAliVideoFetchResponse(originTask, taskId, c.GetString(common.RequestIdKey))
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "convert_to_ali_video_failed", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Ali 的通用视频查询端点不返回 task.Data 原始上游响应，避免实时查询暂时
+	// 失败时暴露上游 task_id 或归档中的临时 video_url。
+	if isGenericVideoAPI && originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)) {
+		respBody = buildSimpleVideoTaskResponse(originTask, "mp4")
+		return
+	}
+
 	// 通用 TaskDto 格式
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
@@ -459,8 +486,35 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/Doubao 任务状态。
-// 仅当渠道类型为 Gemini、Vertex 或 DoubaoVideo 时触发；其他渠道或出错时返回 nil。
+func buildAliUnknownTaskResponse(taskID, requestID string) []byte {
+	body, _ := common.Marshal(map[string]any{
+		"request_id": requestID,
+		"output": map[string]any{
+			"task_id":     taskID,
+			"task_status": "UNKNOWN",
+		},
+	})
+	return body
+}
+
+func buildAliVideoFetchResponse(task *model.Task, taskID, requestID string) ([]byte, error) {
+	aliPlatform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli))
+	if task == nil || task.Platform != aliPlatform {
+		return buildAliUnknownTaskResponse(taskID, requestID), nil
+	}
+	adaptor := GetTaskAdaptor(task.Platform)
+	if adaptor == nil {
+		return buildAliUnknownTaskResponse(taskID, requestID), nil
+	}
+	converter, ok := adaptor.(channel.AliVideoConverter)
+	if !ok {
+		return buildAliUnknownTaskResponse(taskID, requestID), nil
+	}
+	return converter.ConvertToAliVideo(task)
+}
+
+// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex/Doubao/Ali 任务状态。
+// 仅当渠道类型受支持时触发；其他渠道或出错时返回 nil。
 // skipCustomResponse=true 时只刷新+结算 task 后返回 nil（响应体交由调用方的
 // ConvertToOpenAIVideo / ConvertToDoubaoV3 等分支构建）；为 false 时额外构建
 // 通用自定义格式响应体并返回。
@@ -469,9 +523,16 @@ func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 	if err != nil {
 		return nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && 
-	   channelModel.Type != constant.ChannelTypeGemini && 
-	   channelModel.Type != constant.ChannelTypeDoubaoVideo {
+	if channelModel.Type != constant.ChannelTypeVertexAi &&
+		channelModel.Type != constant.ChannelTypeGemini &&
+		channelModel.Type != constant.ChannelTypeDoubaoVideo &&
+		channelModel.Type != constant.ChannelTypeAli {
+		return nil
+	}
+	// DashScope task_id 只有 24 小时有效期。Ali 任务一旦到达终态就使用网关
+	// 已持久化的状态和结果，避免过期后的 UNKNOWN 把成功任务错误降级并退款。
+	if channelModel.Type == constant.ChannelTypeAli &&
+		(task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure) {
 		return nil
 	}
 
@@ -485,7 +546,8 @@ func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 		return nil
 	}
 
-	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
+	key := taskPollingKey(task, channelModel.Key)
+	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
 	}, proxy)
@@ -493,6 +555,10 @@ func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 		return nil
 	}
 	defer resp.Body.Close()
+	// 429/5xx/鉴权错误属于本次轮询失败，不能被解析成生成任务的终态失败。
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil
+	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil
@@ -622,18 +688,24 @@ func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 
 	// 非 OpenAI Video API: 构建自定义格式响应
 	format := detectVideoFormat(body)
-	
-	// For failed tasks, put error message in top-level message field, and set url to empty
+
+	return buildSimpleVideoTaskResponse(task, format)
+}
+
+func buildSimpleVideoTaskResponse(task *model.Task, format string) []byte {
+	if format == "" {
+		format = "mp4"
+	}
+	// 只有成功态返回结果 URL；处理中/归档中的任务必须保持为空。
 	var resultURL string
 	var responseMessage string
-	if task.Status == model.TaskStatusFailure {
-		resultURL = ""  // url should be empty for failed tasks
-		responseMessage = task.FailReason  // error message goes to message field
-	} else {
+	switch task.Status {
+	case model.TaskStatusSuccess:
 		resultURL = task.GetResultURL()
-		responseMessage = ""
+	case model.TaskStatusFailure:
+		responseMessage = task.FailReason
 	}
-	
+
 	out := map[string]any{
 		"error":    nil,
 		"format":   format,
@@ -654,6 +726,13 @@ func tryRealtimeFetch(task *model.Task, skipCustomResponse bool) []byte {
 		Data:    out,
 	})
 	return respBody
+}
+
+func taskPollingKey(task *model.Task, fallback string) string {
+	if task != nil && task.PrivateData.Key != "" {
+		return task.PrivateData.Key
+	}
+	return fallback
 }
 
 // detectVideoFormat 从 Gemini/Vertex 原始响应中探测视频格式
@@ -725,27 +804,27 @@ func sttFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 	return &dto.TaskDto{
-		ID:         task.ID,
-		CreatedAt:  task.CreatedAt,
-		UpdatedAt:  task.UpdatedAt,
-		TaskID:     task.TaskID,
-		Platform:   string(task.Platform),
-		UserId:     task.UserId,
-		Group:      task.Group,
-		ChannelId:  task.ChannelId,
+		ID:               task.ID,
+		CreatedAt:        task.CreatedAt,
+		UpdatedAt:        task.UpdatedAt,
+		TaskID:           task.TaskID,
+		Platform:         string(task.Platform),
+		UserId:           task.UserId,
+		Group:            task.Group,
+		ChannelId:        task.ChannelId,
 		Quota:            task.Quota,
 		CompletionTokens: task.CompletionTokens,
 		TotalTokens:      task.TotalTokens,
-		Action:     task.Action,
-		Status:     string(task.Status),
-		FailReason: task.FailReason,
-		ResultURL:  task.GetResultURL(),
-		SubmitTime: task.SubmitTime,
-		StartTime:  task.StartTime,
-		FinishTime: task.FinishTime,
-		Progress:   task.Progress,
-		Properties: task.Properties,
-		Username:   task.Username,
-		Data:       task.Data,
+		Action:           task.Action,
+		Status:           string(task.Status),
+		FailReason:       task.FailReason,
+		ResultURL:        task.GetResultURL(),
+		SubmitTime:       task.SubmitTime,
+		StartTime:        task.StartTime,
+		FinishTime:       task.FinishTime,
+		Progress:         task.Progress,
+		Properties:       task.Properties,
+		Username:         task.Username,
+		Data:             task.Data,
 	}
 }

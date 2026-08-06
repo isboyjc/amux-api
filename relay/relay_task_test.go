@@ -2,7 +2,11 @@ package relay
 
 import (
 	"net/http"
+	"strings"
 	"testing"
+
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 )
 
 // TestTaskSubmitStatusOK_Non200Success guards the widened success criterion:
@@ -29,5 +33,64 @@ func TestTaskSubmitStatusOK_Non200Success(t *testing.T) {
 		if got := taskSubmitStatusOK(tc.statusCode); got != tc.wantOK {
 			t.Errorf("taskSubmitStatusOK(%d) = %v, want %v", tc.statusCode, got, tc.wantOK)
 		}
+	}
+}
+
+func TestBuildSimpleVideoTaskResponseHidesNonTerminalData(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task_public",
+		Status: model.TaskStatusInProgress,
+		Data:   []byte(`{"output":{"task_id":"upstream-id","video_url":"https://upstream.example/video.mp4"}}`),
+	}
+	body := string(buildSimpleVideoTaskResponse(task, "mp4"))
+	if strings.Contains(body, "upstream-id") || strings.Contains(body, "upstream.example") {
+		t.Fatalf("simple task response leaked upstream data: %s", body)
+	}
+	if !strings.Contains(body, `"task_id":"task_public"`) || !strings.Contains(body, `"url":""`) {
+		t.Fatalf("unexpected simple task response: %s", body)
+	}
+}
+
+func TestBuildAliUnknownTaskResponse(t *testing.T) {
+	body := string(buildAliUnknownTaskResponse("missing-task", "request-id"))
+	for _, fragment := range []string{`"task_id":"missing-task"`, `"task_status":"UNKNOWN"`, `"request_id":"request-id"`} {
+		if !strings.Contains(body, fragment) {
+			t.Fatalf("UNKNOWN response missing %s: %s", fragment, body)
+		}
+	}
+}
+
+func TestBuildAliVideoFetchResponseRejectsNonAliTask(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "public-task",
+		Platform: constant.TaskPlatform("other-provider"),
+		Data:     []byte(`{"output":{"task_id":"upstream-id","video_url":"https://upstream.example/video.mp4"}}`),
+	}
+	body, err := buildAliVideoFetchResponse(task, task.TaskID, "request-id")
+	if err != nil {
+		t.Fatalf("buildAliVideoFetchResponse: %v", err)
+	}
+	response := string(body)
+	for _, secret := range []string{"upstream-id", "upstream.example"} {
+		if strings.Contains(response, secret) {
+			t.Fatalf("DashScope response leaked non-Ali task data %q: %s", secret, response)
+		}
+	}
+	for _, fragment := range []string{`"task_id":"public-task"`, `"task_status":"UNKNOWN"`, `"request_id":"request-id"`} {
+		if !strings.Contains(response, fragment) {
+			t.Fatalf("DashScope UNKNOWN response missing %s: %s", fragment, response)
+		}
+	}
+}
+
+func TestTaskPollingKeyPrefersSubmissionKey(t *testing.T) {
+	task := &model.Task{}
+	task.PrivateData.Key = "submission-key"
+	if got := taskPollingKey(task, "channel-default"); got != "submission-key" {
+		t.Fatalf("taskPollingKey=%q", got)
+	}
+	task.PrivateData.Key = ""
+	if got := taskPollingKey(task, "channel-default"); got != "channel-default" {
+		t.Fatalf("fallback taskPollingKey=%q", got)
 	}
 }
