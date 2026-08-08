@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -136,12 +137,59 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			}
 		}
 	}
+	if detail := videoBillingDetail(task.PrivateData.BillingContext); detail != nil {
+		other["video_billing"] = detail
+	}
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
 	return other
+}
+
+// videoBillingDetail 按计费口径快照还原分项明细，供消费日志的「计费过程」渲染。
+//
+// 视频模型的 model_price 是哨兵基准价 $1，不给这份明细的话，前端只能走通用的
+// 按次渲染，显示成「按次 $1 × 分组倍率 1 = $1」——和实际扣的钱毫无关系。差额
+// 结算那条日志尤其离谱：实扣 $0.009，计费过程写着 $1。
+//
+// 快照由适配器维护：提交时写预扣口径，终态结算时改写成实际口径，所以两条日志
+// 各自渲染出的明细都对得上自己那笔金额。
+func videoBillingDetail(bc *model.TaskBillingContext) map[string]interface{} {
+	if bc == nil || bc.VideoUsage == nil {
+		return nil
+	}
+	pricing, ok := billing_setting.GetVideoPricing(bc.OriginModelName)
+	if !ok {
+		return nil
+	}
+	snap := bc.VideoUsage
+	usage := billing_setting.VideoUsage{
+		Resolution:    snap.Resolution,
+		OutputSeconds: snap.OutputSeconds,
+		ImageCount:    snap.ImageCount,
+		AudioSeconds:  snap.AudioSeconds,
+		VideoSeconds:  snap.VideoSeconds,
+		// 存量快照没有 HasVideoInput，用 VideoSeconds 兜底
+		HasVideoInput: snap.HasVideoInput || snap.VideoSeconds > 0,
+	}
+	cost, err := pricing.Compute(usage)
+	if err != nil {
+		return nil
+	}
+	return map[string]interface{}{
+		"resolution":     cost.Resolution,
+		"output_seconds": usage.OutputSeconds,
+		"image_count":    usage.ImageCount,
+		"audio_seconds":  usage.AudioSeconds,
+		"video_seconds":  usage.VideoSeconds,
+		"output":         cost.Output,
+		"image":          cost.Image,
+		"audio":          cost.Audio,
+		"video":          cost.Video,
+		"total":          cost.Total,
+	}
 }
 
 // taskModelName 从 BillingContext 或 Properties 中获取模型名称。
@@ -220,6 +268,19 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	taskAdjustTokenQuota(ctx, task, quotaDelta)
 
 	task.Quota = actualQuota
+	// 必须落库：调用方普遍是「先 UpdateWithStatus 写行、再结算」，不写回的话
+	// task.quota 会永远停在预扣值。钱本身是对的（用户额度与账单日志都按 delta
+	// 结过了），但任务详情/列表里展示的扣费额度对不上——像 Seedance 2.5 的
+	// duration=-1，预扣按 15 秒、实收可能只有 5 秒，差三倍。
+	//
+	// 只更这一列，不整行写回：task 行上还有轮询侧刚写进去的状态与结果。
+	// 主键为 0 说明这条 task 还没落库（单测里的内存对象），此时发 update 会被
+	// GORM 当成全表更新拦下来，白记一条错误日志。
+	if task.ID != 0 {
+		if err := model.DB.Model(task).Update("quota", actualQuota).Error; err != nil {
+			logger.LogError(ctx, fmt.Sprintf("持久化结算额度失败 task %s: %s", task.TaskID, err.Error()))
+		}
+	}
 
 	var logType int
 	var logQuota int

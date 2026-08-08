@@ -3,6 +3,7 @@ package hailuo
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -166,9 +167,13 @@ type H3Request struct {
 // h3Metadata 是站内统一协议下 H3 专有能力的载体。这些字段是 H3 特有的，
 // 不值得为它们扩 TaskSubmitReq 的顶层字段——metadata 就是干这个用的。
 type h3Metadata struct {
-	Resolution         string   `json:"resolution,omitempty"`
-	AspectRatio        string   `json:"aspect_ratio,omitempty"`
-	Ratio              string   `json:"ratio,omitempty"`
+	Resolution  string `json:"resolution,omitempty"`
+	AspectRatio string `json:"aspect_ratio,omitempty"`
+	Ratio       string `json:"ratio,omitempty"`
+	// Duration 是 metadata 里的时长。操练场把 schema 渲染出的参数整体塞进
+	// metadata（不会提升到顶层字段），所以这里必须收一份，否则用户在面板上
+	// 调的时长会被静默丢弃、一律按默认 6 秒出片。顶层 duration 优先级更高。
+	Duration           *int     `json:"duration,omitempty"`
 	FirstFrameImage    string   `json:"first_frame_image,omitempty"`
 	LastFrameImage     string   `json:"last_frame_image,omitempty"`
 	ReferenceImageURLs []string `json:"reference_image_urls,omitempty"`
@@ -200,6 +205,17 @@ func H3FromTaskSubmitReq(req relaycommon.TaskSubmitReq) (*H3Request, error) {
 		RefAudios:     trimAll(meta.ReferenceAudioURLs),
 		AigcWatermark: meta.AigcWatermark,
 		CallbackURL:   strings.TrimSpace(meta.CallbackURL),
+	}
+
+	// 时长的取值优先级：顶层 duration > metadata.duration > OpenAI 风格的
+	// seconds。三者都缺时由 ApplyDefaults 兜底。
+	if h3.Duration == 0 && meta.Duration != nil {
+		h3.Duration = *meta.Duration
+	}
+	if h3.Duration == 0 {
+		if seconds, err := strconv.Atoi(strings.TrimSpace(req.Seconds)); err == nil {
+			h3.Duration = seconds
+		}
 	}
 
 	// 分辨率：metadata.resolution 优先（表达力更强），其次从 size 推断。

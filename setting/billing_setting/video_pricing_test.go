@@ -3,6 +3,8 @@ package billing_setting
 import (
 	"math"
 	"testing"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 const floatTolerance = 1e-9
@@ -315,6 +317,29 @@ func TestDefaultVideoPricingIsValid(t *testing.T) {
 	if err := ValidateVideoPricingMap(defaultVideoPricing); err != nil {
 		t.Fatalf("built-in default video pricing is invalid: %v", err)
 	}
+	if err := ValidateVideoPricingMap(defaultVideoPricingAliases); err != nil {
+		t.Fatalf("built-in video pricing aliases are invalid: %v", err)
+	}
+}
+
+// TestDefaultVideoPricingJSONExcludesAliases 管理端展示的是规范名。别名混进去
+// 会让定价面板上冒出好几行一模一样的记录，但它们必须仍然能查到价。
+func TestDefaultVideoPricingJSONExcludesAliases(t *testing.T) {
+	var shown map[string]VideoPricing
+	if err := common.UnmarshalJsonStr(DefaultVideoPricingJSON(), &shown); err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	for alias := range defaultVideoPricingAliases {
+		if _, ok := shown[alias]; ok {
+			t.Errorf("别名 %q 不该出现在管理端展示的内置价目表里", alias)
+		}
+		if _, ok := GetVideoPricing(alias); !ok {
+			t.Errorf("别名 %q 必须仍然查得到价", alias)
+		}
+	}
+	if _, ok := shown["doubao-seedance-2-5"]; !ok {
+		t.Error("规范名 doubao-seedance-2-5 必须展示给管理端")
+	}
 }
 
 // TestCheckVideoPricingJSONString 保存前的守门：配错的价目表不能落库，
@@ -472,5 +497,303 @@ func TestChargesInput_ZeroPriceIsFree(t *testing.T) {
 	}
 	if priced.ChargesInputVideo("2K") {
 		t.Error("2K 档未配置输入视频价，不应算作计费")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Seedance 2.5：含视频输入的整单降档
+// ---------------------------------------------------------------------------
+
+// TestComputeVideoCost_Seedance25 用火山方舟官方价目表的锚点做断言。
+//
+// 上游按 token 计费：tokens = 宽 × 高 × 帧数 / 1024，参考视频按 24fps 全采样
+// 并折算到输出分辨率；单价不含视频 $10.37/M、含视频 $6.23/M（降档作用于整单）。
+// 下面的期望值是「计费秒数 × 该档每秒价」，与内置价目表必须逐分对上。
+func TestComputeVideoCost_Seedance25(t *testing.T) {
+	const model = "doubao-seedance-2-5"
+
+	cases := []struct {
+		name  string
+		usage VideoUsage
+		want  VideoCostBreakdown
+	}{
+		{
+			name:  "720p5秒纯文生",
+			usage: VideoUsage{Resolution: "720p", OutputSeconds: 5},
+			want:  VideoCostBreakdown{Resolution: "720p", Output: 1.12705, Total: 1.12705},
+		},
+		{
+			name:  "480p5秒纯文生",
+			usage: VideoUsage{Resolution: "480p", OutputSeconds: 5},
+			want:  VideoCostBreakdown{Resolution: "480p", Output: 0.52080, Total: 0.52080},
+		},
+		{
+			// 输出秒也要降档：整单换单价，不是只对输入部分打折。参考视频那段
+			// 走的也是这个降档单价（VideoInputBilledAsOutput），单独成项只是
+			// 为了让计费明细看得出各占多少。
+			name:  "720p5秒加4秒参考视频",
+			usage: VideoUsage{Resolution: "720p", OutputSeconds: 5, VideoSeconds: 4},
+			want: VideoCostBreakdown{
+				Resolution: "720p", Output: 0.67710, Video: 0.54168, Total: 1.21878,
+			},
+		},
+		{
+			name:  "480p5秒加30秒参考视频",
+			usage: VideoUsage{Resolution: "480p", OutputSeconds: 5, VideoSeconds: 30},
+			want: VideoCostBreakdown{
+				Resolution: "480p", Output: 0.31290, Video: 1.87740, Total: 2.19030,
+			},
+		},
+		{
+			// 结算口径：上游只给合并的 token 用量，拆不出输出/输入，全部记在
+			// OutputSeconds 上，靠 HasVideoInput 保住降档
+			name: "结算合并秒数走降档",
+			usage: VideoUsage{
+				Resolution: "720p", OutputSeconds: 21, HasVideoInput: true,
+			},
+			want: VideoCostBreakdown{Resolution: "720p", Output: 2.84382, Total: 2.84382},
+		},
+		{
+			// 预扣口径：duration=-1 按 15 秒，参考视频时长未知按 30 秒上界
+			name:  "预扣720p未知时长加参考视频",
+			usage: VideoUsage{Resolution: "720p", OutputSeconds: 15, VideoSeconds: 30},
+			want: VideoCostBreakdown{
+				Resolution: "720p", Output: 2.03130, Video: 4.06260, Total: 6.09390,
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ComputeVideoCost(model, tc.usage)
+			if err != nil {
+				t.Fatalf("ComputeVideoCost 出错: %v", err)
+			}
+			if got.Resolution != tc.want.Resolution {
+				t.Errorf("resolution = %q, want %q", got.Resolution, tc.want.Resolution)
+			}
+			assertMoney(t, "output", got.Output, tc.want.Output)
+			assertMoney(t, "video", got.Video, tc.want.Video)
+			assertMoney(t, "total", got.Total, tc.want.Total)
+		})
+	}
+}
+
+// TestSeedance25_NeverUndercutsOfficialPrice 交叉验证：把美元报价按两张官方
+// 价目表的隐含汇率（6.75）折回人民币，与火山公开的六个锚点对照。
+//
+// 秒价按【每档分辨率里像素最多的宽高比】定，官方那张表报的是 16:9，所以我们
+// 一定只高不低——低了就是成本倒挂。上界 5% 是 480p 21:9 与 16:9 的像素差
+// （4.54%）加一点舍入余量：超出说明价目表被改错了，而不是宽高比造成的。
+//
+// 这是整套推导的锚：token 单价、token 公式、24fps 全采样、降档规则、最贵比例
+// 定价，任何一处被改错这里都会炸。
+func TestSeedance25_NeverUndercutsOfficialPrice(t *testing.T) {
+	const impliedRate = 6.75
+
+	cases := []struct {
+		name        string
+		usage       VideoUsage
+		officialCNY float64
+	}{
+		{"480p输出5秒", VideoUsage{Resolution: "480p", OutputSeconds: 5}, 3.36},
+		{"720p输出5秒", VideoUsage{Resolution: "720p", OutputSeconds: 5}, 7.56},
+		{"480p输出5秒输入4秒", VideoUsage{Resolution: "480p", OutputSeconds: 5, VideoSeconds: 4}, 3.63},
+		{"480p输出5秒输入30秒", VideoUsage{Resolution: "480p", OutputSeconds: 5, VideoSeconds: 30}, 14.12},
+		{"720p输出5秒输入4秒", VideoUsage{Resolution: "720p", OutputSeconds: 5, VideoSeconds: 4}, 8.16},
+		{"720p输出5秒输入30秒", VideoUsage{Resolution: "720p", OutputSeconds: 5, VideoSeconds: 30}, 31.75},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ComputeVideoCost("doubao-seedance-2-5", tc.usage)
+			if err != nil {
+				t.Fatalf("ComputeVideoCost 出错: %v", err)
+			}
+			cny := got.Total * impliedRate
+			delta := (cny - tc.officialCNY) / tc.officialCNY
+			if delta < 0 {
+				t.Errorf("折算 %.4f 元 < 官方 16:9 报价 %.2f 元，成本倒挂 %.2f%%",
+					cny, tc.officialCNY, -delta*100)
+			}
+			if delta > 0.05 {
+				t.Errorf("折算 %.4f 元，比官方 %.2f 元高 %.2f%%，超出宽高比差异能解释的范围",
+					cny, tc.officialCNY, delta*100)
+			}
+		})
+	}
+}
+
+// TestSeedance25_InputPricing 2.5 的参考素材是「部分收费」：图片和音频官方不
+// 单独计价（不配 = 免费），参考视频则按其自身时长实打实加钱。
+func TestSeedance25_InputPricing(t *testing.T) {
+	p, ok := GetVideoPricing("doubao-seedance-2-5")
+	if !ok {
+		t.Fatal("doubao-seedance-2-5 应有内置价目表")
+	}
+	if p.Input.Image != nil || p.Input.Audio != nil {
+		t.Error("火山对参考图片与音频不单独计价，不该配这两项")
+	}
+	if p.Input.Video == nil {
+		t.Fatal("参考视频是收费的，必须配单价——官方 720p 加 30 秒参考视频要多收 24.19 元")
+	}
+
+	// 参考视频单价与「含视频输入」档的输出单价相同：上游是同一个 token 单价、
+	// 同一个输出分辨率，两者本就该相等。只改一张表会让它们悄悄错位。
+	for resolution, outputRate := range p.OutputWithVideoInput {
+		assertMoney(t, resolution+" 参考视频单价",
+			p.Input.Video.PerSecondByOutputResolution[resolution], outputRate)
+	}
+
+	// 图片再多也不加钱
+	withImages, err := ComputeVideoCost("doubao-seedance-2-5",
+		VideoUsage{Resolution: "720p", OutputSeconds: 5, ImageCount: 30})
+	if err != nil {
+		t.Fatalf("ComputeVideoCost 出错: %v", err)
+	}
+	assertMoney(t, "30 张参考图不加钱", withImages.Image, 0)
+	assertMoney(t, "音频不加钱", withImages.Audio, 0)
+}
+
+// TestComputeVideoCost_InputMaterialsFreeWhenUnset 参考素材完全免费的模型只要
+// 不配 Input 就行，不需要额外的开关。
+func TestComputeVideoCost_InputMaterialsFreeWhenUnset(t *testing.T) {
+	withOverride(t, map[string]VideoPricing{
+		"free-inputs": {
+			DefaultResolution: "720p",
+			Output:            map[string]float64{"720p": 0.2},
+		},
+	})
+
+	got, err := ComputeVideoCost("free-inputs", VideoUsage{
+		Resolution: "720p", OutputSeconds: 10,
+		ImageCount: 20, AudioSeconds: 30, VideoSeconds: 30,
+	})
+	if err != nil {
+		t.Fatalf("ComputeVideoCost 出错: %v", err)
+	}
+	assertMoney(t, "图片", got.Image, 0)
+	assertMoney(t, "音频", got.Audio, 0)
+	assertMoney(t, "视频", got.Video, 0)
+	assertMoney(t, "总额只有输出", got.Total, 2.0)
+}
+
+// TestComputeVideoCost_H3StillUsesSeparateInputPricing MiniMax H3 是真的对输入
+// 素材另收钱（图片按张、输入视频按其自身时长），加了新开关不能把它弄坏。
+func TestComputeVideoCost_H3StillUsesSeparateInputPricing(t *testing.T) {
+	p, ok := GetVideoPricing("MiniMax-H3")
+	if !ok {
+		t.Fatal("MiniMax-H3 应有内置价目表")
+	}
+	if p.Input.Video == nil || p.Input.Image == nil {
+		t.Error("H3 的输入素材定价被删掉了")
+	}
+
+	got, err := ComputeVideoCost("MiniMax-H3",
+		VideoUsage{Resolution: "2K", OutputSeconds: 10, VideoSeconds: 6, ImageCount: 3})
+	if err != nil {
+		t.Fatalf("ComputeVideoCost 出错: %v", err)
+	}
+	assertMoney(t, "输出", got.Output, 1.30)
+	assertMoney(t, "输入视频", got.Video, 0.78)
+	assertMoney(t, "输入图片", got.Image, 0.12)
+}
+
+// TestSeedance25_BothModelNamesPriceIdentically 官方 endpoint 名与对外别名必须
+// 同价：少配一个会让那条路径掉回 ModelPrice 查表，两个名字算出不同的钱。
+func TestSeedance25_BothModelNamesPriceIdentically(t *testing.T) {
+	usage := VideoUsage{Resolution: "720p", OutputSeconds: 8, VideoSeconds: 5}
+
+	alias, err := ComputeVideoCost("doubao-seedance-2-5", usage)
+	if err != nil {
+		t.Fatalf("别名计价出错: %v", err)
+	}
+	official, err := ComputeVideoCost("doubao-seedance-2-5-260628", usage)
+	if err != nil {
+		t.Fatalf("官方名计价出错: %v", err)
+	}
+	assertMoney(t, "两个模型名的报价", official.Total, alias.Total)
+}
+
+// TestOutputRate_FallsBackWhenNoVideoTier 没有降档表的模型（如 MiniMax-H3）
+// 不受这套规则影响：含视频输入时仍走 Output。
+func TestOutputRate_FallsBackWhenNoVideoTier(t *testing.T) {
+	p, ok := GetVideoPricing("MiniMax-H3")
+	if !ok {
+		t.Fatal("MiniMax-H3 应有内置价目表")
+	}
+	assertMoney(t, "含视频输入时的 2K 单价", p.OutputRate("2K", true), p.Output["2K"])
+
+	// 降档表缺这一档分辨率时也回落，而不是按 0 计费
+	partial := VideoPricing{
+		Output:               map[string]float64{"480p": 0.1, "720p": 0.2},
+		OutputWithVideoInput: map[string]float64{"720p": 0.12},
+	}
+	assertMoney(t, "缺档回落", partial.OutputRate("480p", true), 0.1)
+	assertMoney(t, "命中降档", partial.OutputRate("720p", true), 0.12)
+	assertMoney(t, "不含视频走原档", partial.OutputRate("720p", false), 0.2)
+}
+
+// TestValidateVideoPricing_OutputWithVideoInput 降档表引用不存在的分辨率必须
+// 报错：它会静默失效（回落到 Output），比报错难查得多。
+func TestValidateVideoPricing_OutputWithVideoInput(t *testing.T) {
+	base := func() VideoPricing {
+		return VideoPricing{
+			DefaultResolution: "720p",
+			Output:            map[string]float64{"720p": 0.2},
+		}
+	}
+
+	valid := base()
+	valid.OutputWithVideoInput = map[string]float64{"720p": 0.12}
+	if err := ValidateVideoPricing("m", valid); err != nil {
+		t.Errorf("合法配置不应报错: %v", err)
+	}
+
+	unknown := base()
+	unknown.OutputWithVideoInput = map[string]float64{"1080p": 0.12}
+	if err := ValidateVideoPricing("m", unknown); err == nil {
+		t.Error("降档表引用未知分辨率应报错")
+	}
+
+	negative := base()
+	negative.OutputWithVideoInput = map[string]float64{"720p": -1}
+	if err := ValidateVideoPricing("m", negative); err == nil {
+		t.Error("负单价应报错")
+	}
+
+	negSeconds := base()
+	negSeconds.MaxOutputSeconds = -1
+	if err := ValidateVideoPricing("m", negSeconds); err == nil {
+		t.Error("负的 max_output_seconds 应报错")
+	}
+}
+
+// TestDefaultVideoPricingJSON 管理端靠这份数据把内置定价的视频模型显示成
+// 「视频计费」。序列化坏掉的话面板会把它们显示成「按量计费 + 空倍率」，
+// 管理员就会去填一个根本不生效的 ModelRatio。
+func TestDefaultVideoPricingJSON(t *testing.T) {
+	var parsed map[string]VideoPricing
+	if err := common.UnmarshalJsonStr(DefaultVideoPricingJSON(), &parsed); err != nil {
+		t.Fatalf("内置价目表序列化后解析不回来: %v", err)
+	}
+
+	for _, name := range []string{"MiniMax-H3", "doubao-seedance-2-5"} {
+		spec, ok := parsed[name]
+		if !ok {
+			t.Fatalf("内置价目表里缺 %s", name)
+		}
+		if len(spec.Output) == 0 {
+			t.Errorf("%s 的输出定价丢了", name)
+		}
+	}
+
+	// 降档表必须一起序列化出去，否则管理端存回来时会把它清掉，
+	// 含参考视频的任务就会按不含视频的高单价收钱
+	if len(parsed["doubao-seedance-2-5"].OutputWithVideoInput) == 0 {
+		t.Error("doubao-seedance-2-5 的降档表没有序列化出去")
+	}
+	if parsed["doubao-seedance-2-5"].MaxOutputSeconds != 15 {
+		t.Errorf("预扣锚点 = %v, want 15", parsed["doubao-seedance-2-5"].MaxOutputSeconds)
 	}
 }

@@ -74,6 +74,8 @@ export function specToVideoEditorState(spec) {
     unit: source.unit || 'second',
     defaultResolution: source.default_resolution || '',
     outputRows: mapToRows(source.output),
+    outputWithVideoRows: mapToRows(source.output_with_video_input),
+    maxOutputSeconds: toNumber(source.max_output_seconds),
     imagePerImage: toNumber(source.input?.image?.per_image),
     imageFreeCount: toNumber(source.input?.image?.free_count),
     audioPerSecond: toNumber(source.input?.audio?.per_second),
@@ -81,7 +83,13 @@ export function specToVideoEditorState(spec) {
   };
 }
 
-/** 编辑器状态 → spec，保存时调用。 */
+/**
+ * 编辑器状态 → spec，保存时调用。
+ *
+ * 这里漏掉任何一个字段，管理员只要打开面板保存一次，那个字段就会被静默清掉。
+ * output_with_video_input 尤其致命：丢了它，含参考视频的任务会按不含视频的
+ * 高单价收钱（Seedance 2.5 是 1.66 倍）。新增价目表字段时务必两边都加。
+ */
 export function videoEditorStateToSpec(state) {
   if (!state) return null;
 
@@ -97,12 +105,22 @@ export function videoEditorStateToSpec(state) {
     input.video = { per_second_by_output_resolution: videoMap };
   }
 
-  return {
+  const spec = {
     unit: state.unit || 'second',
     default_resolution: state.defaultResolution || '',
     output: rowsToMap(state.outputRows),
     input,
   };
+  const outputWithVideo = rowsToMap(state.outputWithVideoRows);
+  if (Object.keys(outputWithVideo).length > 0) {
+    spec.output_with_video_input = outputWithVideo;
+  }
+  const maxOutputSeconds = toNumber(state.maxOutputSeconds);
+  if (maxOutputSeconds > 0) {
+    spec.max_output_seconds = maxOutputSeconds;
+  }
+
+  return spec;
 }
 
 /** 编辑器状态是否已经填了可用的输出定价。 */
@@ -150,9 +168,19 @@ export function computeVideoCost(spec, usage) {
 
   const result = { ...empty, resolution };
 
+  // 含参考视频时整单换一档更低的单价（火山 Seedance 的规则），降档表缺省
+  // 或缺这一档时回落到常规单价。与后端 VideoPricing.OutputRate 同构。
+  const videoSeconds = toNumber(usage?.videoSeconds);
+  const hasVideoInput = videoSeconds > 0 || Boolean(usage?.hasVideoInput);
+  const tieredRate = spec.output_with_video_input?.[resolution];
+  const outputRate =
+    hasVideoInput && tieredRate !== undefined
+      ? toNumber(tieredRate)
+      : toNumber(spec.output[resolution]);
+
   const outputSeconds = toNumber(usage?.outputSeconds);
   if (outputSeconds > 0) {
-    result.output = toNumber(spec.output[resolution]) * outputSeconds;
+    result.output = outputRate * outputSeconds;
   }
 
   const image = spec.input?.image;
@@ -168,7 +196,6 @@ export function computeVideoCost(spec, usage) {
     result.audio = toNumber(spec.input.audio.per_second) * audioSeconds;
   }
 
-  const videoSeconds = toNumber(usage?.videoSeconds);
   const videoRates = spec.input?.video?.per_second_by_output_resolution;
   if (videoRates && videoSeconds > 0 && videoRates[resolution] !== undefined) {
     result.video = toNumber(videoRates[resolution]) * videoSeconds;
@@ -228,6 +255,19 @@ export function getVideoPriceItems(spec, groupRatio = 1, displayPrice, t) {
       value: money(price),
       suffix: ` / ${t('秒')}`,
     }),
+  );
+
+  // 含参考视频时整单降档，两个价都要列出来，否则用户按上面的单价估算带参考
+  // 视频的任务会算错。
+  Object.entries(spec?.output_with_video_input || {}).forEach(
+    ([resolution, price]) => {
+      items.push({
+        key: `output-with-video-${resolution}`,
+        label: `${resolution} ${t('输出')}${t('（含参考视频）')}`,
+        value: money(price),
+        suffix: ` / ${t('秒')}`,
+      });
+    },
   );
 
   const videoRates = spec?.input?.video?.per_second_by_output_resolution;

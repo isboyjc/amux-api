@@ -163,7 +163,14 @@ const buildModelState = (name, sourceMaps) => {
 
   // 有价目表就是视频计费——与后端 GetBillingMode 的推断保持一致，
   // 管理员不需要为内置视频模型再显式设一次模式。
-  const videoSpec = sourceMaps.ModelVideoPricing?.[name];
+  //
+  // 覆盖项优先，其次内置默认表（VideoPricingDefaults 是 option 接口给的只读
+  // 派生项）。不看内置表的话，靠默认定价跑的模型会显示成「按量计费 + 空倍率」，
+  // 管理员会以为没配价，然后去填一个根本不生效的 ModelRatio。
+  const videoSpec =
+    sourceMaps.ModelVideoPricing?.[name] ??
+    sourceMaps.VideoPricingDefaults?.[name] ??
+    sourceMaps.VideoPricingAliases?.[name];
   if (billingMode === 'video' || videoSpec) {
     return {
       ...EMPTY_MODEL,
@@ -723,6 +730,11 @@ export function useModelPricingEditorState({
       ModelVideoPricing: parseOptionJSON(
         options['video_pricing_setting.pricing'],
       ),
+      // 随代码发布的内置价目表，只读。见后端 DefaultVideoPricingJSON。
+      // Defaults 是规范名（决定列表里有哪些行），Aliases 是同一模型的其它可用
+      // 名字（只决定行怎么渲染，不进列表，否则面板会冒出好几行重复记录）。
+      VideoPricingDefaults: parseOptionJSON(options.VideoPricingDefaults),
+      VideoPricingAliases: parseOptionJSON(options.VideoPricingAliases),
     };
 
     const names = new Set([
@@ -739,6 +751,10 @@ export function useModelPricingEditorState({
       ...Object.keys(sourceMaps.ModelBillingMode),
       ...Object.keys(sourceMaps.ModelBillingExpr),
       ...Object.keys(sourceMaps.ModelVideoPricing),
+      // 靠内置价目表定价的模型在 DB 里没有任何条目，不把它们的名字加进来，
+      // 「模型定价设置」这个入口（不传 candidateModelNames，列表只来自 DB）
+      // 就永远搜不到它们——面板上查不到、也改不了价。
+      ...Object.keys(sourceMaps.VideoPricingDefaults),
     ]);
 
     const nextModels = Array.from(names)

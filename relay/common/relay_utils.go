@@ -199,7 +199,21 @@ func isKnownTaskField(field string) bool {
 	return knownFields[field]
 }
 
+// TaskValidateOptions 放宽通用任务校验里对个别模型不成立的约束。
+type TaskValidateOptions struct {
+	// PromptOptional 跳过 prompt 必填。仅限官方文档明确支持「无提示词」组合的
+	// 模型，例如 Seedance 2.5 允许纯首尾帧、甚至只传一段参考音频。这类模型的
+	// 「至少要有一类内容」由适配器自己校验，见 Seedance25Request.Validate。
+	PromptOptional bool
+}
+
 func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *dto.TaskError {
+	return ValidateBasicTaskRequestWithOptions(c, info, action, TaskValidateOptions{})
+}
+
+func ValidateBasicTaskRequestWithOptions(
+	c *gin.Context, info *RelayInfo, action string, opts TaskValidateOptions,
+) *dto.TaskError {
 	var err error
 	contentType := c.GetHeader("Content-Type")
 	var req TaskSubmitReq
@@ -214,12 +228,15 @@ func ValidateBasicTaskRequest(c *gin.Context, info *RelayInfo, action string) *d
 		return createTaskError(err, "invalid_request", http.StatusBadRequest, true)
 	}
 
-	// prompt 强制必填：曾尝试放宽为"prompt 与 metadata.content 至少一项"以
+	// prompt 默认强制必填：曾尝试放宽为"prompt 与 metadata.content 至少一项"以
 	// 兼容首/末帧场景，但实测上游服务商（Ali / Sora / Volcengine 等）即便有
 	// reference image / first_frame / last_frame 仍会因为缺 prompt 拒掉。
 	// 这层挡住，让用户立刻看到清晰错误，避免一个无效请求绕到上游再返。
-	if taskErr := validatePrompt(req.Prompt); taskErr != nil {
-		return taskErr
+	// 确实支持无提示词的模型走 PromptOptional 单独放行，不放宽默认口径。
+	if !opts.PromptOptional {
+		if taskErr := validatePrompt(req.Prompt); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	if len(req.Images) == 0 && strings.TrimSpace(req.Image) != "" {

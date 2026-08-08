@@ -99,6 +99,17 @@ func GetOptions(c *gin.Context) {
 		Key:   "CompletionRatioMeta",
 		Value: buildCompletionRatioMetaValue(optionValues),
 	})
+	// 内置视频价目表：DB 里只存管理员的覆盖项，面板不知道还有一份随代码发布的
+	// 默认表。缺了它，靠内置定价跑的视频模型会被显示成「按量计费 + 空倍率」。
+	// 规范名与别名分开给：前者决定列表里有哪些行，后者只决定行怎么渲染。
+	options = append(options, &model.Option{
+		Key:   billing_setting.VideoPricingDefaultsOptionKey,
+		Value: billing_setting.DefaultVideoPricingJSON(),
+	})
+	options = append(options, &model.Option{
+		Key:   billing_setting.VideoPricingAliasesOptionKey,
+		Value: billing_setting.VideoPricingAliasesJSON(),
+	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

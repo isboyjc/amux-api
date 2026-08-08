@@ -323,6 +323,13 @@ const Playground = () => {
   const imageParamSchema = imageSchemaSplit.paramsSchema;
   const imageInputsSchema = imageSchemaSplit.inputsSchema;
 
+  // 少数视频模型（如 Seedance 2.5）官方支持无提示词的组合：纯首尾帧、甚至只
+  // 传一段参考音频。这类模型在 schema 根上声明 `x-prompt-optional`，前端据此
+  // 放行空 prompt——默认仍然必填，因为多数上游没有 prompt 会直接拒收。
+  const promptOptional = Boolean(
+    imageSchemaSplit.rawSchema?.['x-prompt-optional'],
+  );
+
   // 把 inputsSchema 里的媒体槽按 `x-content-role` 分组。返回
   //   { reference, firstFrame, lastFrame, video, audio }，每个 slot 形如
   //   { key, isArray, maxItems, contentRole, mediaType }。
@@ -1139,6 +1146,7 @@ const Playground = () => {
         prompt,
         params,
         content,
+        promptOptional,
         onUpdate: (patch) => applyVideoUpdate(loadingMsg.id, patch),
       });
 
@@ -1191,6 +1199,7 @@ const Playground = () => {
       activeSessionId,
       touchSession,
       applyVideoUpdate,
+      promptOptional,
       t,
     ],
   );
@@ -1744,17 +1753,28 @@ const Playground = () => {
   function onMessageSend(content) {
     if (typeof content !== 'string') return;
     const trimmed = content.trim();
-    // prompt 强制必填——视频 first_last / omni / image / chat 一视同仁。
+    // prompt 默认强制必填——视频 first_last / omni / image / chat 一视同仁。
     // 上游服务商即便有参考图也会拒收空 prompt，让用户立刻看到 toast 比绕到
-    // 上游再失败体验好得多
+    // 上游再失败体验好得多。
+    //
+    // 例外是 schema 声明了 x-prompt-optional 的视频模型（如 Seedance 2.5）：
+    // 官方支持纯首尾帧、纯参考音频等无提示词组合。即便如此也得有素材，光点
+    // 发送不带任何内容没有意义。
     if (!trimmed) {
-      Toast.warning({
-        content: t('请输入 Prompt'),
-        duration: 2,
-      });
-      return;
+      const hasMediaInput = Object.values(imageInputsValues || {}).some((v) =>
+        Array.isArray(v) ? v.length > 0 : Boolean(v),
+      );
+      const canSendWithoutPrompt =
+        currentModality === MODALITY.VIDEO && promptOptional && hasMediaInput;
+      if (!canSendWithoutPrompt) {
+        Toast.warning({
+          content: t('请输入 Prompt'),
+          duration: 2,
+        });
+        return;
+      }
     }
-    maybeAutoNameSession(trimmed);
+    if (trimmed) maybeAutoNameSession(trimmed);
     if (activeSessionId) touchSession?.(activeSessionId);
 
     if (currentModality === MODALITY.IMAGE) {
