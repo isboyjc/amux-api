@@ -78,6 +78,13 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+// MappedTaskValidator 在渠道模型映射完成后执行模型专属校验。
+// 适用于请求约束依赖最终上游模型的适配器，避免别名模型绕过校验，
+// 同时保证校验发生在价格计算和预扣费之前。
+type MappedTaskValidator interface {
+	ValidateMappedRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }
@@ -86,4 +93,16 @@ type OpenAIVideoConverter interface {
 // 任务查询响应格式，供 /api/v3/contents/generations/tasks/:task_id 端点使用。
 type DoubaoV3VideoConverter interface {
 	ConvertToDoubaoV3(originTask *model.Task) ([]byte, error)
+}
+
+// AliVideoConverter 将网关任务转换为 DashScope 异步视频任务查询响应格式，
+// 供 /api/v1/tasks/:task_id 官方兼容端点使用。
+type AliVideoConverter interface {
+	ConvertToAliVideo(originTask *model.Task) ([]byte, error)
+}
+
+// MinimaxV2VideoConverter 将网关任务转换为 MiniMax v2 协议的任务查询响应
+// 格式，供 /v2/query/video_generation 官方兼容端点使用。
+type MinimaxV2VideoConverter interface {
+	ConvertToMinimaxV2(originTask *model.Task) ([]byte, error)
 }

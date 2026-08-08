@@ -37,6 +37,28 @@ func (m *mockPollAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error)
 
 func (m *mockPollAdaptor) AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int { return 0 }
 
+type non2xxPollAdaptor struct {
+	parseCalled bool
+}
+
+func (m *non2xxPollAdaptor) Init(_ *relaycommon.RelayInfo) {}
+
+func (m *non2xxPollAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Body:       io.NopCloser(bytes.NewReader([]byte(`{"code":"Throttling"}`))),
+	}, nil
+}
+
+func (m *non2xxPollAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	m.parseCalled = true
+	return &relaycommon.TaskInfo{Status: model.TaskStatusFailure}, nil
+}
+
+func (m *non2xxPollAdaptor) AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int {
+	return 0
+}
+
 func runPollOnce(t *testing.T, channelType int) *model.Task {
 	t.Helper()
 	truncate(t)
@@ -70,4 +92,19 @@ func TestUpdateVideoSingleTask_VideoChannelHasResultURL(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusSuccess, task.Status)
 	require.NotEmpty(t, task.PrivateData.ResultURL, "video channel should still get a proxy URL")
 	assert.Contains(t, task.PrivateData.ResultURL, "/v1/videos/"+task.TaskID+"/content")
+}
+
+func TestUpdateVideoSingleTask_Non2xxDoesNotTerminalizeTask(t *testing.T) {
+	adaptor := &non2xxPollAdaptor{}
+	task := &model.Task{
+		TaskID: "task_public",
+		Status: model.TaskStatusInProgress,
+	}
+	task.PrivateData.UpstreamTaskID = "upstream_id"
+	tasks := map[string]*model.Task{"upstream_id": task}
+
+	err := updateVideoSingleTask(context.Background(), adaptor, &model.Channel{Type: constant.ChannelTypeAli}, "upstream_id", tasks)
+	require.Error(t, err)
+	assert.False(t, adaptor.parseCalled)
+	assert.EqualValues(t, model.TaskStatusInProgress, task.Status)
 }

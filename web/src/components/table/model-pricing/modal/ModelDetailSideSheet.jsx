@@ -29,6 +29,7 @@ import ModelHealthSection from './components/ModelHealthSection';
 import ModelEndpoints from './components/ModelEndpoints';
 import ModelPricingTable from './components/ModelPricingTable';
 import DynamicPricingBreakdown from './components/DynamicPricingBreakdown';
+import VideoPricingBreakdown from './components/VideoPricingBreakdown';
 
 const { Text } = Typography;
 
@@ -104,9 +105,17 @@ const ModelDetailSideSheet = ({
               endpointMap={endpointMap}
               t={t}
             />
-            {modelData.billing_mode === 'tiered_expr' && modelData.billing_expr && (
-              <DynamicPricingBreakdown
-                billingExpr={modelData.billing_expr}
+            {modelData.billing_mode === 'tiered_expr' &&
+              modelData.billing_expr && (
+                <DynamicPricingBreakdown
+                  billingExpr={modelData.billing_expr}
+                  t={t}
+                />
+              )}
+            {modelData.video_pricing && (
+              <VideoPricingBreakdown
+                videoPricing={modelData.video_pricing}
+                displayPrice={displayPrice}
                 t={t}
               />
             )}

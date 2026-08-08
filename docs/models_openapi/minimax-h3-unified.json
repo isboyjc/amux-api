@@ -1,0 +1,609 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MiniMax-H3 视频生成 · 通用端点",
+    "version": "1.0.0",
+    "description": "站内统一视频生成协议，适用于本网关接入的所有视频模型；本文档针对 MiniMax-H3。\n\n同一套请求体可以直接换 `model` 切到其它视频模型，无需改代码。若需要与 MiniMax 官方 SDK 完全一致的调用方式，请改用原生端点文档（minimax-h3-native-v2.json）。\n\n## 调用流程\n\n1. `POST /v1/video/generations` 提交任务，拿到 `task_id`\n2. 轮询 `GET /v1/video/generations/{task_id}` 直到 `status` 为 `SUCCESS` 或 `FAILURE`\n3. 成功后从 `data.result_url` 取视频地址\n\n任务为异步生成，通常需要数十秒到数分钟。建议轮询间隔 5~10 秒。\n\n## 计费\n\n按「输出分辨率 × 输出秒数」计费，输入素材单独计价：\n\n| 项目 | 2K | 768P |\n| --- | --- | --- |\n| 输出视频 | $0.13/秒 | $0.08/秒 |\n| 输入视频（按其自身时长） | $0.13/秒 | $0.08/秒 |\n| 输入图片 | $0.04/张 | $0.04/张 |\n| 输入音频 | 免费 | 免费 |\n\n实际扣费 = 上表算出的金额 × 你所在分组的倍率。具体单价以模型广场展示为准。\n\n**参考视频计费说明**：请求中只能拿到素材 URL、无法预知其真实时长，因此提交时按官方上限 15 秒预扣。",
+    "contact": {
+      "name": "API Support"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://your-gateway.example.com",
+      "description": "将 URL 替换为你的网关地址"
+    }
+  ],
+  "security": [{ "BearerAuth": [] }],
+  "tags": [
+    { "name": "视频生成", "description": "提交任务与查询结果" }
+  ],
+  "paths": {
+    "/v1/video/generations": {
+      "post": {
+        "tags": ["视频生成"],
+        "summary": "提交视频生成任务",
+        "description": "提交一个异步视频生成任务。返回 `task_id` 后需轮询查询接口获取结果。\n\n`prompt` 为必填，即使已提供首帧或参考素材——上游不接受空提示词。",
+        "operationId": "createVideoGeneration",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VideoGenerationRequest" },
+              "examples": {
+                "text-to-video": {
+                  "summary": "文生视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "prompt": "一个男孩在海边打篮球，夕阳下的剪影，电影感运镜",
+                    "duration": 6,
+                    "size": "2K",
+                    "metadata": { "aspect_ratio": "16:9" }
+                  }
+                },
+                "image-to-video": {
+                  "summary": "图生视频（首帧）",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "prompt": "镜头缓慢推近，人物回头微笑",
+                    "duration": 6,
+                    "size": "2K",
+                    "images": ["https://example.com/first.jpg"]
+                  }
+                },
+                "first-last-frame": {
+                  "summary": "首尾帧生视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "prompt": "从白天平滑过渡到夜晚",
+                    "duration": 10,
+                    "size": "2K",
+                    "images": [
+                      "https://example.com/first.jpg",
+                      "https://example.com/last.jpg"
+                    ]
+                  }
+                },
+                "reference-to-video": {
+                  "summary": "多模态参考生视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "prompt": "参考图中的人物，按参考视频的运镜方式运动，情绪与参考音频一致",
+                    "duration": 10,
+                    "size": "2K",
+                    "metadata": {
+                      "aspect_ratio": "adaptive",
+                      "reference_image_urls": ["https://example.com/character.jpg"],
+                      "reference_video_urls": ["https://example.com/motion.mp4"],
+                      "reference_audio_urls": ["https://example.com/mood.mp3"]
+                    }
+                  }
+                },
+                "watermark": {
+                  "summary": "开启 AIGC 水印",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "prompt": "城市夜景延时摄影",
+                    "duration": 6,
+                    "size": "768P",
+                    "metadata": { "aigc_watermark": true }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已提交",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VideoSubmitResponse" },
+                "example": {
+                  "id": "task_9f2c1b7e4a6d8035",
+                  "task_id": "task_9f2c1b7e4a6d8035",
+                  "object": "video",
+                  "model": "MiniMax-H3",
+                  "status": "queued",
+                  "progress": 0,
+                  "created_at": 1754630400
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskError" },
+                "examples": {
+                  "invalid-duration": {
+                    "summary": "时长越界",
+                    "value": {
+                      "code": "invalid_request",
+                      "message": "duration must be between 4 and 15 seconds",
+                      "data": null
+                    }
+                  },
+                  "invalid-resolution": {
+                    "summary": "分辨率不支持",
+                    "value": {
+                      "code": "invalid_request",
+                      "message": "unsupported resolution \"1080P\", MiniMax-H3 expects 768P or 2K",
+                      "data": null
+                    }
+                  },
+                  "missing-prompt": {
+                    "summary": "缺少提示词",
+                    "value": {
+                      "code": "invalid_request",
+                      "message": "prompt is required",
+                      "data": null
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "鉴权失败",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskError" }
+              }
+            }
+          },
+          "429": {
+            "description": "触发限流或上游负载饱和",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskError" }
+              }
+            }
+          },
+          "500": {
+            "description": "服务端错误",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/video/generations/{task_id}": {
+      "get": {
+        "tags": ["视频生成"],
+        "summary": "查询任务状态与结果",
+        "description": "查询任务当前状态。`status` 到达 `SUCCESS` 时 `data.result_url` 为视频地址；到达 `FAILURE` 时 `data.fail_reason` 说明原因。\n\n建议轮询间隔 5~10 秒。",
+        "operationId": "getVideoGeneration",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "description": "提交接口返回的 `task_id`",
+            "schema": { "type": "string" },
+            "example": "task_9f2c1b7e4a6d8035"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskQueryResponse" },
+                "examples": {
+                  "in-progress": {
+                    "summary": "生成中",
+                    "value": {
+                      "code": "success",
+                      "message": "",
+                      "data": {
+                        "task_id": "task_9f2c1b7e4a6d8035",
+                        "action": "generate",
+                        "status": "IN_PROGRESS",
+                        "progress": "50%",
+                        "submit_time": 1754630400,
+                        "start_time": 1754630405,
+                        "finish_time": 0,
+                        "fail_reason": ""
+                      }
+                    }
+                  },
+                  "success": {
+                    "summary": "生成成功",
+                    "value": {
+                      "code": "success",
+                      "message": "",
+                      "data": {
+                        "task_id": "task_9f2c1b7e4a6d8035",
+                        "action": "generate",
+                        "status": "SUCCESS",
+                        "progress": "100%",
+                        "result_url": "https://cdn.example.com/videos/9f2c1b7e.mp4",
+                        "submit_time": 1754630400,
+                        "start_time": 1754630405,
+                        "finish_time": 1754630512,
+                        "fail_reason": ""
+                      }
+                    }
+                  },
+                  "failure": {
+                    "summary": "生成失败",
+                    "value": {
+                      "code": "success",
+                      "message": "",
+                      "data": {
+                        "task_id": "task_9f2c1b7e4a6d8035",
+                        "action": "generate",
+                        "status": "FAILURE",
+                        "progress": "100%",
+                        "fail_reason": "content moderation blocked",
+                        "submit_time": 1754630400,
+                        "finish_time": 1754630460
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskError" },
+                "example": {
+                  "code": "task_not_exist",
+                  "message": "task_not_exist",
+                  "data": null
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos": {
+      "post": {
+        "tags": ["视频生成"],
+        "summary": "提交视频生成任务（OpenAI 兼容别名）",
+        "description": "与 `POST /v1/video/generations` 完全等价，请求体与响应体一致。提供此路径是为了兼容按 OpenAI Video API 路径约定编写的客户端。",
+        "operationId": "createVideoOpenAICompatible",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VideoGenerationRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已提交",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VideoSubmitResponse" }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TaskError" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/videos/{task_id}": {
+      "get": {
+        "tags": ["视频生成"],
+        "summary": "查询任务（OpenAI Video 响应结构）",
+        "description": "与 `GET /v1/video/generations/{task_id}` 查的是同一个任务，但**响应结构不同**：本接口返回 OpenAI Video 对象，视频地址在 `metadata.url`。\n\n按 OpenAI Video API 编写的客户端用这个；否则建议用 `/v1/video/generations/{task_id}`。",
+        "operationId": "getVideoOpenAICompatible",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "example": "task_9f2c1b7e4a6d8035"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/OpenAIVideo" },
+                "example": {
+                  "id": "task_9f2c1b7e4a6d8035",
+                  "object": "video",
+                  "model": "MiniMax-H3",
+                  "status": "completed",
+                  "progress": 100,
+                  "created_at": 1754630400,
+                  "completed_at": 1754630512,
+                  "metadata": {
+                    "url": "https://cdn.example.com/videos/9f2c1b7e.mp4"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "在 `Authorization: Bearer <你的 API Key>` 头中传入令牌。"
+      }
+    },
+    "schemas": {
+      "VideoGenerationRequest": {
+        "type": "object",
+        "required": ["model", "prompt"],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "模型名称。",
+            "enum": ["MiniMax-H3"],
+            "example": "MiniMax-H3"
+          },
+          "prompt": {
+            "type": "string",
+            "description": "提示词。**必填**，即使已提供首帧或参考素材——上游不接受空提示词。",
+            "minLength": 1,
+            "maxLength": 7000,
+            "example": "一个男孩在海边打篮球"
+          },
+          "duration": {
+            "type": "integer",
+            "description": "输出视频时长（秒）。",
+            "minimum": 4,
+            "maximum": 15,
+            "default": 6
+          },
+          "size": {
+            "type": "string",
+            "description": "输出分辨率。接受 `2K` / `768P`，也接受含 `2560`、`1440`、`768` 的尺寸串（如 `2560x1440`）。与 `metadata.resolution` 同时提供时，以后者为准。无法识别的值会直接报错而不是降级。",
+            "enum": ["768P", "2K"],
+            "default": "2K"
+          },
+          "images": {
+            "type": "array",
+            "description": "首尾帧的简写形式：第 1 项为首帧，第 2 项为尾帧。若同时在 `metadata` 里显式声明了 `first_frame_image` / `last_frame_image`，以 `metadata` 为准。",
+            "maxItems": 2,
+            "items": { "type": "string", "format": "uri" }
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/VideoGenerationMetadata"
+          }
+        }
+      },
+      "VideoGenerationMetadata": {
+        "type": "object",
+        "description": "H3 专有参数。通用协议的顶层字段是所有视频模型共享的，模型特有能力放这里。",
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "description": "输出分辨率。优先级高于顶层 `size`。",
+            "enum": ["768P", "2K"],
+            "default": "2K"
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "description": "画面宽高比。`adaptive` 表示由模型根据输入素材自适应。",
+            "enum": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+            "default": "16:9"
+          },
+          "ratio": {
+            "type": "string",
+            "description": "`aspect_ratio` 的别名，两者都提供时以 `aspect_ratio` 为准。",
+            "enum": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+          },
+          "first_frame_image": {
+            "type": "string",
+            "format": "uri",
+            "description": "首帧图片 URL。"
+          },
+          "last_frame_image": {
+            "type": "string",
+            "format": "uri",
+            "description": "尾帧图片 URL。"
+          },
+          "reference_image_urls": {
+            "type": "array",
+            "description": "参考图，用于人物/风格参考。",
+            "maxItems": 9,
+            "items": { "type": "string", "format": "uri" }
+          },
+          "reference_video_urls": {
+            "type": "array",
+            "description": "参考视频，用于运镜/动作参考。单段 2~15 秒，所有段合计不超过 15 秒。",
+            "maxItems": 3,
+            "items": { "type": "string", "format": "uri" }
+          },
+          "reference_audio_urls": {
+            "type": "array",
+            "description": "参考音频，用于节奏/情绪参考。单段 2~15 秒，所有段合计不超过 15 秒。",
+            "maxItems": 3,
+            "items": { "type": "string", "format": "uri" }
+          },
+          "aigc_watermark": {
+            "type": "boolean",
+            "description": "是否在输出视频上添加 AIGC 标识水印。",
+            "default": false
+          },
+          "content": {
+            "type": "array",
+            "description": "富媒体数组，结构与原生端点的 `content` 完全一致。与上面的 `first_frame_image` / `reference_*_urls` 等价，二选一即可；同时提供时会合并。",
+            "items": { "$ref": "#/components/schemas/ContentItem" }
+          }
+        }
+      },
+      "ContentItem": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["text", "image_url", "video_url", "audio_url"]
+          },
+          "text": { "type": "string" },
+          "image_url": { "$ref": "#/components/schemas/URLRef" },
+          "video_url": { "$ref": "#/components/schemas/URLRef" },
+          "audio_url": { "$ref": "#/components/schemas/URLRef" },
+          "role": {
+            "type": "string",
+            "description": "素材角色。省略时图片按 `reference_image` 处理。",
+            "enum": [
+              "first_frame",
+              "last_frame",
+              "reference_image",
+              "reference_video",
+              "reference_audio"
+            ]
+          }
+        }
+      },
+      "URLRef": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" }
+        }
+      },
+      "VideoSubmitResponse": {
+        "type": "object",
+        "description": "提交成功后的响应。`task_id` 用于后续查询。",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "任务 ID，与 `task_id` 相同。"
+          },
+          "task_id": {
+            "type": "string",
+            "description": "任务 ID。"
+          },
+          "object": { "type": "string", "enum": ["video"] },
+          "model": { "type": "string" },
+          "status": {
+            "type": "string",
+            "description": "提交成功时固定为 `queued`。",
+            "enum": ["queued"]
+          },
+          "progress": { "type": "integer", "example": 0 },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 时间戳（秒）。"
+          }
+        }
+      },
+      "TaskQueryResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "固定为 `success`。业务失败信息在 `data.status` 与 `data.fail_reason` 里。",
+            "example": "success"
+          },
+          "message": { "type": "string" },
+          "data": { "$ref": "#/components/schemas/TaskDetail" }
+        }
+      },
+      "TaskDetail": {
+        "type": "object",
+        "properties": {
+          "task_id": { "type": "string" },
+          "action": { "type": "string", "example": "generate" },
+          "status": {
+            "type": "string",
+            "description": "任务状态。`SUCCESS` 与 `FAILURE` 为终态，其余需继续轮询。",
+            "enum": [
+              "NOT_START",
+              "SUBMITTED",
+              "QUEUED",
+              "IN_PROGRESS",
+              "SUCCESS",
+              "FAILURE"
+            ]
+          },
+          "progress": {
+            "type": "string",
+            "description": "进度百分比字符串，如 `50%`。",
+            "example": "50%"
+          },
+          "result_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "视频地址，仅 `status` 为 `SUCCESS` 时返回。"
+          },
+          "fail_reason": {
+            "type": "string",
+            "description": "失败原因，仅 `status` 为 `FAILURE` 时有值。"
+          },
+          "submit_time": { "type": "integer", "format": "int64" },
+          "start_time": { "type": "integer", "format": "int64" },
+          "finish_time": { "type": "integer", "format": "int64" },
+          "quota": {
+            "type": "integer",
+            "description": "本次任务扣费额度。"
+          }
+        }
+      },
+      "OpenAIVideo": {
+        "type": "object",
+        "description": "OpenAI Video 兼容结构，仅 `/v1/videos/{task_id}` 返回。",
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "type": "string", "enum": ["video"] },
+          "model": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["queued", "in_progress", "completed", "failed", "unknown"]
+          },
+          "progress": { "type": "integer" },
+          "created_at": { "type": "integer", "format": "int64" },
+          "completed_at": { "type": "integer", "format": "int64" },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "description": "视频地址在 `url` 字段。",
+            "properties": {
+              "url": { "type": "string", "format": "uri" }
+            }
+          }
+        }
+      },
+      "TaskError": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "错误码。",
+            "example": "invalid_request"
+          },
+          "message": { "type": "string" },
+          "data": { "nullable": true }
+        }
+      }
+    }
+  }
+}

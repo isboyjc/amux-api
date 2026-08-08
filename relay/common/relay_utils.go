@@ -96,7 +96,7 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
 		if duration, err := strconv.Atoi(durationStr); err == nil {
-			req.Duration = duration
+			req.Duration = &duration
 		}
 	}
 
@@ -134,8 +134,8 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	model = req.Model
 	size = req.Size
 	seconds, _ = strconv.Atoi(req.Seconds)
-	if seconds == 0 {
-		seconds = req.Duration
+	if seconds == 0 && req.Duration != nil {
+		seconds = *req.Duration
 	}
 	if req.InputReference != "" {
 		req.Images = []string{req.InputReference}

@@ -35,6 +35,17 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.GET("/videos/:task_id", middleware.Distribute(), controller.RelayTaskFetch)
 	}
 
+	// MiniMax v2 official-compatible video routes (MiniMax-H3).
+	// docs: https://platform.minimaxi.com/docs/api-reference/video-generation-v2-create
+	// 查询用路径参数 /{task_id}，与官方一致。
+	minimaxV2Router := router.Group("/v2")
+	minimaxV2Router.Use(middleware.RouteTag("relay"))
+	minimaxV2Router.Use(middleware.MinimaxV2RequestConvert(), middleware.TokenAuth())
+	{
+		minimaxV2Router.POST("/video_generation", middleware.TokenConcurrencyLimit(), middleware.Distribute(), controller.RelayTask)
+		minimaxV2Router.GET("/query/video_generation/:task_id", middleware.Distribute(), controller.RelayTaskFetch)
+	}
+
 	klingV1Router := router.Group("/kling/v1")
 	klingV1Router.Use(middleware.RouteTag("relay"))
 	klingV1Router.Use(middleware.KlingRequestConvert(), middleware.TokenAuth())
@@ -61,5 +72,15 @@ func SetVideoRouter(router *gin.Engine) {
 	{
 		doubaoV3Router.POST("/tasks", middleware.TokenConcurrencyLimit(), middleware.Distribute(), controller.RelayTask)
 		doubaoV3Router.GET("/tasks/:task_id", middleware.Distribute(), controller.RelayTaskFetch)
+	}
+
+	// DashScope official-compatible video routes. Clients can point the
+	// DashScope SDK base URL at this gateway while task IDs remain gateway IDs.
+	aliVideoV1Router := router.Group("/api/v1")
+	aliVideoV1Router.Use(middleware.RouteTag("relay"))
+	aliVideoV1Router.Use(middleware.AliVideoRequestConvert(), middleware.TokenAuth())
+	{
+		aliVideoV1Router.POST("/services/aigc/video-generation/video-synthesis", middleware.TokenConcurrencyLimit(), middleware.Distribute(), controller.RelayTask)
+		aliVideoV1Router.GET("/tasks/:task_id", middleware.Distribute(), controller.RelayTaskFetch)
 	}
 }

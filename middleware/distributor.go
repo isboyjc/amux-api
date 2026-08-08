@@ -344,6 +344,39 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if _, ok := c.Get("relay_mode"); !ok {
 			c.Set("relay_mode", relayMode)
 		}
+	} else if strings.Contains(c.Request.URL.Path, "/api/v1/services/aigc/video-generation/video-synthesis") ||
+		strings.HasPrefix(c.Request.URL.Path, "/api/v1/tasks/") {
+		// DashScope official-compatible video routes.
+		relayMode := relayconstant.RelayModeUnknown
+		if c.Request.Method == http.MethodPost {
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			modelRequest.Model = req.Model
+			relayMode = relayconstant.RelayModeVideoSubmit
+		} else if c.Request.Method == http.MethodGet {
+			relayMode = relayconstant.RelayModeVideoFetchByID
+			shouldSelectChannel = false
+		}
+		c.Set("relay_mode", relayMode)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v2/video_generation") ||
+		strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation") {
+		// MiniMax v2 official API routes. 不设 relay_mode 的话会掉到下面的
+		// 通用分支，RelayTaskFetch 拿不到对应的响应构造器。
+		relayMode := relayconstant.RelayModeUnknown
+		if c.Request.Method == http.MethodPost {
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			modelRequest.Model = req.Model
+			relayMode = relayconstant.RelayModeVideoSubmit
+		} else if c.Request.Method == http.MethodGet {
+			relayMode = relayconstant.RelayModeVideoFetchByID
+			shouldSelectChannel = false
+		}
+		c.Set("relay_mode", relayMode)
 	} else if strings.Contains(c.Request.URL.Path, "/api/v3/contents/generations/tasks") {
 		// Doubao official API routes
 		relayMode := relayconstant.RelayModeUnknown

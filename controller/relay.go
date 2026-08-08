@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -497,7 +498,7 @@ func RelayNotFound(c *gin.Context) {
 func RelayTaskFetch(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+		respondTaskError(c, &dto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -512,7 +513,7 @@ func RelayTaskFetch(c *gin.Context) {
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+		respondTaskError(c, &dto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -627,6 +628,12 @@ func RelayTask(c *gin.Context) {
 		if result.Platform == constant.TaskPlatformAmuxSTT {
 			perCallBilling = false
 		}
+		// 视频模型同理：ModelPrice 只是哨兵基准价（UsePrice=true），真实报价
+		// 由价目表按参数算出，且参考素材时长在提交时只能按上限预估，必须允许
+		// 终态按上游返回的真实用量多退少补。
+		if _, ok := billing_setting.GetVideoPricing(relayInfo.OriginModelName); ok {
+			perCallBilling = false
+		}
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,
 			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
@@ -634,6 +641,11 @@ func RelayTask(c *gin.Context) {
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  perCallBilling,
+		}
+		if snapshot, ok := c.Get(constant.CtxKeyVideoUsageSnapshot); ok {
+			if usage, ok := snapshot.(*model.VideoUsageSnapshot); ok {
+				task.PrivateData.BillingContext.VideoUsage = usage
+			}
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData
@@ -654,6 +666,33 @@ func RelayTask(c *gin.Context) {
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
+	if c.GetBool("ali_video_official_format") {
+		code := taskErr.Code
+		message := taskErr.Message
+		requestID := c.GetString(common.RequestIdKey)
+		// RelayTaskSubmit 会在适配器处理前截获非 2xx 响应。这里识别 DashScope
+		// 的标准错误体，避免官方兼容端点退化成网关内部错误码。
+		if taskErr.Error != nil {
+			var upstreamErr struct {
+				Code      string `json:"code"`
+				Message   string `json:"message"`
+				RequestID string `json:"request_id"`
+			}
+			if err := common.UnmarshalJsonStr(taskErr.Error.Error(), &upstreamErr); err == nil && upstreamErr.Code != "" {
+				code = upstreamErr.Code
+				message = upstreamErr.Message
+				if upstreamErr.RequestID != "" {
+					requestID = upstreamErr.RequestID
+				}
+			}
+		}
+		c.JSON(taskErr.StatusCode, gin.H{
+			"code":       code,
+			"message":    message,
+			"request_id": requestID,
+		})
+		return
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}

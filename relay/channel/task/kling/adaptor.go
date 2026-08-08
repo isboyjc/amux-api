@@ -268,7 +268,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq, in
 		Prompt:         req.Prompt,
 		Image:          req.Image,
 		Mode:           taskcommon.DefaultString(req.Mode, "std"),
-		Duration:       fmt.Sprintf("%d", taskcommon.DefaultInt(req.Duration, 5)),
+		Duration:       fmt.Sprintf("%d", taskcommon.DefaultInt(req.GetDuration(), 5)),
 		AspectRatio:    a.getAspectRatio(req.Size),
 		ModelName:      info.UpstreamModelName,
 		Model:          info.UpstreamModelName,

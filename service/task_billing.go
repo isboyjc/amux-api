@@ -50,6 +50,11 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	// 视频计费明细：前端据此渲染分项计费过程。缺了它，视频模型的日志只会
+	// 显示「按次 $1 × 倍率」——那个 $1 是哨兵基准价，对用户没有意义。
+	if detail, exists := c.Get(constant.CtxKeyVideoBillingDetail); exists {
+		other["video_billing"] = detail
+	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,

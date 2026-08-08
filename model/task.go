@@ -42,26 +42,26 @@ const (
 )
 
 type Task struct {
-	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
-	CreatedAt  int64                 `json:"created_at" gorm:"index"`
-	UpdatedAt  int64                 `json:"updated_at"`
-	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
-	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
-	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
-	ChannelId  int                   `json:"channel_id" gorm:"index"`
+	ID               int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
+	CreatedAt        int64                 `json:"created_at" gorm:"index"`
+	UpdatedAt        int64                 `json:"updated_at"`
+	TaskID           string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	Platform         constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
+	UserId           int                   `json:"user_id" gorm:"index"`
+	Group            string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
+	ChannelId        int                   `json:"channel_id" gorm:"index"`
 	Quota            int                   `json:"quota"`
 	CompletionTokens int                   `json:"completion_tokens" gorm:"default:0"`
 	TotalTokens      int                   `json:"total_tokens" gorm:"default:0"`
-	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
-	Status     TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
-	FailReason string                `json:"fail_reason"`
-	SubmitTime int64                 `json:"submit_time" gorm:"index"`
-	StartTime  int64                 `json:"start_time" gorm:"index"`
-	FinishTime int64                 `json:"finish_time" gorm:"index"`
-	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
-	Properties Properties            `json:"properties" gorm:"type:json"`
-	Username   string                `json:"username,omitempty" gorm:"-"`
+	Action           string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
+	Status           TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
+	FailReason       string                `json:"fail_reason"`
+	SubmitTime       int64                 `json:"submit_time" gorm:"index"`
+	StartTime        int64                 `json:"start_time" gorm:"index"`
+	FinishTime       int64                 `json:"finish_time" gorm:"index"`
+	Progress         string                `json:"progress" gorm:"type:varchar(20);index"`
+	Properties       Properties            `json:"properties" gorm:"type:json"`
+	Username         string                `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
@@ -120,6 +120,18 @@ type TaskBillingContext struct {
 	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
 	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
 	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	// VideoUsage 是提交时的视频计费口径快照。终态结算要靠它判断输入素材
+	// 的归属——上游只给一个合并的 input_seconds，不知道原请求带的是参考
+	// 视频还是参考音频（后者免费），全算成视频会多收钱。
+	VideoUsage *VideoUsageSnapshot `json:"video_usage,omitempty"`
+}
+
+type VideoUsageSnapshot struct {
+	Resolution    string  `json:"resolution,omitempty"`
+	OutputSeconds float64 `json:"output_seconds,omitempty"`
+	ImageCount    int     `json:"image_count,omitempty"`
+	AudioSeconds  float64 `json:"audio_seconds,omitempty"`
+	VideoSeconds  float64 `json:"video_seconds,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -179,7 +191,8 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
-			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi ||
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeAli {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
 		}
 		if relayInfo.UpstreamModelName != "" {

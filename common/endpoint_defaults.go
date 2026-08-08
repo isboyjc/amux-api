@@ -25,6 +25,10 @@ var defaultEndpointInfoMap = map[constant.EndpointType]EndpointInfo{
 	constant.EndpointTypeJinaRerank:            {Path: "/v1/rerank", Method: "POST"},
 	constant.EndpointTypeImageGeneration:       {Path: "/v1/images/generations", Method: "POST"},
 	constant.EndpointTypeEmbeddings:            {Path: "/v1/embeddings", Method: "POST"},
+	// 视频端点此前缺省，导致模型广场只显示一个没有路径的 "openai-video"
+	// —— 前端对空 path 会连方法一起隐藏。这里补上站内统一视频协议的入口，
+	// 它对所有视频渠道都适用。
+	constant.EndpointTypeOpenAIVideo: {Path: "/v1/video/generations", Method: "POST"},
 }
 
 // GetDefaultEndpointInfo 返回指定端点类型的默认信息以及是否存在

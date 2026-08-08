@@ -130,6 +130,202 @@ var DefaultParamSchemas = map[string]string{
 	ModalityRerank: `{"type":"object","properties":{"top_n":{"type":"integer","title":"返回条数","minimum":1,"maximum":100,"default":10}}}`,
 }
 
+// DefaultModelParamSchemas 为无需管理员额外配置即可使用的模型提供精确参数
+// Schema。数据库中的 exact/rule param_schema 仍拥有更高优先级。
+var DefaultModelParamSchemas = map[string]string{
+	"happyhorse-1.1-t2v":    happyHorseVideoParamSchema,
+	"happyhorse-1.0-t2v":    happyHorseVideoParamSchema,
+	"wan2.7-i2v-2026-04-25": wan27VideoParamSchema,
+	"MiniMax-H3":            minimaxH3VideoParamSchema,
+}
+
+// minimaxH3VideoParamSchema 对应 MiniMax v2 视频协议。
+// 媒体槽的 x-content-role 与 relay/channel/task/hailuo/h3.go 的 role 常量一一
+// 对应：操练场按 role 把上传素材拍平成 metadata.content，适配器再按 role 还原。
+// https://platform.minimaxi.com/docs/api-reference/video-generation-v2-create
+const minimaxH3VideoParamSchema = `{
+  "type": "object",
+  "properties": {
+    "first_frame_image": {
+      "type": "string",
+      "format": "image",
+      "title": "首帧",
+      "x-content-role": "first_frame",
+      "x-max-mb": 30
+    },
+    "last_frame_image": {
+      "type": "string",
+      "format": "image",
+      "title": "尾帧",
+      "x-content-role": "last_frame",
+      "x-max-mb": 30
+    },
+    "reference_images": {
+      "type": "array",
+      "title": "参考图",
+      "description": "最多 9 张，用于人物/风格参考",
+      "maxItems": 9,
+      "items": {"type": "string", "format": "image"},
+      "x-content-role": "reference_image",
+      "x-max-mb-per-item": 30
+    },
+    "reference_videos": {
+      "type": "array",
+      "title": "参考视频",
+      "description": "最多 3 段，单段 2~15 秒，合计不超过 15 秒",
+      "maxItems": 3,
+      "items": {"type": "string", "format": "video"},
+      "x-content-role": "reference_video",
+      "x-max-mb-per-item": 50,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 15,
+      "x-max-total-duration-seconds": 15
+    },
+    "reference_audios": {
+      "type": "array",
+      "title": "参考音频",
+      "description": "最多 3 段，单段 2~15 秒，合计不超过 15 秒",
+      "maxItems": 3,
+      "items": {"type": "string", "format": "audio"},
+      "x-content-role": "reference_audio",
+      "x-max-mb-per-item": 15,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 15,
+      "x-max-total-duration-seconds": 15
+    },
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["768P", "2K"],
+      "default": "2K"
+    },
+    "aspect_ratio": {
+      "type": "string",
+      "title": "宽高比",
+      "enum": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+      "default": "16:9"
+    },
+    "duration": {
+      "type": "integer",
+      "title": "时长（秒）",
+      "minimum": 4,
+      "maximum": 15,
+      "default": 6
+    },
+    "aigc_watermark": {
+      "type": "boolean",
+      "title": "添加 AIGC 水印",
+      "default": false
+    }
+  }
+}`
+
+const happyHorseVideoParamSchema = `{
+  "type": "object",
+  "properties": {
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["480P", "720P", "1080P"],
+      "default": "1080P"
+    },
+    "ratio": {
+      "type": "string",
+      "title": "宽高比",
+      "enum": ["16:9", "9:16", "1:1", "4:3", "3:4", "4:5", "5:4", "9:21", "21:9"],
+      "default": "16:9"
+    },
+    "duration": {
+      "type": "integer",
+      "title": "时长（秒）",
+      "minimum": 3,
+      "maximum": 15,
+      "default": 5
+    },
+    "watermark": {
+      "type": "boolean",
+      "title": "添加 Happy Horse 水印",
+      "default": true
+    },
+    "seed": {
+      "type": "integer",
+      "title": "随机种子",
+      "minimum": 0,
+      "maximum": 2147483647
+    }
+  }
+}`
+
+const wan27VideoParamSchema = `{
+  "type": "object",
+  "properties": {
+    "reference_images": {
+      "type": "array",
+      "title": "首帧 / 尾帧",
+      "description": "一张图作为首帧，两张图依次作为首帧和尾帧；配合首段视频时一张图作为尾帧",
+      "maxItems": 2,
+      "items": {"type": "string", "format": "image"},
+      "x-content-role": "reference_image",
+      "x-max-mb-per-item": 20
+    },
+    "first_clip": {
+      "type": "array",
+      "title": "首段视频",
+      "maxItems": 1,
+      "items": {"type": "string", "format": "video"},
+      "x-content-role": "reference_video",
+      "x-max-mb-per-item": 100,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 10,
+      "x-max-total-duration-seconds": 10
+    },
+    "driving_audio": {
+      "type": "array",
+      "title": "驱动音频",
+      "maxItems": 1,
+      "items": {"type": "string", "format": "audio"},
+      "x-content-role": "reference_audio",
+      "x-max-mb-per-item": 15,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 30,
+      "x-max-total-duration-seconds": 30
+    },
+    "negative_prompt": {
+      "type": "string",
+      "title": "反向提示词"
+    },
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["720P", "1080P"],
+      "default": "1080P"
+    },
+    "duration": {
+      "type": "integer",
+      "title": "总时长（秒）",
+      "minimum": 2,
+      "maximum": 15,
+      "default": 5
+    },
+    "prompt_extend": {
+      "type": "boolean",
+      "title": "智能改写 Prompt",
+      "default": true
+    },
+    "watermark": {
+      "type": "boolean",
+      "title": "添加 AI 生成水印",
+      "default": false
+    },
+    "seed": {
+      "type": "integer",
+      "title": "随机种子",
+      "minimum": 0,
+      "maximum": 2147483647
+    }
+  }
+}`
+
 // GetDefaultParamSchema 返回某个 modality 的默认 JSON Schema 字符串，未知
 // modality 返回空对象。
 func GetDefaultParamSchema(modality string) string {
@@ -137,4 +333,8 @@ func GetDefaultParamSchema(modality string) string {
 		return s
 	}
 	return `{"type":"object","properties":{}}`
+}
+
+func GetDefaultModelParamSchema(modelName string) string {
+	return DefaultModelParamSchemas[modelName]
 }

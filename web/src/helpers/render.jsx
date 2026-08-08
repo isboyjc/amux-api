@@ -1781,6 +1781,80 @@ function renderPriceSimpleCore({
   return result;
 }
 
+export function renderVideoBillingProcess(other) {
+  const { symbol, rate } = getCurrencyConfig();
+  const detail = other?.video_billing || {};
+  const { ratio: groupRatio, label: ratioLabel } = getEffectiveRatio(
+    other?.group_ratio,
+    other?.user_group_ratio,
+  );
+
+  const num = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const money = (usd) => formatBillingDisplayPrice(num(usd), rate);
+
+  const lines = [];
+
+  // 分项：只列真正产生费用的项，避免一堆 $0.000000 干扰阅读
+  if (num(detail.output) > 0) {
+    lines.push(
+      buildBillingText(
+        '输出 {{resolution}} {{seconds}} 秒：{{symbol}}{{price}}',
+        {
+          resolution: detail.resolution || '-',
+          seconds: num(detail.output_seconds),
+          symbol,
+          price: money(detail.output),
+        },
+      ),
+    );
+  }
+  if (num(detail.image) > 0) {
+    lines.push(
+      buildBillingText('输入图片 {{n}} 张：{{symbol}}{{price}}', {
+        n: num(detail.image_count),
+        symbol,
+        price: money(detail.image),
+      }),
+    );
+  }
+  if (num(detail.video) > 0) {
+    lines.push(
+      buildBillingText('输入视频 {{seconds}} 秒：{{symbol}}{{price}}', {
+        seconds: num(detail.video_seconds),
+        symbol,
+        price: money(detail.video),
+      }),
+    );
+  }
+  if (num(detail.audio) > 0) {
+    lines.push(
+      buildBillingText('输入音频 {{seconds}} 秒：{{symbol}}{{price}}', {
+        seconds: num(detail.audio_seconds),
+        symbol,
+        price: money(detail.audio),
+      }),
+    );
+  }
+
+  lines.push(
+    buildBillingText(
+      '合计 {{symbol}}{{subtotal}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
+      {
+        symbol,
+        subtotal: money(detail.total),
+        ratioType: ratioLabel,
+        ratio: groupRatio,
+        total: money(num(detail.total) * groupRatio),
+      },
+    ),
+  );
+
+  return renderBillingArticle(lines);
+}
+
 export function renderTaskBillingProcess(other, content) {
   if (other?.task_id != null) {
     return renderBillingArticle(

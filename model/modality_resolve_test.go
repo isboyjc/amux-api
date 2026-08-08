@@ -308,3 +308,9 @@ func TestMatchModalityByPatterns_Priority(t *testing.T) {
 		t.Errorf("image priority over multimodal failed, got %q", got)
 	}
 }
+
+func TestResolveModalityForName_HappyHorseVideo(t *testing.T) {
+	if got := ResolveModalityForName("happyhorse-1.1-t2v", nil, nil); got != constant.ModalityVideo {
+		t.Fatalf("HappyHorse modality=%q, want=%q", got, constant.ModalityVideo)
+	}
+}
