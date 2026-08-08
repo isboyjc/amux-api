@@ -136,7 +136,89 @@ var DefaultModelParamSchemas = map[string]string{
 	"happyhorse-1.1-t2v":    happyHorseVideoParamSchema,
 	"happyhorse-1.0-t2v":    happyHorseVideoParamSchema,
 	"wan2.7-i2v-2026-04-25": wan27VideoParamSchema,
+	"MiniMax-H3":            minimaxH3VideoParamSchema,
 }
+
+// minimaxH3VideoParamSchema 对应 MiniMax v2 视频协议。
+// 媒体槽的 x-content-role 与 relay/channel/task/hailuo/h3.go 的 role 常量一一
+// 对应：操练场按 role 把上传素材拍平成 metadata.content，适配器再按 role 还原。
+// https://platform.minimaxi.com/docs/api-reference/video-generation-v2-create
+const minimaxH3VideoParamSchema = `{
+  "type": "object",
+  "properties": {
+    "first_frame_image": {
+      "type": "string",
+      "format": "image",
+      "title": "首帧",
+      "x-content-role": "first_frame",
+      "x-max-mb": 30
+    },
+    "last_frame_image": {
+      "type": "string",
+      "format": "image",
+      "title": "尾帧",
+      "x-content-role": "last_frame",
+      "x-max-mb": 30
+    },
+    "reference_images": {
+      "type": "array",
+      "title": "参考图",
+      "description": "最多 9 张，用于人物/风格参考",
+      "maxItems": 9,
+      "items": {"type": "string", "format": "image"},
+      "x-content-role": "reference_image",
+      "x-max-mb-per-item": 30
+    },
+    "reference_videos": {
+      "type": "array",
+      "title": "参考视频",
+      "description": "最多 3 段，单段 2~15 秒，合计不超过 15 秒",
+      "maxItems": 3,
+      "items": {"type": "string", "format": "video"},
+      "x-content-role": "reference_video",
+      "x-max-mb-per-item": 50,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 15,
+      "x-max-total-duration-seconds": 15
+    },
+    "reference_audios": {
+      "type": "array",
+      "title": "参考音频",
+      "description": "最多 3 段，单段 2~15 秒，合计不超过 15 秒",
+      "maxItems": 3,
+      "items": {"type": "string", "format": "audio"},
+      "x-content-role": "reference_audio",
+      "x-max-mb-per-item": 15,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 15,
+      "x-max-total-duration-seconds": 15
+    },
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["768P", "2K"],
+      "default": "2K"
+    },
+    "aspect_ratio": {
+      "type": "string",
+      "title": "宽高比",
+      "enum": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+      "default": "16:9"
+    },
+    "duration": {
+      "type": "integer",
+      "title": "时长（秒）",
+      "minimum": 4,
+      "maximum": 15,
+      "default": 6
+    },
+    "aigc_watermark": {
+      "type": "boolean",
+      "title": "添加 AIGC 水印",
+      "default": false
+    }
+  }
+}`
 
 const happyHorseVideoParamSchema = `{
   "type": "object",

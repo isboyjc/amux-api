@@ -1,0 +1,497 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "MiniMax-H3 视频生成 · 原生端点",
+    "version": "1.0.0",
+    "description": "与 MiniMax 官方视频生成 V2 协议保持一致的端点。已经按官方文档写好的客户端，只需把 base URL 指向本网关、把 API Key 换成网关令牌即可，请求体与响应体无需改动。\n\n如果你是新接入、且可能同时用到其它厂商的视频模型，建议改用通用端点（minimax-h3-unified.json）——同一套请求体换个 `model` 就能切模型。\n\n## 与官方的差异\n\n| 项 | 说明 |\n| --- | --- |\n| `task_id` | 返回的是**网关任务 ID**，不是上游 ID。查询也必须用它。 |\n| `callback_url` | **不透传**。网关自行轮询上游，请改用轮询查询接口。 |\n| 查询响应 `task.content.url` | 返回网关侧的结果地址，不暴露上游直链。 |\n| 查询响应 `usage` | 仅在上游返回时透传，字段结构以上游为准。 |\n\n## 调用流程\n\n1. `POST /v2/video_generation` 提交任务，拿到 `task_id`\n2. 轮询 `GET /v2/query/video_generation/{task_id}` 直到 `task.status` 为 `succeeded` / `failed` / `cancelled`\n3. 成功后从 `task.content.url` 取视频地址\n\n建议轮询间隔 5~10 秒。\n\n## 计费\n\n按「输出分辨率 × 输出秒数」计费，输入素材单独计价：\n\n| 项目 | 2K | 768P |\n| --- | --- | --- |\n| 输出视频 | $0.13/秒 | $0.08/秒 |\n| 输入视频（按其自身时长） | $0.13/秒 | $0.08/秒 |\n| 输入图片 | $0.04/张 | $0.04/张 |\n| 输入音频 | 免费 | 免费 |\n\n实际扣费 = 上表算出的金额 × 你所在分组的倍率。具体单价以模型广场展示为准。\n\n**参考视频计费说明**：请求中只能拿到素材 URL、无法预知其真实时长，因此提交时按官方上限 15 秒预扣。"
+  },
+  "servers": [
+    {
+      "url": "https://your-gateway.example.com",
+      "description": "将 URL 替换为你的网关地址"
+    }
+  ],
+  "security": [{ "BearerAuth": [] }],
+  "tags": [
+    { "name": "视频生成", "description": "MiniMax V2 原生协议" }
+  ],
+  "paths": {
+    "/v2/video_generation": {
+      "post": {
+        "tags": ["视频生成"],
+        "summary": "提交视频生成任务",
+        "description": "所有输入都放在 `content` 数组里，通过 `type` 与 `role` 区分用途。\n\n`content` 中**必须包含一项 `type: \"text\"`**——上游不接受空提示词，即使已提供首帧或参考素材。",
+        "operationId": "createVideoGenerationV2",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VideoGenerationRequest" },
+              "examples": {
+                "text-to-video": {
+                  "summary": "文生视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [
+                      { "type": "text", "text": "一个男孩在海边打篮球，夕阳下的剪影" }
+                    ],
+                    "resolution": "2K",
+                    "duration": 6,
+                    "ratio": "16:9"
+                  }
+                },
+                "image-to-video": {
+                  "summary": "图生视频（首帧）",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [
+                      { "type": "text", "text": "镜头缓慢推近，人物回头微笑" },
+                      {
+                        "type": "image_url",
+                        "image_url": { "url": "https://example.com/first.jpg" },
+                        "role": "first_frame"
+                      }
+                    ],
+                    "resolution": "2K",
+                    "duration": 6
+                  }
+                },
+                "first-last-frame": {
+                  "summary": "首尾帧生视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [
+                      { "type": "text", "text": "从白天平滑过渡到夜晚" },
+                      {
+                        "type": "image_url",
+                        "image_url": { "url": "https://example.com/first.jpg" },
+                        "role": "first_frame"
+                      },
+                      {
+                        "type": "image_url",
+                        "image_url": { "url": "https://example.com/last.jpg" },
+                        "role": "last_frame"
+                      }
+                    ],
+                    "resolution": "2K",
+                    "duration": 10
+                  }
+                },
+                "reference-to-video": {
+                  "summary": "多模态参考生视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "参考图中的人物，按参考视频的运镜方式运动，情绪与参考音频一致"
+                      },
+                      {
+                        "type": "image_url",
+                        "image_url": { "url": "https://example.com/character.jpg" },
+                        "role": "reference_image"
+                      },
+                      {
+                        "type": "video_url",
+                        "video_url": { "url": "https://example.com/motion.mp4" },
+                        "role": "reference_video"
+                      },
+                      {
+                        "type": "audio_url",
+                        "audio_url": { "url": "https://example.com/mood.mp3" },
+                        "role": "reference_audio"
+                      }
+                    ],
+                    "resolution": "2K",
+                    "duration": 10,
+                    "ratio": "adaptive"
+                  }
+                },
+                "watermark": {
+                  "summary": "开启 AIGC 水印",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [{ "type": "text", "text": "城市夜景延时摄影" }],
+                    "resolution": "768P",
+                    "duration": 6,
+                    "aigc_watermark": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已提交",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CreateResponse" },
+                "example": { "task_id": "task_9f2c1b7e4a6d8035" }
+              }
+            }
+          },
+          "400": {
+            "description": "参数错误",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "examples": {
+                  "invalid-duration": {
+                    "summary": "时长越界",
+                    "value": {
+                      "code": "invalid_request",
+                      "message": "duration must be between 4 and 15 seconds",
+                      "data": null
+                    }
+                  },
+                  "invalid-content-type": {
+                    "summary": "Content-Type 不是 application/json",
+                    "value": {
+                      "error": {
+                        "code": "bad_request_error",
+                        "message": "Content-Type must be application/json"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "鉴权失败",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "429": {
+            "description": "触发限流或上游负载饱和",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "500": {
+            "description": "服务端错误",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/query/video_generation/{task_id}": {
+      "get": {
+        "tags": ["视频生成"],
+        "summary": "查询任务状态与结果",
+        "description": "`task.status` 到达 `succeeded` 时 `task.content.url` 为视频地址；`failed` / `cancelled` 时 `task.error` 说明原因。\n\n建议轮询间隔 5~10 秒。",
+        "operationId": "queryVideoGenerationV2",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "description": "提交接口返回的 `task_id`（网关任务 ID）。",
+            "schema": { "type": "string" },
+            "example": "task_9f2c1b7e4a6d8035"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "查询成功",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/QueryResponse" },
+                "examples": {
+                  "queued": {
+                    "summary": "排队中",
+                    "value": {
+                      "task": {
+                        "id": "task_9f2c1b7e4a6d8035",
+                        "model": "MiniMax-H3",
+                        "status": "queued",
+                        "modality": "video",
+                        "task_type": "generation",
+                        "created_at": 1754630400,
+                        "updated_at": 1754630400
+                      }
+                    }
+                  },
+                  "running": {
+                    "summary": "生成中",
+                    "value": {
+                      "task": {
+                        "id": "task_9f2c1b7e4a6d8035",
+                        "model": "MiniMax-H3",
+                        "status": "running",
+                        "modality": "video",
+                        "task_type": "generation",
+                        "resolution": "2K",
+                        "duration": 6,
+                        "ratio": "16:9",
+                        "created_at": 1754630400,
+                        "updated_at": 1754630460
+                      }
+                    }
+                  },
+                  "succeeded": {
+                    "summary": "生成成功",
+                    "value": {
+                      "task": {
+                        "id": "task_9f2c1b7e4a6d8035",
+                        "model": "MiniMax-H3",
+                        "status": "succeeded",
+                        "modality": "video",
+                        "task_type": "generation",
+                        "resolution": "2K",
+                        "duration": 6,
+                        "ratio": "16:9",
+                        "content": {
+                          "url": "https://cdn.example.com/videos/9f2c1b7e.mp4"
+                        },
+                        "created_at": 1754630400,
+                        "updated_at": 1754630512
+                      }
+                    }
+                  },
+                  "failed": {
+                    "summary": "生成失败",
+                    "value": {
+                      "task": {
+                        "id": "task_9f2c1b7e4a6d8035",
+                        "model": "MiniMax-H3",
+                        "status": "failed",
+                        "modality": "video",
+                        "task_type": "generation",
+                        "error": {
+                          "code": "task_failed",
+                          "message": "content moderation blocked"
+                        },
+                        "created_at": 1754630400,
+                        "updated_at": 1754630460
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "任务不存在",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" },
+                "example": {
+                  "code": "task_not_exist",
+                  "message": "task_not_exist",
+                  "data": null
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "鉴权失败",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "在 `Authorization: Bearer <你的 API Key>` 头中传入令牌。"
+      }
+    },
+    "schemas": {
+      "VideoGenerationRequest": {
+        "type": "object",
+        "required": ["model", "content"],
+        "properties": {
+          "model": {
+            "type": "string",
+            "enum": ["MiniMax-H3"],
+            "example": "MiniMax-H3"
+          },
+          "content": {
+            "type": "array",
+            "description": "多模态输入数组。**必须包含一项 `type: \"text\"`**。\n\n各类素材的数量上限：首帧 ≤ 1、尾帧 ≤ 1、参考图 ≤ 9、参考视频 ≤ 3、参考音频 ≤ 3。",
+            "minItems": 1,
+            "items": { "$ref": "#/components/schemas/ContentItem" }
+          },
+          "resolution": {
+            "type": "string",
+            "description": "输出分辨率。省略时默认 `2K`。",
+            "enum": ["768P", "2K"],
+            "default": "2K"
+          },
+          "duration": {
+            "type": "integer",
+            "description": "输出视频时长（秒）。省略时默认 6。",
+            "minimum": 4,
+            "maximum": 15,
+            "default": 6
+          },
+          "ratio": {
+            "type": "string",
+            "description": "画面宽高比。`adaptive` 表示由模型根据输入素材自适应。",
+            "enum": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"]
+          },
+          "aigc_watermark": {
+            "type": "boolean",
+            "description": "是否在输出视频上添加 AIGC 标识水印。",
+            "default": false
+          },
+          "callback_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "**本网关不透传此字段。** 网关自行轮询上游以完成计费结算，传入会被忽略；请使用轮询查询接口获取结果。"
+          }
+        }
+      },
+      "ContentItem": {
+        "type": "object",
+        "required": ["type"],
+        "description": "一项多模态输入。`type` 决定用哪个 URL 字段，`role` 决定素材用途。",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["text", "image_url", "video_url", "audio_url"]
+          },
+          "text": {
+            "type": "string",
+            "description": "提示词，`type` 为 `text` 时必填。多项 `text` 会按顺序拼接。",
+            "maxLength": 7000
+          },
+          "image_url": {
+            "$ref": "#/components/schemas/URLRef",
+            "description": "图片。JPG/JPEG/PNG/WEBP/HEIC/HEIF，≤ 30 MB，边长 256~5760 px，宽高比 0.4~2.5。"
+          },
+          "video_url": {
+            "$ref": "#/components/schemas/URLRef",
+            "description": "视频。MP4/MOV，H.264 或 H.265，≤ 50 MB，单段 2~15 秒（合计 ≤ 15 秒），边长 256~5760 px，宽高比 0.4~2.5，帧率 23.976~60。"
+          },
+          "audio_url": {
+            "$ref": "#/components/schemas/URLRef",
+            "description": "音频。WAV/MP3，≤ 15 MB，单段 2~15 秒（合计 ≤ 15 秒）。"
+          },
+          "role": {
+            "type": "string",
+            "description": "素材角色。省略时图片按 `reference_image` 处理。",
+            "enum": [
+              "first_frame",
+              "last_frame",
+              "reference_image",
+              "reference_video",
+              "reference_audio"
+            ]
+          }
+        }
+      },
+      "URLRef": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" }
+        }
+      },
+      "CreateResponse": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "**网关任务 ID**，查询时必须使用它。",
+            "example": "task_9f2c1b7e4a6d8035"
+          }
+        }
+      },
+      "QueryResponse": {
+        "type": "object",
+        "properties": {
+          "task": { "$ref": "#/components/schemas/Task" }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "网关任务 ID，与提交时返回的 `task_id` 一致。"
+          },
+          "model": { "type": "string", "example": "MiniMax-H3" },
+          "status": {
+            "type": "string",
+            "description": "任务状态。`succeeded` / `failed` / `cancelled` 为终态，其余需继续轮询。",
+            "enum": ["queued", "running", "succeeded", "failed", "cancelled"]
+          },
+          "modality": { "type": "string", "enum": ["video"] },
+          "task_type": { "type": "string", "enum": ["generation"] },
+          "resolution": { "type": "string", "example": "2K" },
+          "duration": { "type": "integer", "example": 6 },
+          "ratio": { "type": "string", "example": "16:9" },
+          "content": {
+            "$ref": "#/components/schemas/TaskContent",
+            "description": "仅 `status` 为 `succeeded` 时返回。"
+          },
+          "usage": {
+            "type": "object",
+            "description": "用量数据，仅在上游返回时透传，字段结构以上游为准。",
+            "additionalProperties": true
+          },
+          "error": {
+            "$ref": "#/components/schemas/Error",
+            "description": "仅 `status` 为 `failed` / `cancelled` 时返回。"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 时间戳（秒）。"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 时间戳（秒）。"
+          }
+        }
+      },
+      "TaskContent": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "视频地址（网关侧地址，不暴露上游直链）。"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "code": { "type": "string", "example": "task_failed" },
+          "message": { "type": "string" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "网关错误响应。请求在到达路由前被拦截时（如 Content-Type 不合法）返回 `error` 对象形式；进入业务流程后返回 `code`/`message` 形式。两种都可能出现，客户端建议同时兼容。",
+        "properties": {
+          "code": { "type": "string", "example": "invalid_request" },
+          "message": { "type": "string" },
+          "data": { "nullable": true },
+          "error": { "$ref": "#/components/schemas/Error" }
+        }
+      }
+    }
+  }
+}

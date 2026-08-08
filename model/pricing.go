@@ -40,7 +40,10 @@ type Pricing struct {
 	OutputModalities []string `json:"output_modalities"`
 	BillingMode      string   `json:"billing_mode,omitempty"`
 	BillingExpr      string   `json:"billing_expr,omitempty"`
-	PricingVersion   string   `json:"pricing_version,omitempty"`
+	// VideoPricing 是视频模型的分项价目表（分辨率/秒、输入图片、音视频）。
+	// 仅视频模型有值，前端据此渲染定价明细。
+	VideoPricing   *billing_setting.VideoPricing `json:"video_pricing,omitempty"`
+	PricingVersion string                        `json:"pricing_version,omitempty"`
 }
 
 type PricingVendor struct {
@@ -90,7 +93,6 @@ func InvalidatePricingCache() {
 	vendorsList = nil
 	lastGetPricingTime = time.Time{}
 }
-
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
@@ -364,6 +366,17 @@ func updatePricing() {
 			}
 		} else if billingMode == billing_setting.BillingModePerHour {
 			pricing.BillingMode = billingMode
+		}
+		// 视频模型：真实报价由分项价目表算出，ModelPrice 只是哨兵基准价。
+		// 这里要覆盖上面按 ModelPrice/ModelRatio 推断出的计费类型——否则管理员
+		// 没在 ModelPrice 里填条目时，视频模型会被显示成倍率为 0 的按量计费。
+		if videoPricing, ok := billing_setting.GetVideoPricing(model); ok {
+			pricing.VideoPricing = &videoPricing
+			pricing.BillingMode = billing_setting.BillingModeVideo
+			pricing.QuotaType = 1
+			pricing.ModelPrice = billing_setting.VideoBasePrice
+			pricing.ModelRatio = 0
+			pricing.CompletionRatio = 0
 		}
 		pricingMap = append(pricingMap, pricing)
 	}

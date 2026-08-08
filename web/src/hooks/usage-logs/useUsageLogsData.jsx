@@ -38,6 +38,7 @@ import {
   renderClaudeModelPrice,
   renderModelPrice,
   renderTaskBillingProcess,
+  renderVideoBillingProcess,
   renderTieredLogContent,
   renderTieredModelPrice,
 } from '../../helpers';
@@ -518,7 +519,11 @@ export const useLogsData = () => {
             completion_tokens: logs[i].completion_tokens,
             displayMode: billingDisplayMode,
           };
-          if (isTaskLog && other?.model_price === -1) {
+          if (other?.video_billing) {
+            // 视频模型的 model_price 是哨兵基准价（$1），走通用按次渲染
+            // 只会显示「按次 $1 × 倍率」；改用价目表算出的分项明细。
+            content = renderVideoBillingProcess(other);
+          } else if (isTaskLog && other?.model_price === -1) {
             content = renderTaskBillingProcess(other, logs[i].content);
           } else if (other?.ws || other?.audio) {
             content = renderAudioModelPrice(logOpts);

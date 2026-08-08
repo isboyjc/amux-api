@@ -366,6 +366,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
+		// 同一渠道下不同模型可能走不同版本的查询端点（如 MiniMax 的
+		// v1/v2），适配器需要模型名才能选对 URL。用不到的适配器会忽略它。
+		"model": task.Properties.UpstreamModelName,
 	}, proxy)
 	if err != nil {
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)

@@ -100,3 +100,9 @@ type DoubaoV3VideoConverter interface {
 type AliVideoConverter interface {
 	ConvertToAliVideo(originTask *model.Task) ([]byte, error)
 }
+
+// MinimaxV2VideoConverter 将网关任务转换为 MiniMax v2 协议的任务查询响应
+// 格式，供 /v2/query/video_generation 官方兼容端点使用。
+type MinimaxV2VideoConverter interface {
+	ConvertToMinimaxV2(originTask *model.Task) ([]byte, error)
+}

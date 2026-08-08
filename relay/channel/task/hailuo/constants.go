@@ -5,6 +5,9 @@ const (
 )
 
 var ModelList = []string{
+	// H3 走 v2 协议（content[] 多模态数组），端点与下面这些 v1 模型不同，
+	// 详见 h3.go
+	"MiniMax-H3",
 	"MiniMax-Hailuo-2.3",
 	"MiniMax-Hailuo-2.3-Fast",
 	"MiniMax-Hailuo-02",

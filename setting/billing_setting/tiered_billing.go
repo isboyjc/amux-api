@@ -12,6 +12,7 @@ const (
 	BillingModeRatio      = "ratio"
 	BillingModeTieredExpr = "tiered_expr"
 	BillingModePerHour    = "per_hour"
+	BillingModeVideo      = "video"
 	BillingModeField      = "billing_mode"
 	BillingExprField      = "billing_expr"
 )
@@ -39,6 +40,11 @@ func init() {
 func GetBillingMode(model string) string {
 	if mode, ok := billingSetting.BillingMode[model]; ok {
 		return mode
+	}
+	// 有视频价目表就等于是视频计费——价目表本身是唯一真相源，不需要管理员
+	// 再单独把模式设一遍。否则内置的 MiniMax-H3 在管理端会显示成"未设置价格"。
+	if _, ok := GetVideoPricing(model); ok {
+		return BillingModeVideo
 	}
 	return BillingModeRatio
 }

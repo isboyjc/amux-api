@@ -45,6 +45,23 @@ func RegisterImageModelOverride(fn func(string) bool) {
 	imageModelOverrideFn = fn
 }
 
+// VideoGenerationModels 是按名字即可判定为视频生成的模型（小写子串匹配）。
+// 用于给这些模型分配视频端点，进而让定价页/操练场把它们识别成视频模态。
+var VideoGenerationModels = []string{
+	"minimax-h3",
+}
+
+// IsVideoGenerationModel 判断模型是否为视频生成模型。
+func IsVideoGenerationModel(modelName string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelName))
+	for _, m := range VideoGenerationModels {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsImageGenerationModel(modelName string) bool {
 	lower := strings.ToLower(modelName)
 	for _, m := range ImageGenerationModels {

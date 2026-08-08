@@ -41,6 +41,14 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 		} else {
 			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAI}
 		}
+	case constant.ChannelTypeMiniMax:
+		// MiniMax 渠道同时有文本和视频模型，按模型名分流。走不到这条分支的话
+		// 视频模型会被当成文本模型，操练场也就不会渲染视频工作区。
+		if IsVideoGenerationModel(modelName) {
+			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
+		} else {
+			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAI}
+		}
 	default:
 		if IsOpenAIResponseOnlyModel(modelName) {
 			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIResponse}
