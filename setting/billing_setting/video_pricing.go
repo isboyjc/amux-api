@@ -233,6 +233,60 @@ func (p VideoPricing) ResolveResolution(resolution string) (string, bool) {
 	return "", false
 }
 
+// ChargesInputImage 价目表是否对输入图片实际计费。
+// 未配置该项、或单价为 0，都视为免费。
+func (p VideoPricing) ChargesInputImage() bool {
+	img := p.Input.Image
+	return img != nil && img.PerImage > 0
+}
+
+// ChargesInputAudio 价目表是否对输入音频实际计费。
+func (p VideoPricing) ChargesInputAudio() bool {
+	audio := p.Input.Audio
+	return audio != nil && audio.PerSecond > 0
+}
+
+// ChargesInputVideo 价目表是否对该输出分辨率下的输入视频实际计费。
+func (p VideoPricing) ChargesInputVideo(resolution string) bool {
+	video := p.Input.Video
+	if video == nil {
+		return false
+	}
+	key, ok := p.ResolveResolution(resolution)
+	if !ok {
+		return false
+	}
+	return video.PerSecondByOutputResolution[key] > 0
+}
+
+// AttributeInputSeconds 把上游返回的「输入素材合并秒数」归属到具体维度。
+//
+// 上游只给一个合计值，不拆分视频/音频。归属规则由两件事共同决定：
+//
+//  1. 价目表：该维度是否真的计费（未配置或单价为 0 都算免费）
+//  2. 原请求：该维度是否确实有素材（hasVideo / hasAudio）
+//
+// 只有同时满足两者的维度才是候选。恰好一个候选时，合计值全部归它；
+// 零个或多个候选时无法从合计值里拆分，返回 false 让调用方保持提交时的
+// 口径——宁可不动，也不要把免费维度算成收费维度、或把没传的素材算上。
+//
+// 返回 (视频秒数, 音频秒数, 是否可归属)。
+func (p VideoPricing) AttributeInputSeconds(
+	resolution string, inputSeconds float64, hasVideo, hasAudio bool,
+) (float64, float64, bool) {
+	videoCandidate := hasVideo && p.ChargesInputVideo(resolution)
+	audioCandidate := hasAudio && p.ChargesInputAudio()
+
+	switch {
+	case videoCandidate && !audioCandidate:
+		return inputSeconds, 0, true
+	case audioCandidate && !videoCandidate:
+		return 0, inputSeconds, true
+	default:
+		return 0, 0, false
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Validation (called before save)
 // ---------------------------------------------------------------------------

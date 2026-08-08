@@ -376,3 +376,101 @@ func TestVideoCostRatioKey_MatchesGuard(t *testing.T) {
 			"确认前端 other.video_billing 与 relay_task 的守卫都已跟随", VideoCostRatioKey)
 	}
 }
+
+// TestAttributeInputSeconds 上游只给一个合并的输入素材秒数，归属到哪个维度
+// 必须由价目表 + 原请求共同决定，不能在代码里写死「算作视频」。
+func TestAttributeInputSeconds(t *testing.T) {
+	// 只对视频计费（H3 的默认配置：音频免费）
+	videoOnly := VideoPricing{
+		DefaultResolution: "2K",
+		Output:            map[string]float64{"2K": 0.13},
+		Input: VideoInputPricing{
+			Audio: &VideoSecondsPricing{PerSecond: 0},
+			Video: &VideoInputVideoPricing{
+				PerSecondByOutputResolution: map[string]float64{"2K": 0.13},
+			},
+		},
+	}
+	// 只对音频计费
+	audioOnly := VideoPricing{
+		DefaultResolution: "2K",
+		Output:            map[string]float64{"2K": 0.13},
+		Input:             VideoInputPricing{Audio: &VideoSecondsPricing{PerSecond: 0.02}},
+	}
+	// 两者都计费
+	both := VideoPricing{
+		DefaultResolution: "2K",
+		Output:            map[string]float64{"2K": 0.13},
+		Input: VideoInputPricing{
+			Audio: &VideoSecondsPricing{PerSecond: 0.02},
+			Video: &VideoInputVideoPricing{
+				PerSecondByOutputResolution: map[string]float64{"2K": 0.13},
+			},
+		},
+	}
+
+	cases := []struct {
+		name                 string
+		pricing              VideoPricing
+		hasVideo, hasAudio   bool
+		wantVideo, wantAudio float64
+		wantOK               bool
+	}{
+		{"只有视频计费且请求带了视频", videoOnly, true, false, 9, 0, true},
+		{"视频计费 + 请求同时带音频，音频免费不参与归属", videoOnly, true, true, 9, 0, true},
+		{"请求只带音频而音频免费，不能算成视频", videoOnly, false, true, 0, 0, false},
+		{"只有音频计费且请求带了音频", audioOnly, false, true, 0, 9, true},
+		{"音频计费但请求带的是视频，视频未配价", audioOnly, true, false, 0, 0, false},
+		{"两者都计费且都带了，拆不出来", both, true, true, 0, 0, false},
+		{"两者都计费但只带了视频", both, true, false, 9, 0, true},
+		{"两者都计费但只带了音频", both, false, true, 0, 9, true},
+		{"什么都没带", videoOnly, false, false, 0, 0, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gotVideo, gotAudio, gotOK := tc.pricing.AttributeInputSeconds("2K", 9, tc.hasVideo, tc.hasAudio)
+			if gotOK != tc.wantOK {
+				t.Fatalf("attributed = %v, want %v", gotOK, tc.wantOK)
+			}
+			assertMoney(t, "video seconds", gotVideo, tc.wantVideo)
+			assertMoney(t, "audio seconds", gotAudio, tc.wantAudio)
+		})
+	}
+}
+
+// TestChargesInput_ZeroPriceIsFree 单价为 0 或未配置都必须视为免费，
+// 否则免费维度会被当成收费维度参与归属。
+func TestChargesInput_ZeroPriceIsFree(t *testing.T) {
+	zero := VideoPricing{
+		DefaultResolution: "2K",
+		Output:            map[string]float64{"2K": 0.13},
+		Input: VideoInputPricing{
+			Image: &VideoImagePricing{PerImage: 0},
+			Audio: &VideoSecondsPricing{PerSecond: 0},
+			Video: &VideoInputVideoPricing{
+				PerSecondByOutputResolution: map[string]float64{"2K": 0},
+			},
+		},
+	}
+	if zero.ChargesInputImage() || zero.ChargesInputAudio() || zero.ChargesInputVideo("2K") {
+		t.Error("单价为 0 的维度应视为免费")
+	}
+
+	unset := VideoPricing{DefaultResolution: "2K", Output: map[string]float64{"2K": 0.13}}
+	if unset.ChargesInputImage() || unset.ChargesInputAudio() || unset.ChargesInputVideo("2K") {
+		t.Error("未配置的维度应视为免费")
+	}
+
+	// 分辨率落不到档位时不能误判为计费
+	priced := VideoPricing{
+		DefaultResolution: "2K",
+		Output:            map[string]float64{"2K": 0.13},
+		Input: VideoInputPricing{Video: &VideoInputVideoPricing{
+			PerSecondByOutputResolution: map[string]float64{"768P": 0.08},
+		}},
+	}
+	if priced.ChargesInputVideo("2K") {
+		t.Error("2K 档未配置输入视频价，不应算作计费")
+	}
+}
