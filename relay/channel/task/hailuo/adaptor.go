@@ -259,19 +259,19 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.T
 	if upstream.InputImageCount != nil {
 		usage.ImageCount = *upstream.InputImageCount
 	}
-	// input_seconds 是输入素材的合并秒数，上游没有拆分视频/音频。只有当原
-	// 请求确实带了参考视频时才把它算作视频秒数——否则（纯参考音频场景）
-	// 会把本该免费的音频按视频单价收钱。原请求没带视频时保持提交口径。
+	// input_seconds 是上游返回的输入素材计费秒数。提交时只有 URL、拿不到
+	// 时长，只能按官方上限 15 秒预扣，这里换成真值——少收补扣、多收退款，
+	// 不做单边封顶。
+	//
+	// 原请求没带参考视频时 VideoSeconds 为 0，整段跳过：纯参考音频场景
+	// 不会被按视频单价收钱（音频本身免费）。
+	//
+	// 待确认：上游未说明 input_seconds 是否把参考音频的秒数也算进去。
+	// 若算进去了，同时带音视频的请求会把免费的音频按视频单价计费。
+	// 官方价目表里音频免费，usage 又是计费口径，倾向于不含——但需要一单
+	// 「参考视频 + 参考音频」的实测来确认。
 	if upstream.InputSeconds != nil && usage.VideoSeconds > 0 {
 		usage.VideoSeconds = *upstream.InputSeconds
-		if usage.AudioSeconds > 0 {
-			// 视频 + 音频同时存在时无法从合并值里拆出各自时长，退回提交时的
-			// 保守口径，宁可不退也不要少收。
-			usage.VideoSeconds = 0
-			if snap := bc.VideoUsage; snap != nil {
-				usage.VideoSeconds = snap.VideoSeconds
-			}
-		}
 	}
 
 	cost, err := billing_setting.ComputeVideoCost(bc.OriginModelName, usage)

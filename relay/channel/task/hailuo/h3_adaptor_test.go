@@ -452,15 +452,38 @@ func TestAdjustBillingOnComplete(t *testing.T) {
 		}
 	})
 
-	t.Run("视频音频并存时不拆分，保持保守口径", func(t *testing.T) {
-		// 上游只给合并的 input_seconds，拆不出各自时长；音频免费，
-		// 全算成视频会多收钱，因此退回提交时的预扣口径
+	t.Run("带音频时同样按真值结算", func(t *testing.T) {
 		task := newTask(`{"task":{"id":"t","status":"succeeded","resolution":"2K",
 			"usage":{"input_image_count":0,"input_seconds":10,"output_seconds":6}}}`,
 			&model.VideoUsageSnapshot{Resolution: "2K", OutputSeconds: 6, VideoSeconds: 15, AudioSeconds: 15})
 
-		// 6×0.13 + 15×0.13 = 2.73（与预扣一致，不动）
-		if got, want := adaptor.AdjustBillingOnComplete(task, nil), quotaOf(2.73); got != want {
+		// 6×0.13 + 10×0.13 = 2.08（预扣 2.73，退 0.65）
+		if got, want := adaptor.AdjustBillingOnComplete(task, nil), quotaOf(2.08); got != want {
+			t.Errorf("quota = %d, want %d", got, want)
+		}
+	})
+
+	// 结算是双向的：真实用量超过预扣口径时要补扣，不做单边封顶
+	t.Run("真实用量超过预扣时补扣", func(t *testing.T) {
+		task := newTask(`{"task":{"id":"t","status":"succeeded","resolution":"2K",
+			"usage":{"input_image_count":3,"input_seconds":12,"output_seconds":6}}}`,
+			&model.VideoUsageSnapshot{Resolution: "2K", OutputSeconds: 6, ImageCount: 1, VideoSeconds: 8})
+
+		// 6×0.13 + 12×0.13 + 3×0.04 = 0.78 + 1.56 + 0.12 = 2.46
+		// 预扣口径只有 8 秒视频 + 1 张图，结算高于预扣
+		if got, want := adaptor.AdjustBillingOnComplete(task, nil), quotaOf(2.46); got != want {
+			t.Errorf("quota = %d, want %d", got, want)
+		}
+	})
+
+	t.Run("原请求无参考视频时不按视频单价收", func(t *testing.T) {
+		// 纯参考音频场景：VideoSeconds 为 0，input_seconds 不应被算作视频
+		task := newTask(`{"task":{"id":"t","status":"succeeded","resolution":"2K",
+			"usage":{"input_image_count":1,"input_seconds":9,"output_seconds":6}}}`,
+			&model.VideoUsageSnapshot{Resolution: "2K", OutputSeconds: 6, ImageCount: 1, AudioSeconds: 15})
+
+		// 6×0.13 + 1×0.04 = 0.82，音频免费且不转成视频秒数
+		if got, want := adaptor.AdjustBillingOnComplete(task, nil), quotaOf(0.82); got != want {
 			t.Errorf("quota = %d, want %d", got, want)
 		}
 	})
