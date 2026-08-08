@@ -17,15 +17,38 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Radio, RadioGroup } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
+import { API, showError } from '../../../helpers';
 import ModelPricingEditor from './components/ModelPricingEditor';
 import ModelRatioSettings from './ModelRatioSettings';
 
 export default function ModelPricingCombined({ options, refresh }) {
   const { t } = useTranslation();
   const [editMode, setEditMode] = useState('visual');
+  const [enabledModels, setEnabledModels] = useState([]);
+
+  // 列表候选必须带上「渠道里已启用的模型」，不能只列 DB 里已有定价配置的。
+  //
+  // 否则任何还没写过配置的模型都搜不到——尤其是靠内置价目表定价的视频模型，
+  // 以及管理员用别名（doubao-seedance-2.5 这种）配的渠道模型：它们能正常收费，
+  // 却在这个页面上完全不存在，管理员想改价都无从下手。
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await API.get('/api/channel/models_enabled');
+        const { success, message, data } = res.data;
+        if (success) {
+          setEnabledModels(data || []);
+        } else {
+          showError(message);
+        }
+      } catch (error) {
+        showError(t('获取启用模型失败'));
+      }
+    })();
+  }, []);
 
   return (
     <div>
@@ -41,7 +64,11 @@ export default function ModelPricingCombined({ options, refresh }) {
         </RadioGroup>
       </div>
       {editMode === 'visual' ? (
-        <ModelPricingEditor options={options} refresh={refresh} />
+        <ModelPricingEditor
+          options={options}
+          refresh={refresh}
+          candidateModelNames={enabledModels}
+        />
       ) : (
         <ModelRatioSettings options={options} refresh={refresh} />
       )}

@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/samber/lo"
@@ -608,6 +609,18 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	}
 	// 2. 回退到 token 重算
 	if taskResult.TotalTokens > 0 {
+		// 视频模型的报价由价目表决定，ModelRatio 对它没有意义（模型广场那边
+		// 就置成 0）。真让它走到这里会按 0 倍率算出接近白送的金额；管理员若
+		// 从别的模型复制过一条残留的 ModelRatio，则是按一个毫不相干的倍率
+		// 扣钱。两种都是资金事故，宁可保持预扣。
+		//
+		// 走到这里说明 adaptor 的结算没成功（拿不到上游用量、或换算对不上），
+		// 那本来就是「保持预扣」的兜底路径。
+		if _, ok := billing_setting.GetVideoPricing(taskModelName(task)); ok {
+			logger.LogInfo(ctx, fmt.Sprintf(
+				"任务 %s 是视频计价模型，跳过按 token 重算，保持预扣额度", task.TaskID))
+			return
+		}
 		RecalculateTaskQuotaByTokens(ctx, task, taskResult.TotalTokens)
 		return
 	}

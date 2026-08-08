@@ -137,7 +137,119 @@ var DefaultModelParamSchemas = map[string]string{
 	"happyhorse-1.0-t2v":    happyHorseVideoParamSchema,
 	"wan2.7-i2v-2026-04-25": wan27VideoParamSchema,
 	"MiniMax-H3":            minimaxH3VideoParamSchema,
+	// Seedance 2.5 的每个可用名字都要登记一份：这张表是【精确匹配模型名】的，
+	// 漏一个，管理员用那个名字配渠道时操练场就拿不到参数面板和素材上传槽——
+	// 请求能发、钱也收得对，唯独右栏是空的，很难往 schema 上想。
+	// 名字与 relay/channel/task/doubao/constants.go 的 seedanceAliasMap 对齐。
+	"doubao-seedance-2-5":        seedance25VideoParamSchema,
+	"doubao-seedance-2-5-260628": seedance25VideoParamSchema,
+	"doubao-seedance-2.5":        seedance25VideoParamSchema,
+	"seedance-2.5":               seedance25VideoParamSchema,
+	"seedance-2.5-api":           seedance25VideoParamSchema,
 }
+
+// seedance25VideoParamSchema 对应火山方舟 Seedance 2.5。
+// 媒体槽的 x-content-role 与 relay/channel/task/doubao/seedance25.go 的 role
+// 常量一一对应：操练场按 role 把上传素材拍平成 metadata.content，适配器再按
+// role 还原。
+// https://docs.volcengine.com/docs/82379/1520757
+const seedance25VideoParamSchema = `{
+  "type": "object",
+  "x-prompt-optional": true,
+  "properties": {
+    "first_frame_image": {
+      "type": "string",
+      "format": "image",
+      "title": "首帧",
+      "x-content-role": "first_frame",
+      "x-max-mb": 30
+    },
+    "last_frame_image": {
+      "type": "string",
+      "format": "image",
+      "title": "尾帧",
+      "x-content-role": "last_frame",
+      "x-max-mb": 30
+    },
+    "reference_images": {
+      "type": "array",
+      "title": "参考图",
+      "description": "最多 30 张。与首/尾帧互斥，不能混用",
+      "maxItems": 30,
+      "items": {"type": "string", "format": "image"},
+      "x-content-role": "reference_image",
+      "x-max-mb-per-item": 30
+    },
+    "reference_videos": {
+      "type": "array",
+      "title": "参考视频",
+      "description": "最多 10 段，单段 2~30 秒，合计不超过 30 秒。与首/尾帧互斥",
+      "maxItems": 10,
+      "items": {"type": "string", "format": "video"},
+      "x-content-role": "reference_video",
+      "x-max-mb-per-item": 200,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 30,
+      "x-max-total-duration-seconds": 30
+    },
+    "reference_audios": {
+      "type": "array",
+      "title": "参考音频",
+      "description": "最多 10 段，单段 2~30 秒，合计不超过 30 秒。与首/尾帧互斥",
+      "maxItems": 10,
+      "items": {"type": "string", "format": "audio"},
+      "x-content-role": "reference_audio",
+      "x-max-mb-per-item": 15,
+      "x-min-duration-seconds": 2,
+      "x-max-duration-seconds": 30,
+      "x-max-total-duration-seconds": 30
+    },
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["480p", "720p"],
+      "default": "720p"
+    },
+    "aspect_ratio": {
+      "type": "string",
+      "title": "宽高比",
+      "description": "adaptive 由模型按输入内容自动适配。首/尾帧与视频编辑场景仅支持 adaptive",
+      "enum": ["adaptive", "21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+      "default": "adaptive"
+    },
+    "duration": {
+      "type": "integer",
+      "title": "时长（秒）",
+      "description": "「由模型决定」即官方的 duration=-1，模型在 4~30 秒内自选；视频编辑场景只支持这一项。此时按预扣秒数冻结额度，生成完成后按实际时长退还差额",
+      "enum": [-1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30],
+      "enumLabels": {"-1": "由模型决定"},
+      "default": -1
+    },
+    "generate_audio": {
+      "type": "boolean",
+      "title": "生成有声视频",
+      "default": true
+    },
+    "output_format": {
+      "type": "string",
+      "title": "输出格式",
+      "description": "mov 为高色彩精度专业格式，部分播放器不兼容",
+      "enum": ["mp4", "mov"],
+      "default": "mp4"
+    },
+    "web_search": {
+      "type": "boolean",
+      "title": "联网搜索",
+      "description": "由模型自主判断是否搜索互联网内容，可提升时效性但会增加时延",
+      "default": false
+    },
+    "watermark": {
+      "type": "boolean",
+      "title": "添加 AI 生成水印",
+      "default": false
+    }
+  }
+}`
 
 // minimaxH3VideoParamSchema 对应 MiniMax v2 视频协议。
 // 媒体槽的 x-content-role 与 relay/channel/task/hailuo/h3.go 的 role 常量一一

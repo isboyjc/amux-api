@@ -50,6 +50,18 @@ type VideoPricing struct {
 	DefaultResolution string `json:"default_resolution,omitempty"`
 	// Output 是输出分辨率 → 每秒单价。
 	Output map[string]float64 `json:"output"`
+	// OutputWithVideoInput 在输入含参考视频时【整单】覆盖 Output。
+	//
+	// 这是火山方舟 Seedance 的规则：含视频输入的任务换一档更低的 token 单价，
+	// 且降档作用于输出帧和输入帧的全部 token，不是只对输入部分打折。缺省
+	// （或某个分辨率缺项）时回落到 Output，因此不影响没有这套规则的模型。
+	OutputWithVideoInput map[string]float64 `json:"output_with_video_input,omitempty"`
+	// MaxOutputSeconds 是输出时长未知时的预扣口径（秒）。
+	//
+	// Seedance 2.5 的 duration 默认 -1（模型自选时长，最长 30s），提交时没有
+	// 任何锚点；这里配一个折中值预扣，终态再按上游真实用量多退少补。为 0 表示
+	// 该模型的时长总是已知，不需要兜底。
+	MaxOutputSeconds float64 `json:"max_output_seconds,omitempty"`
 	// Input 是输入素材计价，各项可缺省（缺省即不计费）。
 	Input VideoInputPricing `json:"input,omitempty"`
 }
@@ -85,6 +97,13 @@ type VideoUsage struct {
 	ImageCount    int     // 输入图片张数（首帧/尾帧/参考图合计）
 	AudioSeconds  float64 // 输入音频总时长
 	VideoSeconds  float64 // 输入视频总时长
+	// HasVideoInput 表示原请求带了参考视频，决定走哪一档单价。
+	//
+	// 之所以不直接用 VideoSeconds > 0 判断：结算时上游只给一个合并的计费用量
+	// （Seedance 是 token），拆不出输出/输入各占多少，此时会把总量记在
+	// OutputSeconds 上而 VideoSeconds 为 0——档位却仍然必须按「含视频输入」取，
+	// 否则会按不含视频的高单价收钱。VideoSeconds > 0 时本字段可以不填。
+	HasVideoInput bool
 }
 
 // VideoCostBreakdown 是计费明细，写进日志和 task 快照供对账用。
@@ -143,6 +162,84 @@ func buildDefaultVideoPricing() map[string]VideoPricing {
 				},
 			},
 		},
+
+		"doubao-seedance-2-5": seedance25Pricing(),
+	}
+}
+
+// defaultVideoPricingAliases 是同一个模型的其它可用名字。
+//
+// GetVideoPricing 是精确查表，查表键是 OriginModelName（调用方写的那个名字）。
+// 少配一个，那条路径就会掉回 ModelPrice 查表，同一个模型的两个名字算出不同的
+// 钱。这几个名字与 relay/channel/task/doubao/constants.go 的 seedanceAliasMap
+// 一一对应——那张表认得的名字都会被路由到 2.5，这里就都得能定价。
+//
+// 与 defaultVideoPricing 分开放，是因为管理端要展示内置价目表：别名混在一起
+// 会让定价面板上冒出好几行一模一样的记录。DefaultVideoPricingJSON 只吐规范名。
+var defaultVideoPricingAliases = map[string]VideoPricing{
+	"doubao-seedance-2-5-260628": seedance25Pricing(), // 火山官方 endpoint 名
+	"doubao-seedance-2.5":        seedance25Pricing(),
+	"seedance-2.5":               seedance25Pricing(),
+	"seedance-2.5-api":           seedance25Pricing(),
+}
+
+// seedance25Pricing 是火山方舟 doubao-seedance-2.5 的价目表。
+//
+// 上游按 token 计费，公式为 tokens = 宽 × 高 × 帧数 / 1024（参考视频按 24fps
+// 全采样，且按【输出】分辨率折算），单价分两档：
+//
+//	输入不含视频：$10.37 / 百万 token
+//	输入含视频：  $6.23  / 百万 token（降档作用于输出+输入的全部 token）
+//
+// 同一分辨率下不同宽高比的像素数不一样，每秒 token 数也就不一样，而秒价一档
+// 分辨率只有一个数。这里按【该分辨率下像素最多的那个宽高比】定价，保证任何
+// 比例都不会成本倒挂——代价是最常用的 16:9 会比官方 16:9 报价高一点点
+// （720p +0.63%、480p +4.54%）。
+//
+//	480p 最贵档 21:9   992×432 → 10,044.0   tok/s
+//	720p 最贵档 4:3   1112×834 → 21,736.125 tok/s
+//
+// 折算成每秒单价（5 位小数，一律向上取整，避免舍入造成少收）：
+//
+//	480p → 不含视频 $0.10416/s、含视频 $0.06258/s
+//	720p → 不含视频 $0.22541/s、含视频 $0.13542/s
+//
+// 公式与档位已用官方人民币价目表的六个锚点交叉验证过（16:9 口径误差 ≤0.2%）。
+//
+// 输入素材：火山对参考图片与音频不单独计价（不配 = 免费），参考视频则按其
+// 自身时长实打实加钱——官方 720p 输出 5 秒是 7.56 元，加 30 秒参考视频变成
+// 31.75 元，多出来的 24.19 元就是参考视频。它的单价与「含视频输入」档的输出
+// 单价相同。
+//
+// 官方对「含视频输入」另有最低 token 用量限制（实测锚点折合 216 帧 ≈ 9 秒），
+// 这里不建模：结算认上游返回的 completion_tokens，下限已经含在里面；预扣又按
+// 参考视频 30s 上界估，恒高于下限，咬不到。
+func seedance25Pricing() VideoPricing {
+	return VideoPricing{
+		Unit:              VideoPricingUnitSecond,
+		DefaultResolution: "720p",
+		// duration 默认 -1（模型自选，最长 30s），按 15s 折中预扣，终态多退少补
+		MaxOutputSeconds: 15,
+		Output: map[string]float64{
+			"480p": 0.10416,
+			"720p": 0.22541,
+		},
+		OutputWithVideoInput: map[string]float64{
+			"480p": 0.06258,
+			"720p": 0.13542,
+		},
+		Input: VideoInputPricing{
+			// 参考视频按其自身时长收费，单价与「含视频输入」档的输出单价相同
+			// ——上游是同一个 token 单价、同一个输出分辨率，两者本就该相等。
+			// 调价时这两张表要一起改。
+			Video: &VideoInputVideoPricing{
+				PerSecondByOutputResolution: map[string]float64{
+					"480p": 0.06258,
+					"720p": 0.13542,
+				},
+			},
+			// 参考图片与音频不配：火山对它们不单独计价，缺省即免费
+		},
 	}
 }
 
@@ -150,12 +247,54 @@ func buildDefaultVideoPricing() map[string]VideoPricing {
 // Read accessors (hot path, must be fast)
 // ---------------------------------------------------------------------------
 
-// GetVideoPricing 返回模型的有效价目表：管理员覆盖优先，其次内置默认。
+// VideoPricingDefaultsOptionKey 是内置价目表在 option 接口里的只读键名。
+//
+// 它不挂在 VideoPricingModule 前缀下——那个前缀由 config 模块负责读写，多一个
+// 结构体里不存在的字段只会带来麻烦。这里走的是和 CompletionRatioMeta 一样的
+// 「派生只读项」路子：GetOptions 现算现给，UpdateOption 不接受它。
+const VideoPricingDefaultsOptionKey = "VideoPricingDefaults"
+
+// VideoPricingAliasesOptionKey 是内置别名价目表在 option 接口里的只读键名。
+const VideoPricingAliasesOptionKey = "VideoPricingAliases"
+
+// DefaultVideoPricingJSON 把内置价目表的【规范名】序列化给管理端展示。
+//
+// 管理端的模型定价面板只拿得到 DB 里的覆盖项。不给它这份数据，靠内置定价跑的
+// 视频模型（MiniMax-H3、Seedance 2.5）在面板上会显示成「按量计费 + 空倍率」，
+// 管理员会以为没配价，然后去填一个根本不会生效的 ModelRatio——面板说的和实际
+// 扣的钱对不上，是最难查的一类问题。
+func DefaultVideoPricingJSON() string {
+	jsonBytes, err := common.Marshal(defaultVideoPricing)
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}
+
+// VideoPricingAliasesJSON 把内置别名价目表序列化给管理端。
+//
+// 与规范名分开给，是因为两者在面板上的用途不同：规范名决定「列表里有哪些行」，
+// 别名只决定「这一行怎么渲染」。混在一起会让定价面板冒出好几行一模一样的记录；
+// 完全不给，管理员把渠道模型名配成 doubao-seedance-2.5 这种别名时，面板又会
+// 把它显示成没配价的按量计费模型。
+func VideoPricingAliasesJSON() string {
+	jsonBytes, err := common.Marshal(defaultVideoPricingAliases)
+	if err != nil {
+		return "{}"
+	}
+	return string(jsonBytes)
+}
+
+// GetVideoPricing 返回模型的有效价目表：
+// 管理员覆盖 > 内置规范名 > 内置别名。
 func GetVideoPricing(model string) (VideoPricing, bool) {
 	if p, ok := videoPricingSetting.Pricing[model]; ok {
 		return p, true
 	}
-	p, ok := defaultVideoPricing[model]
+	if p, ok := defaultVideoPricing[model]; ok {
+		return p, true
+	}
+	p, ok := defaultVideoPricingAliases[model]
 	return p, ok
 }
 
@@ -186,7 +325,7 @@ func (p VideoPricing) Compute(u VideoUsage) (VideoCostBreakdown, error) {
 	b := VideoCostBreakdown{Resolution: resolution}
 
 	if u.OutputSeconds > 0 {
-		b.Output = p.Output[resolution] * u.OutputSeconds
+		b.Output = p.OutputRate(resolution, u.HasVideoInput || u.VideoSeconds > 0) * u.OutputSeconds
 	}
 
 	if img := p.Input.Image; img != nil {
@@ -199,8 +338,9 @@ func (p VideoPricing) Compute(u VideoUsage) (VideoCostBreakdown, error) {
 		b.Audio = audio.PerSecond * u.AudioSeconds
 	}
 
-	// 输入视频按【输出】分辨率取单价。该分辨率未配置输入视频价时视为不计费，
-	// 而不是报错——输出档位已经在上面校验过，这里缺项是价目表的有意留白。
+	// 输入视频按【输出】分辨率取单价。未配置该项、或该分辨率缺档，都视为
+	// 免费而不是报错——输出档位已经在上面校验过，这里缺项是价目表的有意留白：
+	// 有的上游对参考素材完全不收费。
 	if video := p.Input.Video; video != nil && u.VideoSeconds > 0 {
 		if rate, ok := video.PerSecondByOutputResolution[resolution]; ok {
 			b.Video = rate * u.VideoSeconds
@@ -209,6 +349,19 @@ func (p VideoPricing) Compute(u VideoUsage) (VideoCostBreakdown, error) {
 
 	b.Total = b.Output + b.Image + b.Audio + b.Video
 	return b, nil
+}
+
+// OutputRate 返回输出秒的单价。resolution 必须已经过 ResolveResolution 归一。
+//
+// 含视频输入时优先取 OutputWithVideoInput；该表整体缺省、或缺这一档分辨率，
+// 都回落到 Output——缺项是「这个模型没有降档规则」，不是配置错误。
+func (p VideoPricing) OutputRate(resolution string, hasVideoInput bool) float64 {
+	if hasVideoInput {
+		if rate, ok := p.OutputWithVideoInput[resolution]; ok {
+			return rate
+		}
+	}
+	return p.Output[resolution]
 }
 
 // ResolveResolution 把请求里的分辨率归一到价目表的档位键。
@@ -316,6 +469,21 @@ func ValidateVideoPricing(model string, p VideoPricing) error {
 		if price < 0 {
 			return fmt.Errorf("model %s: output price for %s must not be negative", model, resolution)
 		}
+	}
+	// 降档表只允许覆盖已存在的档位：多出来的键说明管理员写错了分辨率名，
+	// 而它会静默失效（OutputRate 回落到 Output），比报错更难查。
+	for resolution, price := range p.OutputWithVideoInput {
+		if price < 0 {
+			return fmt.Errorf("model %s: output_with_video_input price for %s must not be negative",
+				model, resolution)
+		}
+		if _, ok := p.Output[resolution]; !ok {
+			return fmt.Errorf("model %s: output_with_video_input references unknown output resolution %q",
+				model, resolution)
+		}
+	}
+	if p.MaxOutputSeconds < 0 {
+		return fmt.Errorf("model %s: max_output_seconds must not be negative", model)
 	}
 	if p.DefaultResolution != "" {
 		if _, ok := p.Output[p.DefaultResolution]; !ok {

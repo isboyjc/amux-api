@@ -29,6 +29,12 @@ var defaultEndpointInfoMap = map[constant.EndpointType]EndpointInfo{
 	// —— 前端对空 path 会连方法一起隐藏。这里补上站内统一视频协议的入口，
 	// 它对所有视频渠道都适用。
 	constant.EndpointTypeOpenAIVideo: {Path: "/v1/video/generations", Method: "POST"},
+	// 火山方舟 v3 原生协议：路由组 /api/v3/contents/generations + POST /tasks，
+	// 见 router/video-router.go。有了默认值，管理员不必在每个模型上手填 path
+	// ——手填还有个坑：path 是按端点类型存进全局表的，填错会影响同类型的所有模型。
+	constant.EndpointTypeVolcengineVideo: {
+		Path: "/api/v3/contents/generations/tasks", Method: "POST",
+	},
 }
 
 // GetDefaultEndpointInfo 返回指定端点类型的默认信息以及是否存在

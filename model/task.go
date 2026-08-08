@@ -132,6 +132,10 @@ type VideoUsageSnapshot struct {
 	ImageCount    int     `json:"image_count,omitempty"`
 	AudioSeconds  float64 `json:"audio_seconds,omitempty"`
 	VideoSeconds  float64 `json:"video_seconds,omitempty"`
+	// HasVideoInput 决定走哪一档单价。结算时上游只给一个合并的用量，拆不出
+	// 输出/输入，VideoSeconds 可能是 0，档位只能靠这个字段还原。存量数据里
+	// 它是 false，读的时候要用 VideoSeconds > 0 兜底。
+	HasVideoInput bool `json:"has_video_input,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

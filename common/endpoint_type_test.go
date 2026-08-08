@@ -49,3 +49,45 @@ func TestVideoEndpointHasDefaultPath(t *testing.T) {
 		t.Fatalf("incomplete endpoint info: %+v", info)
 	}
 }
+
+// TestGetEndpointTypes_VolcengineVideo 火山系渠道的视频模型要同时给出站内统一
+// 协议与火山 v3 原生协议两个端点，两条路由都真实可用。
+func TestGetEndpointTypes_VolcengineVideo(t *testing.T) {
+	for _, channelType := range []int{
+		constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine,
+	} {
+		got := GetEndpointTypesByChannelType(channelType, "doubao-seedance-2.5")
+		want := []constant.EndpointType{
+			constant.EndpointTypeOpenAIVideo,
+			constant.EndpointTypeVolcengineVideo,
+		}
+		if len(got) != len(want) {
+			t.Fatalf("channel %d: 端点数 = %d, want %d（%v）", channelType, len(got), len(want), got)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("channel %d: 端点[%d] = %q, want %q", channelType, i, got[i], want[i])
+			}
+		}
+		// 优先端点必须是站内统一协议：modality 推断认的是它
+		if got[0] != constant.EndpointTypeOpenAIVideo {
+			t.Errorf("channel %d: 优先端点应为 openai-video", channelType)
+		}
+
+		// 同渠道的文本模型不受影响
+		if text := GetEndpointTypesByChannelType(channelType, "doubao-pro-32k"); len(text) != 1 ||
+			text[0] != constant.EndpointTypeOpenAI {
+			t.Errorf("channel %d: 文本模型端点 = %v, want [openai]", channelType, text)
+		}
+	}
+
+	// 两个端点都要有默认 path，否则模型广场那一行只显示类型名、没有路径
+	for _, et := range []constant.EndpointType{
+		constant.EndpointTypeOpenAIVideo, constant.EndpointTypeVolcengineVideo,
+	} {
+		info, ok := GetDefaultEndpointInfo(et)
+		if !ok || info.Path == "" || info.Method == "" {
+			t.Errorf("端点 %q 缺默认 path/method: %+v", et, info)
+		}
+	}
+}

@@ -94,13 +94,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 	logger.LogJson(c, "minimax h3 cost breakdown", cost)
 	usage := h3.ToVideoUsage()
-	c.Set(constant.CtxKeyVideoUsageSnapshot, &model.VideoUsageSnapshot{
-		Resolution:    usage.Resolution,
-		OutputSeconds: usage.OutputSeconds,
-		ImageCount:    usage.ImageCount,
-		AudioSeconds:  usage.AudioSeconds,
-		VideoSeconds:  usage.VideoSeconds,
-	})
+	c.Set(constant.CtxKeyVideoUsageSnapshot, h3UsageSnapshot(usage))
 	c.Set(constant.CtxKeyVideoBillingDetail, map[string]any{
 		"resolution":     cost.Resolution,
 		"output_seconds": usage.OutputSeconds,
@@ -279,6 +273,10 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.T
 	if err != nil {
 		return 0
 	}
+	// 把结算口径写回快照：差额结算那条消费日志要靠它渲染分项明细，不改的话
+	// 显示的还是预扣时按 15 秒上限估的秒数，和这笔金额对不上。
+	bc.VideoUsage = h3UsageSnapshot(usage)
+
 	groupRatio := bc.GroupRatio
 	if groupRatio <= 0 {
 		groupRatio = 1
@@ -288,6 +286,19 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.T
 	// 虚假差额，凭空多出一条退款/补扣日志。
 	baseQuota := int(billing_setting.VideoBasePrice * common.QuotaPerUnit * groupRatio)
 	return int(float64(baseQuota) * cost.Total)
+}
+
+// h3UsageSnapshot 把计费口径转成落库快照。提交时存预扣口径，终态结算时改写成
+// 实际口径，两条日志各自渲染出的明细才对得上自己那笔金额。
+func h3UsageSnapshot(usage billing_setting.VideoUsage) *model.VideoUsageSnapshot {
+	return &model.VideoUsageSnapshot{
+		Resolution:    usage.Resolution,
+		OutputSeconds: usage.OutputSeconds,
+		ImageCount:    usage.ImageCount,
+		AudioSeconds:  usage.AudioSeconds,
+		VideoSeconds:  usage.VideoSeconds,
+		HasVideoInput: usage.HasVideoInput || usage.VideoSeconds > 0,
+	}
 }
 
 // doH3Response 处理 v2 创建响应。v2 没有 base_resp——成功只返回 task_id，

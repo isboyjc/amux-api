@@ -49,6 +49,7 @@ func RegisterImageModelOverride(fn func(string) bool) {
 // 用于给这些模型分配视频端点，进而让定价页/操练场把它们识别成视频模态。
 var VideoGenerationModels = []string{
 	"minimax-h3",
+	"seedance",
 }
 
 // IsVideoGenerationModel 判断模型是否为视频生成模型。

@@ -127,6 +127,64 @@ func TestH3FromTaskSubmitReq_MetadataFramesWinOverImages(t *testing.T) {
 	}
 }
 
+// TestH3FromTaskSubmitReq_DurationSources 时长的三个来源都要认。
+//
+// 操练场把 schema 渲染出的参数整体塞进 metadata、不会提升到顶层字段，这里
+// 少收一个 metadata.duration，用户在面板上调的时长就会被静默丢弃、一律按默认
+// 6 秒出片；OpenAI 兼容端点用的是 seconds，同理。
+func TestH3FromTaskSubmitReq_DurationSources(t *testing.T) {
+	cases := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+		want int
+	}{
+		{
+			name: "顶层duration",
+			req:  relaycommon.TaskSubmitReq{Prompt: "p", Duration: intPtr(10)},
+			want: 10,
+		},
+		{
+			name: "metadata里的duration",
+			req: relaycommon.TaskSubmitReq{
+				Prompt:   "p",
+				Metadata: map[string]interface{}{"duration": 12},
+			},
+			want: 12,
+		},
+		{
+			name: "OpenAI风格的seconds",
+			req:  relaycommon.TaskSubmitReq{Prompt: "p", Seconds: "8"},
+			want: 8,
+		},
+		{
+			name: "顶层优先于metadata",
+			req: relaycommon.TaskSubmitReq{
+				Prompt:   "p",
+				Duration: intPtr(10),
+				Metadata: map[string]interface{}{"duration": 12},
+			},
+			want: 10,
+		},
+		{
+			name: "都没有时兜底默认值",
+			req:  relaycommon.TaskSubmitReq{Prompt: "p"},
+			want: H3DefaultDuration,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := mustNormalize(t, func() (*H3Request, error) {
+				return H3FromTaskSubmitReq(tc.req)
+			})
+			req.ApplyDefaults()
+			if req.Duration != tc.want {
+				t.Errorf("Duration = %d, want %d", req.Duration, tc.want)
+			}
+		})
+	}
+}
+
 func TestH3ApplyDefaults(t *testing.T) {
 	req := &H3Request{Prompt: "p"}
 	req.ApplyDefaults()

@@ -251,6 +251,40 @@ export default function VideoPricingEditor({ pricing, onChange, t }) {
         t={t}
       />
 
+      <div style={{ marginTop: 16 }}>
+        <Text>{t('输出定价（输入含参考视频）')}</Text>
+        <div className='mt-1 mb-2 text-xs text-gray-500'>
+          {t(
+            '部分上游对含参考视频的任务整单换一档更低的单价（如火山 Seedance）。留空表示该模型没有这条规则，一律用上面的输出定价。',
+          )}
+        </div>
+        <ResolutionPriceTable
+          rows={pricing.outputWithVideoRows || []}
+          unitLabel={`$/${t('秒')}`}
+          onChange={(rows) => patch({ outputWithVideoRows: rows })}
+          t={t}
+        />
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <div className='mb-1 text-xs text-gray-500'>
+          {t('时长未知时的预扣秒数')}
+        </div>
+        <InputNumber
+          value={pricing.maxOutputSeconds}
+          min={0}
+          precision={0}
+          suffix={t('秒')}
+          onChange={(v) => patch({ maxOutputSeconds: v ?? 0 })}
+          style={{ width: 170 }}
+        />
+        <div className='mt-1 text-xs text-gray-500'>
+          {t(
+            '模型自选时长（duration=-1）时按这个秒数预扣，生成完成后按上游返回的真实用量多退少补。填 0 表示该模型时长总是已知。',
+          )}
+        </div>
+      </div>
+
       <Divider margin='16px' />
 
       <Text strong>{t('输入素材定价')}</Text>
@@ -296,7 +330,9 @@ export default function VideoPricingEditor({ pricing, onChange, t }) {
       <div>
         <Text>{t('输入视频')}</Text>
         <div className='mt-1 mb-2 text-xs text-gray-500'>
-          {t('按输入视频时长计费，单价取决于输出视频的分辨率')}
+          {t(
+            '按输入视频时长计费，单价取决于输出视频的分辨率。留空或填 0 表示该模型的参考视频免费。',
+          )}
         </div>
         <ResolutionPriceTable
           rows={pricing.videoRows || []}
