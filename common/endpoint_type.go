@@ -36,8 +36,11 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 		endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
 	case constant.ChannelTypeAli:
 		modelName = strings.ToLower(strings.TrimSpace(modelName))
-		if strings.HasPrefix(modelName, "happyhorse-") || strings.HasPrefix(modelName, "wan2.7-i2v") {
-			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
+		if isAliVideoModel(modelName) {
+			endpointTypes = []constant.EndpointType{
+				constant.EndpointTypeOpenAIVideo,
+				constant.EndpointTypeDashScopeVideo,
+			}
 		} else {
 			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAI}
 		}
@@ -77,4 +80,23 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 		endpointTypes = append([]constant.EndpointType{constant.EndpointTypeImageGeneration}, endpointTypes...)
 	}
 	return endpointTypes
+}
+
+// isAliVideoModel 判断阿里渠道中走 DashScope 异步视频任务协议的模型。
+// HappyHorse 使用独立前缀；Wan 视频模型按官方 t2v/i2v/kf2v/s2v 命名识别，
+// 避免把 wanx-v1 等图片模型误标成视频端点。
+func isAliVideoModel(modelName string) bool {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	if strings.HasPrefix(modelName, "happyhorse-") {
+		return true
+	}
+	if !strings.HasPrefix(modelName, "wan") {
+		return false
+	}
+	for _, marker := range []string{"-t2v", "-i2v", "-kf2v", "-s2v", "-video"} {
+		if strings.Contains(modelName, marker) {
+			return true
+		}
+	}
+	return false
 }

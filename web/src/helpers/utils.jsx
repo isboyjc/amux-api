@@ -987,7 +987,7 @@ export const calculateModelPrice = ({
   }
 
   if (record.quota_type === 1) {
-    // 按次计费（per_hour 仍走 model_price，仅单位展示不同）
+    // 固定价格计费；按次、按小时都走 model_price，仅展示单位不同。
     const priceUSD = parseFloat(record.model_price) * usedGroupRatio;
     const displayVal = displayPrice(priceUSD);
 
@@ -1009,6 +1009,28 @@ export const calculateModelPrice = ({
     usedGroup,
     usedGroupRatio,
   };
+};
+
+export const matchesPricingBillingType = (model, billingType) => {
+  if (billingType === 'all') return true;
+  if (billingType === 'video') {
+    return model.billing_mode === 'video' || Boolean(model.video_pricing);
+  }
+  if (billingType === 'per_hour' || billingType === 'tiered_expr') {
+    return model.billing_mode === billingType;
+  }
+  if (billingType === 1) {
+    return (
+      model.quota_type === 1 &&
+      model.billing_mode !== 'per_hour' &&
+      model.billing_mode !== 'video' &&
+      !model.video_pricing
+    );
+  }
+  if (billingType === 0) {
+    return model.quota_type === 0 && model.billing_mode !== 'tiered_expr';
+  }
+  return false;
 };
 
 export const getModelPriceItems = (

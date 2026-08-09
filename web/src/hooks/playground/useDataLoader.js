@@ -96,7 +96,12 @@ export const useDataLoader = (
 
   const loadAll = useCallback(async () => {
     try {
-      const res = await API.get(API_ENDPOINTS.USER_GROUPS);
+      // 令牌创建等页面默认会隐藏用户自身等级分组；Playground 需要把它
+      // 包含进来，因为实际渠道可能就直接挂在该分组（常见是 default）。
+      // 否则只有 default 渠道时 realGroups 为空，模型选择器会整体无数据。
+      const res = await API.get(
+        `${API_ENDPOINTS.USER_GROUPS}?include_user_group=true`,
+      );
       const { success, message, data } = res.data || {};
       if (!success) {
         showError(t(message || '加载分组失败'));

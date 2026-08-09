@@ -833,7 +833,8 @@ const PricingCardView = ({
                       )}
                     <span style={{ color: 'var(--semi-color-text-2)' }}>
                       {' '}
-                      / {priceData.isPerHour ? t('小时') : t('次')}
+                      /{' '}
+                      {priceData.isPerHour ? t('小时') : t('次')}
                     </span>
                   </div>
                 )}

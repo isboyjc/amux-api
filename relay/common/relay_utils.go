@@ -149,12 +149,14 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		hasInputReference = true
 	}
 
-	// prompt 强制必填：先前曾尝试放宽为"prompt 与 metadata.content 至少一项"
-	// 来兼容首/末帧场景，但实测上游服务商（Ali / Sora 等）即便有 reference
-	// image 仍会因为缺 prompt 拒掉。放在前面这层挡住，让用户立刻看到清晰
-	// 错误，避免一个无效请求绕到上游再返
-	if taskErr := validatePrompt(prompt); taskErr != nil {
-		return taskErr
+	// HappyHorse i2v 官方协议允许只提供首帧而省略 prompt；其它任务仍维持
+	// 通用接口的 prompt 必填约束，避免把无效请求推迟到上游才失败。
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	promptOptional := strings.HasPrefix(normalizedModel, "happyhorse-") && strings.Contains(normalizedModel, "-i2v")
+	if !promptOptional {
+		if taskErr := validatePrompt(prompt); taskErr != nil {
+			return taskErr
+		}
 	}
 
 	action := constant.TaskActionTextGenerate

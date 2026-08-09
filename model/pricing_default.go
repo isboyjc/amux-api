@@ -9,39 +9,43 @@ import (
 
 // 简化的供应商映射规则
 var defaultVendorRules = map[string]string{
-	"gpt":      "OpenAI",
-	"dall-e":   "OpenAI",
-	"whisper":  "OpenAI",
-	"o1":       "OpenAI",
-	"o3":       "OpenAI",
-	"claude":   "Anthropic",
-	"gemini":   "Google",
-	"moonshot": "Moonshot",
-	"kimi":     "Moonshot",
-	"chatglm":  "智谱",
-	"glm-":     "智谱",
-	"qwen":     "阿里巴巴",
-	"deepseek": "DeepSeek",
-	"abab":     "MiniMax",
-	"minimax":  "MiniMax",
-	"ernie":    "百度",
-	"spark":    "讯飞",
-	"hunyuan":  "腾讯",
-	"command":  "Cohere",
-	"@cf/":     "Cloudflare",
-	"360":      "360",
-	"yi":       "零一万物",
-	"jina":     "Jina",
-	"mistral":  "Mistral",
-	"grok":     "xAI",
-	"llama":    "Meta",
-	"doubao":   "ByteDance",
-	"kling":    "快手",
-	"jimeng":   "即梦",
-	"vidu":     "Vidu",
-	"mimo":     "Xiaomi",
-	"xiaomi":   "Xiaomi",
-	"amux":     "Amux",
+	"gpt":        "OpenAI",
+	"dall-e":     "OpenAI",
+	"whisper":    "OpenAI",
+	"o1":         "OpenAI",
+	"o3":         "OpenAI",
+	"claude":     "Anthropic",
+	"gemini":     "Google",
+	"moonshot":   "Moonshot",
+	"kimi":       "Moonshot",
+	"chatglm":    "智谱",
+	"glm-":       "智谱",
+	"qwen":       "阿里巴巴",
+	"happyhorse": "阿里巴巴",
+	"wan-video":  "阿里巴巴",
+	"wanx":       "阿里巴巴",
+	"wan2.":      "阿里巴巴",
+	"deepseek":   "DeepSeek",
+	"abab":       "MiniMax",
+	"minimax":    "MiniMax",
+	"ernie":      "百度",
+	"spark":      "讯飞",
+	"hunyuan":    "腾讯",
+	"command":    "Cohere",
+	"@cf/":       "Cloudflare",
+	"360":        "360",
+	"yi":         "零一万物",
+	"jina":       "Jina",
+	"mistral":    "Mistral",
+	"grok":       "xAI",
+	"llama":      "Meta",
+	"doubao":     "ByteDance",
+	"kling":      "快手",
+	"jimeng":     "即梦",
+	"vidu":       "Vidu",
+	"mimo":       "Xiaomi",
+	"xiaomi":     "Xiaomi",
+	"amux":       "Amux",
 }
 
 // 供应商默认图标映射
@@ -167,7 +171,9 @@ func EnsureCommonVendors() {
 // 通过 Option 表记录是否已执行，避免重复执行
 func MigrateModelVendorIDs() {
 	// 检查是否已执行过此迁移
-	migrationKey := "model_vendor_id_migration_v1"
+	// v2 新增 HappyHorse / Wan 系模型的阿里巴巴归属。使用新迁移标记，让已经
+	// 跑过 v1 的存量安装也能重新扫描 vendor_id=0 的模型；已有非零归属不改。
+	migrationKey := "model_vendor_id_migration_v2"
 	var opt Option
 	if err := DB.Where(commonKeyCol+" = ?", migrationKey).First(&opt).Error; err == nil {
 		if opt.Value == "done" {

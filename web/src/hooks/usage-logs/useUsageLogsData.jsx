@@ -556,6 +556,12 @@ export const useLogsData = () => {
         }
       }
       if (logs[i].type === 6) {
+        if (other?.video_billing) {
+          expandDataLocal.push({
+            key: t('计费过程'),
+            value: renderVideoBillingProcess(other),
+          });
+        }
         if (other?.task_id) {
           expandDataLocal.push({
             key: t('任务ID'),

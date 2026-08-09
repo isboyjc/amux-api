@@ -10,10 +10,12 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -74,12 +76,270 @@ func TestHappyHorseDefaults(t *testing.T) {
 	}
 }
 
+func TestHappyHorseOfficialVideoPricing(t *testing.T) {
+	tests := []struct {
+		model      string
+		resolution string
+		want       float64
+	}{
+		{model: "happyhorse-1.1-t2v", resolution: "720P", want: 0.70},
+		{model: "happyhorse-1.1-i2v", resolution: "1080P", want: 0.90},
+		{model: "happyhorse-1.0-r2v", resolution: "720P", want: 0.70},
+		{model: "happyhorse-1.0-video-edit", resolution: "1080P", want: 1.20},
+	}
+	for _, test := range tests {
+		t.Run(test.model+"/"+test.resolution, func(t *testing.T) {
+			got, err := billing_setting.ComputeVideoCost(test.model, billing_setting.VideoUsage{
+				Resolution: test.resolution, OutputSeconds: 5,
+			})
+			if err != nil {
+				t.Fatalf("compute video cost: %v", err)
+			}
+			if got.Total < test.want-1e-12 || got.Total > test.want+1e-12 {
+				t.Fatalf("video cost=%v, want %v", got.Total, test.want)
+			}
+		})
+	}
+	if _, err := billing_setting.ComputeVideoCost("happyhorse-1.1-t2v", billing_setting.VideoUsage{
+		Resolution: "480P", OutputSeconds: 5,
+	}); err == nil {
+		t.Fatal("HappyHorse 480P must not have a pricing tier")
+	}
+}
+
+func TestHappyHorseEstimateBillingUsesVideoCost(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("ali_video_official_format", true)
+	c.Set("ali_video_original_request", map[string]interface{}{
+		"model": "happyhorse-1.1-t2v",
+		"input": map[string]interface{}{"prompt": "horse running"},
+	})
+	info := &relaycommon.RelayInfo{OriginModelName: "happyhorse-1.1-t2v"}
+
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
+	if got, want := ratios[billing_setting.VideoCostRatioKey], 5*0.18; got < want-1e-12 || got > want+1e-12 {
+		t.Fatalf("video_cost=%v, want %v", got, want)
+	}
+	if _, ok := ratios["seconds"]; ok {
+		t.Fatalf("HappyHorse must use a single video_cost ratio: %#v", ratios)
+	}
+	snapshot, exists := c.Get(constant.CtxKeyVideoUsageSnapshot)
+	if !exists {
+		t.Fatal("missing HappyHorse video usage snapshot")
+	}
+	if snap, ok := snapshot.(*model.VideoUsageSnapshot); !ok || snap.Resolution != "1080P" || snap.OutputSeconds != 5 {
+		t.Fatalf("unexpected usage snapshot: %#v", snapshot)
+	}
+}
+
+func TestHappyHorseVideoEditUsesMinimumTotalDurationForPrecharge(t *testing.T) {
+	req := &AliVideoRequest{
+		Model:      "happyhorse-1.0-video-edit",
+		Parameters: &AliVideoParameters{},
+	}
+	if got := effectiveDuration(req); got != 6 {
+		t.Fatalf("video edit precharge duration=%d, want 6", got)
+	}
+}
+
+func TestHappyHorseAdjustBillingOnCompleteUsesOfficialTotalDuration(t *testing.T) {
+	task := &model.Task{
+		Data:       []byte(`{"output":{"task_status":"SUCCEEDED"},"usage":{"duration":13.24,"input_video_duration":6.62,"output_video_duration":6.62,"video_count":1,"SR":1080}}`),
+		Properties: model.Properties{UpstreamModelName: "happyhorse-1.0-video-edit"},
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+			OriginModelName: "happyhorse-1.0-video-edit",
+			GroupRatio:      1.5,
+			VideoUsage: &model.VideoUsageSnapshot{
+				Resolution: "1080P", OutputSeconds: 6, HasVideoInput: true,
+			},
+		}},
+	}
+
+	got := (&TaskAdaptor{}).AdjustBillingOnComplete(task, nil)
+	want := int(float64(int(billing_setting.VideoBasePrice*common.QuotaPerUnit*1.5)) * 13.24 * 0.24)
+	if got != want {
+		t.Fatalf("actual quota=%d, want %d", got, want)
+	}
+	if snap := task.PrivateData.BillingContext.VideoUsage; snap == nil || snap.OutputSeconds != 13.24 || snap.Resolution != "1080P" {
+		t.Fatalf("billing context did not record actual usage: %#v", snap)
+	}
+}
+
+func TestHappyHorseAdjustBillingOnCompleteRequiresOfficialUsage(t *testing.T) {
+	task := &model.Task{
+		Data:       []byte(`{"output":{"task_status":"SUCCEEDED"}}`),
+		Properties: model.Properties{UpstreamModelName: "happyhorse-1.1-t2v"},
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+			OriginModelName: "happyhorse-1.1-t2v",
+			GroupRatio:      1,
+		}},
+	}
+	if got := (&TaskAdaptor{}).AdjustBillingOnComplete(task, nil); got != 0 {
+		t.Fatalf("quota=%d, want 0 without official usage", got)
+	}
+}
+
+func TestHappyHorseI2VConversion(t *testing.T) {
+	got, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, relaycommon.TaskSubmitReq{
+		Model:          "happyhorse-1.1-i2v",
+		InputReference: "https://example.com/first.png",
+		Metadata: map[string]interface{}{
+			"resolution": "720P",
+			"watermark":  false,
+			"seed":       0,
+		},
+	})
+	if err != nil {
+		t.Fatalf("convert i2v request: %v", err)
+	}
+	if len(got.Input.Media) != 1 || got.Input.Media[0].Type != "first_frame" {
+		t.Fatalf("unexpected i2v media: %#v", got.Input.Media)
+	}
+	if got.Parameters.Ratio != nil {
+		t.Fatalf("i2v must not send ratio: %#v", got.Parameters.Ratio)
+	}
+	if got.Parameters.Duration == nil || *got.Parameters.Duration != 5 {
+		t.Fatalf("unexpected i2v duration: %#v", got.Parameters.Duration)
+	}
+	if got.Parameters.Watermark == nil || *got.Parameters.Watermark {
+		t.Fatalf("i2v watermark=false was not preserved: %#v", got.Parameters.Watermark)
+	}
+	if got.Parameters.Seed == nil || *got.Parameters.Seed != 0 {
+		t.Fatalf("i2v seed=0 was not preserved: %#v", got.Parameters.Seed)
+	}
+}
+
+func TestHappyHorseR2VConversion(t *testing.T) {
+	got, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, relaycommon.TaskSubmitReq{
+		Model:  "happyhorse-1.0-r2v",
+		Prompt: "use [Image 1] and [Image 2]",
+		Images: []string{"https://example.com/1.png", "https://example.com/2.png"},
+		Metadata: map[string]interface{}{
+			"ratio": "9:16",
+		},
+	})
+	if err != nil {
+		t.Fatalf("convert r2v request: %v", err)
+	}
+	if len(got.Input.Media) != 2 {
+		t.Fatalf("unexpected r2v media count: %#v", got.Input.Media)
+	}
+	for _, media := range got.Input.Media {
+		if media.Type != "reference_image" {
+			t.Fatalf("unexpected r2v media: %#v", got.Input.Media)
+		}
+	}
+	if got.Parameters.Ratio == nil || *got.Parameters.Ratio != "9:16" {
+		t.Fatalf("unexpected r2v ratio: %#v", got.Parameters.Ratio)
+	}
+}
+
+func TestHappyHorseVideoEditConversion(t *testing.T) {
+	got, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, relaycommon.TaskSubmitReq{
+		Model:  "happyhorse-1.0-video-edit",
+		Prompt: "replace the clothes",
+		Metadata: map[string]interface{}{
+			"content": []interface{}{
+				map[string]interface{}{"type": "image_url", "role": "reference_image", "image_url": map[string]interface{}{"url": "https://example.com/clothes.png"}},
+				map[string]interface{}{"type": "video_url", "role": "reference_video", "video_url": map[string]interface{}{"url": "https://example.com/source.mp4"}},
+			},
+			"audio_setting": "origin",
+			"watermark":     false,
+			"seed":          0,
+		},
+	})
+	if err != nil {
+		t.Fatalf("convert video edit request: %v", err)
+	}
+	if len(got.Input.Media) != 2 || got.Input.Media[0].Type != "video" || got.Input.Media[1].Type != "reference_image" {
+		t.Fatalf("unexpected video edit media: %#v", got.Input.Media)
+	}
+	if got.Parameters.Duration != nil || got.Parameters.Ratio != nil {
+		t.Fatalf("video edit sent unsupported duration/ratio: %#v", got.Parameters)
+	}
+	if got.Parameters.AudioSetting == nil || *got.Parameters.AudioSetting != "origin" {
+		t.Fatalf("unexpected audio_setting: %#v", got.Parameters.AudioSetting)
+	}
+	if got.Parameters.Watermark == nil || *got.Parameters.Watermark {
+		t.Fatalf("video edit watermark=false was not preserved: %#v", got.Parameters.Watermark)
+	}
+}
+
+func TestHappyHorseSubtypeValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		req  relaycommon.TaskSubmitReq
+	}{
+		{
+			name: "i2v missing first frame",
+			req:  relaycommon.TaskSubmitReq{Model: "happyhorse-1.1-i2v"},
+		},
+		{
+			name: "i2v ratio unsupported",
+			req: relaycommon.TaskSubmitReq{
+				Model:          "happyhorse-1.1-i2v",
+				InputReference: "https://example.com/first.png",
+				Metadata:       map[string]interface{}{"ratio": "16:9"},
+			},
+		},
+		{
+			name: "r2v too many images",
+			req: relaycommon.TaskSubmitReq{
+				Model:  "happyhorse-1.1-r2v",
+				Prompt: "test",
+				Images: []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"},
+			},
+		},
+		{
+			name: "edit missing video",
+			req: relaycommon.TaskSubmitReq{
+				Model:  "happyhorse-1.0-video-edit",
+				Prompt: "test",
+				Images: []string{"https://example.com/ref.png"},
+			},
+		},
+		{
+			name: "edit invalid audio setting",
+			req: relaycommon.TaskSubmitReq{
+				Model:  "happyhorse-1.0-video-edit",
+				Prompt: "test",
+				Metadata: map[string]interface{}{
+					"media":         []interface{}{map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4"}},
+					"audio_setting": "mute",
+				},
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, test.req); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestHappyHorseVideoEditFloatUsageResponse(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"output":{"task_id":"task","task_status":"SUCCEEDED","video_url":"https://example.com/result.mp4"},
+		"usage":{"duration":13.24,"input_video_duration":6.62,"output_video_duration":6.62,"video_count":1,"SR":720}
+	}`))
+	if err != nil {
+		t.Fatalf("parse float usage response: %v", err)
+	}
+	if result.Status != model.TaskStatusSuccess || result.Url == "" {
+		t.Fatalf("unexpected task result: %#v", result)
+	}
+}
+
 func TestHappyHorseValidation(t *testing.T) {
 	tests := []struct {
 		name     string
 		metadata map[string]interface{}
 	}{
 		{name: "resolution", metadata: map[string]interface{}{"resolution": "1440P"}},
+		{name: "unsupported 480P", metadata: map[string]interface{}{"resolution": "480P"}},
 		{name: "ratio", metadata: map[string]interface{}{"ratio": "2:1"}},
 		{name: "duration", metadata: map[string]interface{}{"duration": 2}},
 		{name: "media", metadata: map[string]interface{}{"first_frame_url": "https://example.com/a.png"}},
@@ -370,13 +630,16 @@ func TestMetadataCannotOverrideModel(t *testing.T) {
 
 func TestAliBaseURLNormalization(t *testing.T) {
 	tests := map[string]string{
-		"https://workspace.cn-beijing.maas.aliyuncs.com":        "https://workspace.cn-beijing.maas.aliyuncs.com",
-		"https://workspace.cn-beijing.maas.aliyuncs.com/":       "https://workspace.cn-beijing.maas.aliyuncs.com",
-		"https://workspace.cn-beijing.maas.aliyuncs.com/api/v1": "https://workspace.cn-beijing.maas.aliyuncs.com",
-		"https://workspace.ap-southeast-1.maas.aliyuncs.com":    "https://workspace.ap-southeast-1.maas.aliyuncs.com",
-		"https://dashscope-us.aliyuncs.com/api/v1":              "https://dashscope-us.aliyuncs.com",
-		"https://workspace.eu-central-1.maas.aliyuncs.com":      "https://workspace.eu-central-1.maas.aliyuncs.com",
-		"https://workspace.ap-northeast-1.maas.aliyuncs.com":    "https://workspace.ap-northeast-1.maas.aliyuncs.com",
+		"https://workspace.cn-beijing.maas.aliyuncs.com":          "https://workspace.cn-beijing.maas.aliyuncs.com",
+		"https://workspace.cn-beijing.maas.aliyuncs.com/":         "https://workspace.cn-beijing.maas.aliyuncs.com",
+		"https://workspace.cn-beijing.maas.aliyuncs.com/api":      "https://workspace.cn-beijing.maas.aliyuncs.com",
+		"https://workspace.cn-beijing.maas.aliyuncs.com/api/":     "https://workspace.cn-beijing.maas.aliyuncs.com",
+		"https://workspace.cn-beijing.maas.aliyuncs.com/api/v1":   "https://workspace.cn-beijing.maas.aliyuncs.com",
+		"https://workspace.ap-southeast-1.maas.aliyuncs.com":      "https://workspace.ap-southeast-1.maas.aliyuncs.com",
+		"https://ws-example.ap-southeast-1.maas.aliyuncs.com/api": "https://ws-example.ap-southeast-1.maas.aliyuncs.com",
+		"https://dashscope-us.aliyuncs.com/api/v1":                "https://dashscope-us.aliyuncs.com",
+		"https://workspace.eu-central-1.maas.aliyuncs.com":        "https://workspace.eu-central-1.maas.aliyuncs.com",
+		"https://workspace.ap-northeast-1.maas.aliyuncs.com":      "https://workspace.ap-northeast-1.maas.aliyuncs.com",
 	}
 	for input, want := range tests {
 		got, err := normalizeAliBaseURL(input)
@@ -419,27 +682,35 @@ func TestFetchTaskUsesNormalizedRegionalBaseAndSubmissionKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	resp, err := (&TaskAdaptor{}).FetchTask(server.URL+"/api/v1", "ali-task-key", map[string]any{
-		"task_id": "upstream-task",
-	}, "")
-	if err != nil {
-		t.Fatalf("FetchTask: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
+	for _, suffix := range []string{"/api", "/api/v1"} {
+		resp, err := (&TaskAdaptor{}).FetchTask(server.URL+suffix, "ali-task-key", map[string]any{
+			"task_id": "upstream-task",
+		}, "")
+		if err != nil {
+			t.Fatalf("FetchTask with %s: %v", suffix, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status with %s=%d", suffix, resp.StatusCode)
+		}
 	}
 }
 
-func TestBuildRequestURLAcceptsAPIv1Base(t *testing.T) {
-	adaptor := &TaskAdaptor{baseURL: "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/"}
-	got, err := adaptor.BuildRequestURL(&relaycommon.RelayInfo{})
-	if err != nil {
-		t.Fatalf("BuildRequestURL: %v", err)
-	}
+func TestBuildRequestURLAcceptsWorkspaceAPIBase(t *testing.T) {
 	want := "https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
-	if got != want {
-		t.Fatalf("request URL=%q, want=%q", got, want)
+	for _, baseURL := range []string{
+		"https://workspace.cn-beijing.maas.aliyuncs.com",
+		"https://workspace.cn-beijing.maas.aliyuncs.com/api",
+		"https://workspace.cn-beijing.maas.aliyuncs.com/api/v1/",
+	} {
+		adaptor := &TaskAdaptor{baseURL: baseURL}
+		got, err := adaptor.BuildRequestURL(&relaycommon.RelayInfo{})
+		if err != nil {
+			t.Fatalf("BuildRequestURL with %q: %v", baseURL, err)
+		}
+		if got != want {
+			t.Fatalf("request URL with %q=%q, want=%q", baseURL, got, want)
+		}
 	}
 }
 

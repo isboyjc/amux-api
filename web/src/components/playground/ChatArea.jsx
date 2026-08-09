@@ -68,8 +68,12 @@ const ChatArea = ({
   paramValues,
   onParamValuesChange,
   loading,
+  promptOptional,
   acceptsReferenceImage,
   showUploadButton,
+  supportsImageInputSlot,
+  supportsVideoInputSlot,
+  supportsAudioInputSlot,
   referenceImages,
   onAddReferenceImage,
   onRemoveReferenceImage,
@@ -418,11 +422,15 @@ const ChatArea = ({
         onSubmit={onMessageSend}
         onTranscribeAudio={onTranscribeAudio}
         onStop={onStopGenerator}
+        promptOptional={promptOptional}
         paramSchema={paramSchema}
         paramValues={paramValues}
         onParamValuesChange={onParamValuesChange}
         acceptsReferenceImage={acceptsReferenceImage}
         showUploadButton={showUploadButton}
+        supportsImageInputSlot={supportsImageInputSlot}
+        supportsVideoInputSlot={supportsVideoInputSlot}
+        supportsAudioInputSlot={supportsAudioInputSlot}
         referenceImages={referenceImages}
         onAddReferenceImage={onAddReferenceImage}
         onRemoveReferenceImage={onRemoveReferenceImage}

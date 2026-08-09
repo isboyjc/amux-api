@@ -29,6 +29,11 @@ var defaultEndpointInfoMap = map[constant.EndpointType]EndpointInfo{
 	// —— 前端对空 path 会连方法一起隐藏。这里补上站内统一视频协议的入口，
 	// 它对所有视频渠道都适用。
 	constant.EndpointTypeOpenAIVideo: {Path: "/v1/video/generations", Method: "POST"},
+	// 阿里云百炼 DashScope 官方视频异步任务提交协议。任务查询入口为
+	// GET /api/v1/tasks/{task_id}，与官方 API 保持一致。
+	constant.EndpointTypeDashScopeVideo: {
+		Path: "/api/v1/services/aigc/video-generation/video-synthesis", Method: "POST",
+	},
 	// 火山方舟 v3 原生协议：路由组 /api/v3/contents/generations + POST /tasks，
 	// 见 router/video-router.go。有了默认值，管理员不必在每个模型上手填 path
 	// ——手填还有个坑：path 是按端点类型存进全局表的，填错会影响同类型的所有模型。

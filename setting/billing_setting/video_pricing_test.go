@@ -104,6 +104,40 @@ func TestComputeVideoCost_OfficialPriceTable(t *testing.T) {
 	}
 }
 
+func TestComputeVideoCost_HappyHorseOfficialPriceTable(t *testing.T) {
+	cases := []struct {
+		model      string
+		resolution string
+		seconds    float64
+		want       float64
+	}{
+		{model: "happyhorse-1.1-t2v", resolution: "720P", seconds: 5, want: 0.70},
+		{model: "happyhorse-1.1-i2v", resolution: "1080P", seconds: 5, want: 0.90},
+		{model: "happyhorse-1.1-r2v", resolution: "1080P", seconds: 10, want: 1.80},
+		{model: "happyhorse-1.0-t2v", resolution: "720P", seconds: 5, want: 0.70},
+		{model: "happyhorse-1.0-i2v", resolution: "1080P", seconds: 5, want: 1.20},
+		{model: "happyhorse-1.0-r2v", resolution: "1080P", seconds: 10, want: 2.40},
+		{model: "happyhorse-1.0-video-edit", resolution: "1080P", seconds: 13.24, want: 3.1776},
+	}
+	for _, tc := range cases {
+		t.Run(tc.model+"/"+tc.resolution, func(t *testing.T) {
+			got, err := ComputeVideoCost(tc.model, VideoUsage{
+				Resolution: tc.resolution, OutputSeconds: tc.seconds,
+			})
+			if err != nil {
+				t.Fatalf("ComputeVideoCost failed: %v", err)
+			}
+			assertMoney(t, "Total", got.Total, tc.want)
+		})
+	}
+
+	if _, err := ComputeVideoCost("happyhorse-1.1-t2v", VideoUsage{
+		Resolution: "480P", OutputSeconds: 5,
+	}); err == nil {
+		t.Fatal("HappyHorse 480P must be rejected when no official price exists")
+	}
+}
+
 // TestComputeVideoCost_TotalIsSumOfParts 保证 Total 永远等于各项之和——
 // 明细会写进日志用于对账，两者不一致比算错更难排查。
 func TestComputeVideoCost_TotalIsSumOfParts(t *testing.T) {
@@ -778,7 +812,17 @@ func TestDefaultVideoPricingJSON(t *testing.T) {
 		t.Fatalf("内置价目表序列化后解析不回来: %v", err)
 	}
 
-	for _, name := range []string{"MiniMax-H3", "doubao-seedance-2-5"} {
+	for _, name := range []string{
+		"happyhorse-1.1-t2v",
+		"happyhorse-1.1-i2v",
+		"happyhorse-1.1-r2v",
+		"happyhorse-1.0-t2v",
+		"happyhorse-1.0-i2v",
+		"happyhorse-1.0-r2v",
+		"happyhorse-1.0-video-edit",
+		"MiniMax-H3",
+		"doubao-seedance-2-5",
+	} {
 		spec, ok := parsed[name]
 		if !ok {
 			t.Fatalf("内置价目表里缺 %s", name)

@@ -88,7 +88,9 @@ func getAliMultipartMedia(c *gin.Context) (*aliMultipartMedia, error) {
 	}
 	maxFiles := 1
 	if selectedField == "images" {
-		maxFiles = 2
+		// HappyHorse r2v 最多接受 9 张参考图；具体模型的更小上限由请求
+		// 转换后的模型级校验负责收紧（例如 Wan 2.7 仍然最多 2 张）。
+		maxFiles = 9
 	}
 	if len(selectedFiles) > maxFiles {
 		return nil, fmt.Errorf("multipart field %s accepts at most %d image(s)", selectedField, maxFiles)

@@ -18,6 +18,7 @@ var endpointModalityPriority = []struct {
 }{
 	{constant.EndpointTypeImageGeneration, constant.ModalityImage},
 	{constant.EndpointTypeOpenAIVideo, constant.ModalityVideo},
+	{constant.EndpointTypeDashScopeVideo, constant.ModalityVideo},
 	{constant.EndpointTypeJinaRerank, constant.ModalityRerank},
 	{constant.EndpointTypeEmbeddings, constant.ModalityEmbedding},
 }

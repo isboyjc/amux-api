@@ -133,6 +133,15 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 	}
 }
 
+func markTaskAsVideo(task *model.Task) {
+	task.Properties.OriginModelName = "MiniMax-H3"
+	task.PrivateData.BillingContext.OriginModelName = "MiniMax-H3"
+	task.PrivateData.BillingContext.VideoUsage = &model.VideoUsageSnapshot{
+		Resolution:    "2K",
+		OutputSeconds: 10,
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Read-back helpers
 // ---------------------------------------------------------------------------
@@ -199,6 +208,7 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	markTaskAsVideo(task)
 
 	RefundTaskQuota(ctx, task, "task failed: upstream error")
 
@@ -214,7 +224,14 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, preConsumed, log.Quota)
-	assert.Equal(t, "test-model", log.ModelName)
+	assert.Equal(t, "MiniMax-H3", log.ModelName)
+	assert.Equal(t, "视频任务退款", log.Content)
+	var other map[string]interface{}
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "failure_refund", other["billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(0), other["actual_quota"])
+	assert.Equal(t, float64(-preConsumed), other["settlement_delta"])
 }
 
 func TestRefundTaskQuota_Subscription(t *testing.T) {
@@ -305,6 +322,7 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	markTaskAsVideo(task)
 
 	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
 
@@ -322,6 +340,13 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
 	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+	assert.Equal(t, "视频任务补扣", log.Content)
+	var other map[string]interface{}
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "settlement", other["billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(actualQuota), other["actual_quota"])
+	assert.Equal(t, float64(actualQuota-preConsumed), other["settlement_delta"])
 }
 
 func TestRecalculate_NegativeDelta(t *testing.T) {
@@ -338,6 +363,7 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	markTaskAsVideo(task)
 
 	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
 
@@ -355,6 +381,13 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	assert.Equal(t, "视频任务退款", log.Content)
+	var other map[string]interface{}
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "settlement", other["billing_stage"])
+	assert.Equal(t, float64(preConsumed), other["pre_consumed_quota"])
+	assert.Equal(t, float64(actualQuota), other["actual_quota"])
+	assert.Equal(t, float64(actualQuota-preConsumed), other["settlement_delta"])
 }
 
 func TestRecalculate_ZeroDelta(t *testing.T) {

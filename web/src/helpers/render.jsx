@@ -1797,6 +1797,47 @@ export function renderVideoBillingProcess(other) {
 
   const lines = [];
 
+  const stage =
+    other?.billing_stage ||
+    (other?.task_id != null ? 'settlement' : 'pre_consume');
+  const hasPreConsumed = Number.isFinite(Number(other?.pre_consumed_quota));
+  const hasActual = Number.isFinite(Number(other?.actual_quota));
+  const preConsumed = hasPreConsumed ? Number(other.pre_consumed_quota) : 0;
+  const actual = hasActual ? Number(other.actual_quota) : preConsumed;
+  const rawDelta = Number.isFinite(Number(other?.settlement_delta))
+    ? Number(other.settlement_delta)
+    : actual - preConsumed;
+
+  if (stage === 'pre_consume') {
+    lines.push(buildBillingText('视频任务预扣'));
+    if (hasPreConsumed) {
+      lines.push(
+        buildBillingText('预扣 {{amount}}', {
+          amount: renderQuota(preConsumed, 6),
+        }),
+      );
+    }
+  } else if (stage !== 'pre_consume' && hasPreConsumed && hasActual) {
+    const isRefund = rawDelta < 0;
+    lines.push(
+      isRefund
+        ? buildBillingText('视频任务退款')
+        : buildBillingText('视频任务补扣'),
+    );
+    lines.push(
+      buildBillingText(
+        isRefund
+          ? '预扣 {{pre}}，实际 {{actual}}，退还 {{delta}}'
+          : '预扣 {{pre}}，实际 {{actual}}，补扣 {{delta}}',
+        {
+          pre: renderQuota(preConsumed, 6),
+          actual: renderQuota(actual, 6),
+          delta: renderQuota(Math.abs(rawDelta), 6),
+        },
+      ),
+    );
+  }
+
   // 分项：只列真正产生费用的项，避免一堆 $0.000000 干扰阅读
   if (num(detail.output) > 0) {
     lines.push(
