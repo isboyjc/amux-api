@@ -150,10 +150,7 @@ function renderType(type, t) {
 
 function buildStreamStatusTooltip(ss, t) {
   if (!ss) return null;
-  const lines = [
-    t('流状态') + '：' + t('异常'),
-    (ss.end_reason || 'unknown'),
-  ];
+  const lines = [t('流状态') + '：' + t('异常'), ss.end_reason || 'unknown'];
   if (ss.error_count > 0) {
     lines.push(`${t('软错误')}: ${ss.error_count}`);
   }
@@ -191,11 +188,7 @@ function renderIsStream(bool, t, streamStatus) {
                 userSelect: 'none',
               }}
             >
-              <CircleAlert
-                size={14}
-                strokeWidth={2.5}
-                color='currentColor'
-              />
+              <CircleAlert size={14} strokeWidth={2.5} color='currentColor' />
             </span>
           </Tooltip>
         )}
@@ -436,6 +429,62 @@ function renderCompactDetailSummary(summarySegments) {
 function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   const other = getLogOther(record.other);
 
+  if (other?.video_billing) {
+    const stage =
+      other.billing_stage ||
+      (other.task_id != null ? 'settlement' : 'pre_consume');
+    const preConsumed = Number.isFinite(Number(other.pre_consumed_quota))
+      ? Number(other.pre_consumed_quota)
+      : Number(record.quota) || 0;
+    let actual = Number(other.actual_quota);
+    if (!Number.isFinite(actual)) {
+      actual =
+        record.type === 6 ? 0 : preConsumed + (Number(record.quota) || 0);
+    }
+    const delta = Math.abs(
+      Number.isFinite(Number(other.settlement_delta))
+        ? Number(other.settlement_delta)
+        : actual - preConsumed,
+    );
+
+    if (stage === 'pre_consume') {
+      return {
+        segments: [
+          { text: t('视频任务预扣'), tone: 'primary' },
+          {
+            text: t('预扣 {{amount}}', {
+              amount: renderQuota(preConsumed, 6),
+            }),
+            tone: 'secondary',
+          },
+        ],
+      };
+    }
+
+    const isRefund = record.type === 6 || actual < preConsumed;
+    return {
+      segments: [
+        {
+          text: isRefund ? t('视频任务退款') : t('视频任务补扣'),
+          tone: 'primary',
+        },
+        {
+          text: t(
+            isRefund
+              ? '预扣 {{pre}}，实际 {{actual}}，退还 {{delta}}'
+              : '预扣 {{pre}}，实际 {{actual}}，补扣 {{delta}}',
+            {
+              pre: renderQuota(preConsumed, 6),
+              actual: renderQuota(actual, 6),
+              delta: renderQuota(delta, 6),
+            },
+          ),
+          tone: 'secondary',
+        },
+      ],
+    };
+  }
+
   if (record.type === 6) {
     return {
       segments: [{ text: t('异步任务退款'), tone: 'primary' }],
@@ -470,7 +519,11 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     };
   }
 
-  const summaryOpts = { ...other, displayMode: billingDisplayMode, outputMode: 'segments' };
+  const summaryOpts = {
+    ...other,
+    displayMode: billingDisplayMode,
+    outputMode: 'segments',
+  };
 
   if (other?.billing_mode === 'tiered_expr') {
     return {

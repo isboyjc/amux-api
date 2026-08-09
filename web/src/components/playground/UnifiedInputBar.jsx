@@ -61,7 +61,8 @@ import { inferVendorIconKey, inferVendorMeta } from './vendorIcon';
 
 // (model, group) 组合在 Select 里的编码方式，与之前 SettingsPanel 沿用一致
 const MODEL_GROUP_SEP = '@@';
-const encodeMG = (model, group) => `${model || ''}${MODEL_GROUP_SEP}${group || ''}`;
+const encodeMG = (model, group) =>
+  `${model || ''}${MODEL_GROUP_SEP}${group || ''}`;
 const decodeMG = (value) => {
   if (typeof value !== 'string' || !value) return { model: '', group: '' };
   const idx = value.indexOf(MODEL_GROUP_SEP);
@@ -130,10 +131,7 @@ const ModelGroupRow = ({ entry, isSelected = false }) => {
         >
           {model}
         </Typography.Text>
-        <div
-          className='flex items-center gap-1.5'
-          style={{ marginTop: 2 }}
-        >
+        <div className='flex items-center gap-1.5' style={{ marginTop: 2 }}>
           {/* 倍率 + 分组标识合并到一个 Tag：倍率在前（按数值上色，传达
               价格信号），分组用 raw 标识（premium / default 这种），不再
               展示后台填的「高级稳定分组」描述——标识更短、更稳定，
@@ -162,9 +160,7 @@ const ModelGroupRow = ({ entry, isSelected = false }) => {
                 }}
               >
                 {typeof ratio === 'number' && <span>{ratio}x</span>}
-                {group && (
-                  <span style={{ opacity: 0.85 }}>{group}</span>
-                )}
+                {group && <span style={{ opacity: 0.85 }}>{group}</span>}
               </span>
             </Tag>
           )}
@@ -279,7 +275,11 @@ const ModelPickerPill = ({
       const meta = inferVendorMeta(e.model);
       const key = meta.name;
       if (!buckets.has(key)) {
-        buckets.set(key, { name: meta.name, iconKey: meta.iconKey, entries: [] });
+        buckets.set(key, {
+          name: meta.name,
+          iconKey: meta.iconKey,
+          entries: [],
+        });
       }
       buckets.get(key).entries.push(e);
     });
@@ -498,7 +498,12 @@ const ModelPickerPill = ({
             size='small'
             shape='circle'
             color={ratioColor(currentEntry?.ratio)}
-            style={{ fontSize: 10, lineHeight: 1, padding: '0 6px', height: 16 }}
+            style={{
+              fontSize: 10,
+              lineHeight: 1,
+              padding: '0 6px',
+              height: 16,
+            }}
           >
             {triggerRatio}
           </Tag>
@@ -593,7 +598,8 @@ const ReferenceImageStack = ({
     let angle = ARC_ANGLE_START + (ARC_ANGLE_END - ARC_ANGLE_START) * t01;
     if (hoveredIdx != null && hoveredIdx !== i) {
       const d = i - hoveredIdx;
-      if (d === -1) angle += 22; // 紧邻右侧，往右挪
+      if (d === -1)
+        angle += 22; // 紧邻右侧，往右挪
       else if (d === 1) angle -= 22; // 紧邻左侧，往左挪
     }
     const a = (angle * Math.PI) / 180;
@@ -998,7 +1004,10 @@ const ModeSelector = ({ mode, onModeChange, disabled, t }) => {
 // 里出现，避免工具栏被堆满。匹配用 normKey（小写 + 去空格/_/-）跨模型
 // 命中：例如 "Aspect Ratio"、"aspect_ratio"、"aspectRatio" 都归一到
 // "aspectratio"。
-const normKey = (k) => String(k || '').toLowerCase().replace(/[\s_-]+/g, '');
+const normKey = (k) =>
+  String(k || '')
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
 const TOOLBAR_PARAM_KEYS = new Set([
   'size',
   'imagesize',
@@ -1040,7 +1049,9 @@ const isToolbarParam = (key, def) => {
 // 比对时统一 String() 化。未声明 label 时回退原值的字符串形式。
 const makeLabelFor = (def) => {
   const map =
-    def?.enumLabels && typeof def.enumLabels === 'object' ? def.enumLabels : null;
+    def?.enumLabels && typeof def.enumLabels === 'object'
+      ? def.enumLabels
+      : null;
   return (raw) => {
     if (raw === undefined || raw === null) return null;
     if (map && Object.prototype.hasOwnProperty.call(map, String(raw))) {
@@ -1059,7 +1070,14 @@ const getSchemaShortTitle = (def, key) => {
   return raw.replace(/\s*[(（][^()（）]*[)）]\s*$/u, '').trim() || raw;
 };
 
-const SchemaParamSelector = ({ paramKey, def, value, onChange, disabled, t }) => {
+const SchemaParamSelector = ({
+  paramKey,
+  def,
+  value,
+  onChange,
+  disabled,
+  t,
+}) => {
   const [open, setOpen] = useState(false);
   const enumValues = Array.isArray(def?.enum) ? def.enum : null;
   const isRange = !enumValues && isBoundedNumberParam(def);
@@ -1160,59 +1178,57 @@ const SchemaParamSelector = ({ paramKey, def, value, onChange, disabled, t }) =>
       >
         {title}
       </div>
-      {enumValues
-        ? enumValues.map((opt) => optionButton(opt, labelFor(opt)))
-        : (
-          <>
-            {specialEntries.map(([raw, label]) => {
-              // enumLabels 的 key 是字符串，按 schema type 还原成数字
-              const numeric = Number(raw);
-              const rawVal = Number.isFinite(numeric) ? numeric : raw;
-              return optionButton(rawVal, label);
-            })}
-            {specialEntries.length > 0 && (
-              <div
-                style={{
-                  height: 1,
-                  background: 'var(--semi-color-border)',
-                  margin: '4px 6px',
-                }}
-              />
-            )}
+      {enumValues ? (
+        enumValues.map((opt) => optionButton(opt, labelFor(opt)))
+      ) : (
+        <>
+          {specialEntries.map(([raw, label]) => {
+            // enumLabels 的 key 是字符串，按 schema type 还原成数字
+            const numeric = Number(raw);
+            const rawVal = Number.isFinite(numeric) ? numeric : raw;
+            return optionButton(rawVal, label);
+          })}
+          {specialEntries.length > 0 && (
             <div
               style={{
-                padding: '6px 10px 4px',
-                fontSize: 11,
-                color: 'var(--semi-color-text-2)',
+                height: 1,
+                background: 'var(--semi-color-border)',
+                margin: '4px 6px',
               }}
-            >
-              {t('自定义（{{min}}-{{max}}）', {
-                min: def.minimum,
-                max: def.maximum,
-              })}
-            </div>
-            <div style={{ padding: '0 10px 8px' }}>
-              <InputNumber
-                value={
-                  typeof currentRaw === 'number' ? currentRaw : def?.default
-                }
-                min={def.minimum}
-                max={def.maximum}
-                step={def.type === 'integer' ? 1 : def.step || 0.1}
-                precision={def.type === 'integer' ? 0 : undefined}
-                size='small'
-                style={{ width: '100%' }}
-                onChange={(v) => {
-                  // InputNumber 在空字符串时回 ''；空值不写回，保留默认
-                  if (v === '' || v === null || v === undefined) return;
-                  const num = Number(v);
-                  if (!Number.isFinite(num)) return;
-                  onChange?.(def.type === 'integer' ? Math.round(num) : num);
-                }}
-              />
-            </div>
-          </>
-        )}
+            />
+          )}
+          <div
+            style={{
+              padding: '6px 10px 4px',
+              fontSize: 11,
+              color: 'var(--semi-color-text-2)',
+            }}
+          >
+            {t('自定义（{{min}}-{{max}}）', {
+              min: def.minimum,
+              max: def.maximum,
+            })}
+          </div>
+          <div style={{ padding: '0 10px 8px' }}>
+            <InputNumber
+              value={typeof currentRaw === 'number' ? currentRaw : def?.default}
+              min={def.minimum}
+              max={def.maximum}
+              step={def.type === 'integer' ? 1 : def.step || 0.1}
+              precision={def.type === 'integer' ? 0 : undefined}
+              size='small'
+              style={{ width: '100%' }}
+              onChange={(v) => {
+                // InputNumber 在空字符串时回 ''；空值不写回，保留默认
+                if (v === '' || v === null || v === undefined) return;
+                const num = Number(v);
+                if (!Number.isFinite(num)) return;
+                onChange?.(def.type === 'integer' ? Math.round(num) : num);
+              }}
+            />
+          </div>
+        </>
+      )}
     </Dropdown.Menu>
   );
 
@@ -1397,10 +1413,7 @@ const VideoInputModeSelector = ({ mode, onModeChange, disabled, t }) => {
         >
           {getVideoInputModeLabel(t, current.key)}
         </span>
-        <ChevronDown
-          size={12}
-          style={{ color: 'var(--semi-color-text-2)' }}
-        />
+        <ChevronDown size={12} style={{ color: 'var(--semi-color-text-2)' }} />
       </button>
     </Dropdown>
   );
@@ -1423,13 +1436,7 @@ const FIRST_LAST_TOTAL_WIDTH = SLOT_SIZE * 2 + SWAP_WIDTH + SLOT_GAP * 2;
 //
 // 不放在缩略图 overflow:hidden 容器内：spinner / 重试图标位于角落，需要
 // 露出在缩略图外，避免被裁切。
-const UploadStatusBadge = ({
-  uploading,
-  failed,
-  uploadError,
-  onRetry,
-  t,
-}) => {
+const UploadStatusBadge = ({ uploading, failed, uploadError, onRetry, t }) => {
   if (!uploading && !failed) return null;
   if (uploading) {
     return (
@@ -1473,7 +1480,9 @@ const UploadStatusBadge = ({
         onRetry?.();
       }}
       aria-label={t('上传失败，点击重试')}
-      title={uploadError ? t('上传失败：') + uploadError : t('上传失败，点击重试')}
+      title={
+        uploadError ? t('上传失败：') + uploadError : t('上传失败，点击重试')
+      }
       style={{
         position: 'absolute',
         left: 4,
@@ -1526,7 +1535,9 @@ const FrameSlot = ({ image, onClick, onRemove, onRetryUpload, label, t }) => {
               background: 'var(--semi-color-fill-0)',
               boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
               // 失败时叠红色描边，让"这张没成功传上去"的状态在远处也能看到
-              border: image.failed ? '1.5px solid var(--semi-color-danger)' : 'none',
+              border: image.failed
+                ? '1.5px solid var(--semi-color-danger)'
+                : 'none',
               position: 'relative',
             }}
             title={label}
@@ -1543,7 +1554,9 @@ const FrameSlot = ({ image, onClick, onRemove, onRetryUpload, label, t }) => {
                 height: '100%',
                 objectFit: 'cover',
                 // 上传中给一点灰度，让用户视觉上感知"这张还没准备好"
-                filter: image.uploading ? 'grayscale(0.6) brightness(0.85)' : 'none',
+                filter: image.uploading
+                  ? 'grayscale(0.6) brightness(0.85)'
+                  : 'none',
                 transition: 'filter 200ms',
               }}
             />
@@ -1667,7 +1680,8 @@ const FRAME_SWAP_DURATION_MS = 320;
 // URL entry 用现成的远程 URL，统一字段 previewUrl 由父层派发时算好。
 const MediaChip = ({ item, mediaType, onRemove, t }) => {
   const Icon = mediaType === 'video' ? VideoIcon : Mic;
-  const label = item.name || item.url || (mediaType === 'video' ? t('视频') : t('音频'));
+  const label =
+    item.name || item.url || (mediaType === 'video' ? t('视频') : t('音频'));
   const canPreview = !!item.previewUrl && !item.failed;
 
   // 预览弹层的内容：视频用紧凑 320×180，音频用 320 宽的原生条
@@ -1818,12 +1832,7 @@ const MediaChip = ({ item, mediaType, onRemove, t }) => {
 
   if (!canPreview) return chipBody;
   return (
-    <Popover
-      trigger='click'
-      position='top'
-      content={previewBody}
-      showArrow
-    >
+    <Popover trigger='click' position='top' content={previewBody} showArrow>
       {chipBody}
     </Popover>
   );
@@ -2015,30 +2024,36 @@ const UnifiedInputBar = ({
 
   // 行为
   loading,
-  onSubmit,           // (text) => void  按当前 modality 由父层路由
-  onTranscribeAudio,  // (file) => void  STT：音频上传按钮直接触发转写
-  onStop,             // () => void       loading 时点发送按钮触发停止
+  onSubmit, // (text) => void  按当前 modality 由父层路由
+  onTranscribeAudio, // (file) => void  STT：音频上传按钮直接触发转写
+  onStop, // () => void       loading 时点发送按钮触发停止
+  promptOptional = false,
 
   // image / video 模型的快捷参数：schema 里所有 enum 字段（size, quality,
   // aspect_ratio…）暴露成工具栏小下拉，方便用户不开右栏就改主要参数。
-  paramSchema,            // { properties: { ... } } 不含 image input slots
+  paramSchema, // { properties: { ... } } 不含 image input slots
   paramValues = {},
-  onParamValuesChange,    // (next) => void
+  onParamValuesChange, // (next) => void
 
   // 「是否处理参考图请求」：true 时 paste/drag/picker 会调 onAddReferenceImage
   // （父层决定接受还是 toast 拒绝）；false 时所有上传通道直接静默
   acceptsReferenceImage = false,
-  // 「是否在右侧渲染上传按钮基座」：仅图片/视频模型且 schema 有 image
-  // input slot 时为 true。多模态模型 acceptsReferenceImage=true 但
-  // showUploadButton=false（仅 paste/drag）
+  // 「是否在右侧渲染上传按钮基座」：图片模型有 image 槽，或视频模型有任意
+  // image/video/audio 媒体槽时为 true。多模态模型 acceptsReferenceImage=true
+  // 但 showUploadButton=false（仅 paste/drag）。
   showUploadButton = false,
+  // 是否真的声明了 image / video / audio 媒体槽。无槽时父层也会传默认空
+  // 数组，因此不能用附件数组是否存在来反推模型能力。
+  supportsImageInputSlot = false,
+  supportsVideoInputSlot = false,
+  supportsAudioInputSlot = false,
 
   // 参考图统一表示：[{ key, dataUrl, name?, file?, uploading?, failed?,
   // uploadError? }]，由父层按 modality 派生。uploading/failed 标记仅在视频
   // 模型 R2 即时上传场景下有意义；其它场景全是 false。
   referenceImages = [],
-  onAddReferenceImage,    // (file: File, opts?: { targetRole }) => void
-  onRetryUpload,          // (file: File) => void —— 失败缩略图的重试回调
+  onAddReferenceImage, // (file: File, opts?: { targetRole }) => void
+  onRetryUpload, // (file: File) => void —— 失败缩略图的重试回调
   onRemoveReferenceImage, // (key: string) => void
 
   // 视频「全能参考 / 首尾帧」模式（仅 schema 同时含两类槽位时启用）
@@ -2046,7 +2061,7 @@ const UnifiedInputBar = ({
   videoInputMode = 'omni',
   onVideoInputModeChange,
   // 仅 first_last 模式生效：替换 ReferenceImageStack 的双上传 UI
-  firstLastFrameImages = null,   // { first: {dataUrl,name}|null, last: {...}|null }
+  firstLastFrameImages = null, // { first: {dataUrl,name}|null, last: {...}|null }
   onSwapFirstLastFrame,
   onRemoveFirstFrame,
   onRemoveLastFrame,
@@ -2071,8 +2086,7 @@ const UnifiedInputBar = ({
   // STT（语音识别）：audio modality 且模型名命中 whisper/transcribe 时，输入区
   // 改成「上传音频文件 → 点发送转写」：文本框禁用，左侧出现上传入口，选中的
   // 文件以 chip 形式挂着（不自动发送），点发送按钮才真正转写。
-  const isStt =
-    currentModality === MODALITY.AUDIO && isSttModel(inputs?.model);
+  const isStt = currentModality === MODALITY.AUDIO && isSttModel(inputs?.model);
   const sttFileInputRef = useRef(null);
   const [sttFile, setSttFile] = useState(null);
   const handleSttFilePick = (e) => {
@@ -2290,16 +2304,18 @@ const UnifiedInputBar = ({
   // 顺序。
   const pendingTargetRoleRef = useRef(null);
 
-  // 视频模型 omni 模式 + schema 声明视频/音频槽 时允许扩展类型；其它路径
-  // 退化为图片专属（image gen / multimodal / 视频 first_last / 文本）
+  // 上传选择器严格按 schema 声明的媒体槽开放类型。多模态对话的图片能力
+  // 不来自参数 schema，因此单独保留；视频 first_last 模式则固定为图片。
+  const allowImageUpload =
+    currentModality === MODALITY.MULTIMODAL || supportsImageInputSlot;
   const allowVideoUpload =
     currentModality === MODALITY.VIDEO &&
     videoInputMode === 'omni' &&
-    Array.isArray(referenceVideos);
+    supportsVideoInputSlot;
   const allowAudioUpload =
     currentModality === MODALITY.VIDEO &&
     videoInputMode === 'omni' &&
-    Array.isArray(referenceAudios);
+    supportsAudioInputSlot;
 
   const ingestFile = (file) => {
     if (!file) return;
@@ -2308,7 +2324,10 @@ const UnifiedInputBar = ({
     const isVideo = tp.startsWith('video/');
     const isAudio = tp.startsWith('audio/');
     if (!isImage && !isVideo && !isAudio) {
-      Toast.warning({ content: t('仅支持图片 / 视频 / 音频文件'), duration: 2 });
+      Toast.warning({
+        content: t('仅支持图片 / 视频 / 音频文件'),
+        duration: 2,
+      });
       return;
     }
     // 由父层决定接受还是 toast 拒绝（按当前 modality 决策）。这里不再
@@ -2378,14 +2397,18 @@ const UnifiedInputBar = ({
     pendingTargetRoleRef.current = null;
   };
 
-  // 全 modality 一视同仁：必须有非空 prompt 才能发送。先前曾允许"视频
-  // first_last 仅传首/末帧不写文本"，但实测上游服务商（Ali / Sora 等）
-  // 即便参考图齐全也会因缺 prompt 拒收——发送按钮维持可点反而误导用户
+  const hasOptionalVideoInput =
+    currentModality === MODALITY.VIDEO &&
+    promptOptional &&
+    (referenceImages.length > 0 ||
+      referenceVideos.length > 0 ||
+      referenceAudios.length > 0 ||
+      !!firstLastFrameImages?.first ||
+      !!firstLastFrameImages?.last);
   const canSend =
     !loading &&
     !!inputs?.model &&
-    // STT：有挂载的音频即可发送（无需文本）；其余模态照旧要非空 prompt
-    (isStt ? !!sttFile : text.trim().length > 0);
+    (isStt ? !!sttFile : text.trim().length > 0 || hasOptionalVideoInput);
   const handleSubmit = async () => {
     if (!canSend) return;
     if (isStt) {
@@ -2507,9 +2530,7 @@ const UnifiedInputBar = ({
                   type='button'
                   onClick={() => insertMentionFor(cand)}
                   onMouseEnter={() =>
-                    setMentionState((s) =>
-                      s ? { ...s, selectedIdx: i } : s,
-                    )
+                    setMentionState((s) => (s ? { ...s, selectedIdx: i } : s))
                   }
                   style={{
                     display: 'flex',
@@ -2600,7 +2621,8 @@ const UnifiedInputBar = ({
                         'ui-monospace, SFMono-Regular, Menlo, monospace',
                     }}
                   >
-                    @{tokenName}{cand.idx}
+                    @{tokenName}
+                    {cand.idx}
                   </span>
                 </button>
               );
@@ -2611,16 +2633,15 @@ const UnifiedInputBar = ({
         {/* 视频/音频参考素材 chip 行：仅 video-omni + 父层有内容时渲染。
             紧贴 textarea 顶端，水平滚动；图片仍走右上角的 ReferenceImageStack
             堆叠预览，不混进 chip 行 */}
-        {currentModality === MODALITY.VIDEO &&
-          videoInputMode === 'omni' && (
-            <MediaChipRow
-              videos={referenceVideos}
-              audios={referenceAudios}
-              onRemoveVideo={onRemoveReferenceVideo}
-              onRemoveAudio={onRemoveReferenceAudio}
-              t={t}
-            />
-          )}
+        {currentModality === MODALITY.VIDEO && videoInputMode === 'omni' && (
+          <MediaChipRow
+            videos={referenceVideos}
+            audios={referenceAudios}
+            onRemoveVideo={onRemoveReferenceVideo}
+            onRemoveAudio={onRemoveReferenceAudio}
+            t={t}
+          />
+        )}
 
         {/* 文本区：默认 4 行；右侧给参考图堆叠 / 首尾帧双上传预留空间 */}
         <textarea
@@ -2652,9 +2673,7 @@ const UnifiedInputBar = ({
               if (e.key === 'ArrowUp') {
                 e.preventDefault();
                 setMentionState((s) =>
-                  s
-                    ? { ...s, selectedIdx: Math.max(s.selectedIdx - 1, 0) }
-                    : s,
+                  s ? { ...s, selectedIdx: Math.max(s.selectedIdx - 1, 0) } : s,
                 );
                 return;
               }
@@ -2781,7 +2800,13 @@ const UnifiedInputBar = ({
                 <Plus size={20} />
               </button>
             ) : (
-              <div style={{ position: 'relative', width: THUMB_SIZE, height: THUMB_SIZE }}>
+              <div
+                style={{
+                  position: 'relative',
+                  width: THUMB_SIZE,
+                  height: THUMB_SIZE,
+                }}
+              >
                 <div
                   title={sttFile.name}
                   style={{
@@ -2801,7 +2826,9 @@ const UnifiedInputBar = ({
                 >
                   <Mic
                     size={20}
-                    style={{ color: 'var(--semi-color-pink-6, rgb(219, 39, 119))' }}
+                    style={{
+                      color: 'var(--semi-color-pink-6, rgb(219, 39, 119))',
+                    }}
                   />
                   <span
                     style={{
@@ -2858,7 +2885,7 @@ const UnifiedInputBar = ({
             videoInputMode === 'first_last'
               ? 'image/*'
               : [
-                  'image/*',
+                  allowImageUpload ? 'image/*' : '',
                   allowVideoUpload ? 'video/*' : '',
                   allowAudioUpload ? 'audio/*' : '',
                 ]

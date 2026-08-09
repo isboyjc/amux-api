@@ -81,6 +81,8 @@ import {
   splitSchema,
   filterSchemaByGroup,
   hasImageInputSlot,
+  hasMediaInputSlot,
+  isMediaInput,
 } from '../../components/playground/SchemaParamsRenderer';
 import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
 import { MODALITY } from '../../constants/playground.constants';
@@ -177,7 +179,8 @@ const Playground = () => {
   // 深链 model 参数：第一个 useEffect 解析后存这里，第二个 useEffect 等
   // inputs.model 切到目标 + schema 就绪再 coerce + 写入对应 state
   // 形如 { targetModel: 'gpt-5', raw: { temperature: '0.7', max_tokens: '2000' } }
-  const [pendingDeepLinkParams, setPendingDeepLinkParams] = React.useState(null);
+  const [pendingDeepLinkParams, setPendingDeepLinkParams] =
+    React.useState(null);
 
   const state = usePlaygroundState();
   const {
@@ -322,7 +325,6 @@ const Playground = () => {
   }, [inputs.model, inputs.group, modalityMap]);
   const imageParamSchema = imageSchemaSplit.paramsSchema;
   const imageInputsSchema = imageSchemaSplit.inputsSchema;
-
   // 少数视频模型（如 Seedance 2.5）官方支持无提示词的组合：纯首尾帧、甚至只
   // 传一段参考音频。这类模型在 schema 根上声明 `x-prompt-optional`，前端据此
   // 放行空 prompt——默认仍然必填，因为多数上游没有 prompt 会直接拒收。
@@ -399,9 +401,12 @@ const Playground = () => {
       };
       if (role === 'first_frame' && mediaType === 'image') firstFrame = slot;
       else if (role === 'last_frame' && mediaType === 'image') lastFrame = slot;
-      else if (role === 'reference_image' && mediaType === 'image') reference = slot;
-      else if (role === 'reference_video' && mediaType === 'video') video = slot;
-      else if (role === 'reference_audio' && mediaType === 'audio') audio = slot;
+      else if (role === 'reference_image' && mediaType === 'image')
+        reference = slot;
+      else if (role === 'reference_video' && mediaType === 'video')
+        video = slot;
+      else if (role === 'reference_audio' && mediaType === 'audio')
+        audio = slot;
     });
 
     // 2) 兜底：schema 没声明任何 role → 老 image gen schema，按字段名优先级
@@ -441,6 +446,13 @@ const Playground = () => {
     currentModality === MODALITY.VIDEO &&
     !!(imageInputSlots.firstFrame || imageInputSlots.lastFrame) &&
     !!imageInputSlots.reference;
+  // 只有首帧槽、没有末帧/全能参考槽的模型（例如 HappyHorse i2v）仍使用
+  // omni 的单图堆叠 UI；提交时保持 first_frame role，不降级为 reference_image。
+  const videoOmniImageSlot =
+    imageInputSlots.reference ||
+    (imageInputSlots.firstFrame && !imageInputSlots.lastFrame
+      ? imageInputSlots.firstFrame
+      : null);
 
   // image workspace 的参数值。schema 变化（切模型/切 workspace）时重置。
   const [imageParamValues, setImageParamValues] = React.useState({});
@@ -454,6 +466,36 @@ const Playground = () => {
   // 用 isFileEntry / isUrlEntry / isSlotEntry 区分；下面所有读 imageInputsValues
   // 的派生 / 提交逻辑都通过这套 typeguard，不再裸 instanceof File 判断
   const [imageInputsValues, setImageInputsValues] = React.useState({});
+
+  // JSON Schema 的 required 也会描述必须上传的媒体槽。HappyHorse i2v / r2v /
+  // video-edit 分别要求首帧、参考图、待编辑视频，操练场应在提交前直接提示，
+  // 不能把一个缺少必填素材的请求交给后端后才显示参数错误。
+  const validateRequiredMediaInputs = React.useCallback(() => {
+    const schema = imageSchemaSplit.rawSchema;
+    const required = Array.isArray(schema?.required) ? schema.required : [];
+    const props = schema?.properties || {};
+    for (const key of required) {
+      const def = props[key];
+      if (!isMediaInput(def)) continue;
+      const value = imageInputsValues?.[key];
+      const entries = Array.isArray(value)
+        ? value.filter(isSlotEntry)
+        : isSlotEntry(value)
+          ? [value]
+          : [];
+      const minimum =
+        def?.type === 'array' ? Math.max(def.minItems || 1, 1) : 1;
+      if (entries.length < minimum) {
+        showError(
+          t('请上传必填素材：{{name}}', {
+            name: def?.title || key,
+          }),
+        );
+        return false;
+      }
+    }
+    return true;
+  }, [imageSchemaSplit.rawSchema, imageInputsValues, t]);
 
   // ========== R2 即时上传（eager upload） ==========
   //
@@ -664,7 +706,9 @@ const Playground = () => {
         applied.push(`${key}=${coerced}`);
       });
       if (applied.length > 0) {
-        console.info(`${tag} applied ${applied.length} text params: ${applied.join(', ')}`);
+        console.info(
+          `${tag} applied ${applied.length} text params: ${applied.join(', ')}`,
+        );
       }
       setPendingDeepLinkParams(null);
       return;
@@ -704,7 +748,9 @@ const Playground = () => {
       setImageParamValues((prev) => ({ ...prev, ...next }));
     }
     if (applied.length > 0) {
-      console.info(`${tag} applied ${applied.length} schema params: ${applied.join(', ')}`);
+      console.info(
+        `${tag} applied ${applied.length} schema params: ${applied.join(', ')}`,
+      );
     }
     setPendingDeepLinkParams(null);
   }, [
@@ -826,8 +872,7 @@ const Playground = () => {
   // 图片生成（image workspace 专用）
   const { generate: generateImage, loading: imageGenerating } =
     useImageGeneration({
-      onDebug: (patch) =>
-        setDebugData((prev) => ({ ...prev, ...patch })),
+      onDebug: (patch) => setDebugData((prev) => ({ ...prev, ...patch })),
     });
 
   // 视频生成（video workspace 专用）—— hook 内部维护"提交 → 轮询 → 状态
@@ -838,16 +883,14 @@ const Playground = () => {
     loading: videoGenerating,
     startPolling: startVideoPolling,
   } = useVideoGeneration({
-    onDebug: (patch) =>
-      setDebugData((prev) => ({ ...prev, ...patch })),
+    onDebug: (patch) => setDebugData((prev) => ({ ...prev, ...patch })),
   });
 
   // 语音合成（audio workspace 专用）—— 同步请求：拿到音频二进制 → 转存 R2 →
   // 返回永久 URL，由 handleGenerateAudio 落到对应 assistant 消息上。
   const { generate: generateAudio, loading: audioGenerating } =
     useAudioGeneration({
-      onDebug: (patch) =>
-        setDebugData((prev) => ({ ...prev, ...patch })),
+      onDebug: (patch) => setDebugData((prev) => ({ ...prev, ...patch })),
     });
 
   // 语音识别（STT）—— 上传音频文件 → 转写文本。和 TTS 相反的音频流。
@@ -925,13 +968,21 @@ const Playground = () => {
   );
 
   const handleGenerateImage = useCallback(
-    async ({ prompt, inputs: imageInputs, paramsOverride, modelOverride, groupOverride }) => {
+    async ({
+      prompt,
+      inputs: imageInputs,
+      paramsOverride,
+      modelOverride,
+      groupOverride,
+    }) => {
       if (!prompt || !prompt.trim()) return;
       maybeAutoNameSession(prompt);
       // 真实消息活动：把当前会话顶到列表顶部
       if (activeSessionId) touchSession?.(activeSessionId);
       // resend 时复刻原次参数和模型/分组；正常发送沿用 UI state
-      const params = paramsOverride ? { ...paramsOverride } : { ...imageParamValues };
+      const params = paramsOverride
+        ? { ...paramsOverride }
+        : { ...imageParamValues };
       const usedModel = modelOverride || inputs.model;
       const usedGroup = groupOverride || inputs.group;
 
@@ -1026,8 +1077,13 @@ const Playground = () => {
     (generation) => {
       setMessage((prev) => {
         const next = prev.filter((m) => {
-          if (generation.promptMessage && m.id === generation.promptMessage.id) return false;
-          if (generation.assistantMessage && m.id === generation.assistantMessage.id) return false;
+          if (generation.promptMessage && m.id === generation.promptMessage.id)
+            return false;
+          if (
+            generation.assistantMessage &&
+            m.id === generation.assistantMessage.id
+          )
+            return false;
           return true;
         });
         setTimeout(() => saveMessagesImmediately(next), 0);
@@ -1048,7 +1104,8 @@ const Playground = () => {
           if (m.id !== assistantId) return m;
           const merged = { ...m };
           if (patch.status) merged.status = patch.status;
-          if (typeof patch.progress === 'number') merged.progress = patch.progress;
+          if (typeof patch.progress === 'number')
+            merged.progress = patch.progress;
           if (patch.errorMessage) merged.errorMessage = patch.errorMessage;
           if (patch.status === 'complete') {
             if (patch.videoUrl) {
@@ -1074,7 +1131,9 @@ const Playground = () => {
               // 上游认为任务已完成，但响应里找不到 URL。把它视作 error 让
               // 用户能看到反馈（否则 UI 上什么都不显示，像"卡死"）。
               merged.status = 'error';
-              merged.errorMessage = t('任务已完成但响应中未携带视频链接，请查看任务日志');
+              merged.errorMessage = t(
+                '任务已完成但响应中未携带视频链接，请查看任务日志',
+              );
             }
           }
           return merged;
@@ -1087,19 +1146,27 @@ const Playground = () => {
   );
 
   const handleGenerateVideo = useCallback(
-    async ({ prompt, attachments, paramsOverride, modelOverride, groupOverride }) => {
+    async ({
+      prompt,
+      attachments,
+      paramsOverride,
+      modelOverride,
+      groupOverride,
+      promptOptionalOverride,
+    }) => {
       const trimmedPrompt = (prompt || '').trim();
       const content = Array.isArray(attachments) ? attachments : [];
-      // prompt 强制必填：上游不接受空 prompt（即便有首/末帧或参考图）。
-      // 没 prompt 直接吞掉这次请求，由 onMessageSend 那一层负责给用户 toast
-      if (!trimmedPrompt) return;
-      maybeAutoNameSession(trimmedPrompt);
-      if (activeSessionId) touchSession?.(activeSessionId);
       // resend 路径会把原次 params/model/group 透传过来，覆盖当前 UI state，
       // 保证「重试 = 复刻原次请求」而不是「按当前 UI 再发一遍」。
-      const params = paramsOverride ? { ...paramsOverride } : { ...imageParamValues };
+      const params = paramsOverride
+        ? { ...paramsOverride }
+        : { ...imageParamValues };
       const usedModel = modelOverride || inputs.model;
       const usedGroup = groupOverride || inputs.group;
+      const allowEmptyPrompt = promptOptionalOverride ?? promptOptional;
+      if (!trimmedPrompt && !(allowEmptyPrompt && content.length > 0)) return;
+      maybeAutoNameSession(trimmedPrompt || usedModel);
+      if (activeSessionId) touchSession?.(activeSessionId);
 
       // 把图片/视频/音频附件都嵌进 user 消息的 content（与 image gen 对齐），
       // 让用户气泡视觉上能直接看到自己上传了哪些素材，不只是依赖 attachments
@@ -1110,9 +1177,7 @@ const Playground = () => {
           c?.type === 'video_url' ||
           c?.type === 'audio_url',
       );
-      const textParts = trimmedPrompt
-        ? [{ type: 'text', text: prompt }]
-        : [];
+      const textParts = trimmedPrompt ? [{ type: 'text', text: prompt }] : [];
       const userContent =
         mediaParts.length > 0 ? [...textParts, ...mediaParts] : prompt;
 
@@ -1123,7 +1188,12 @@ const Playground = () => {
         ...createMessage(MESSAGE_ROLES.USER, userContent),
         attachments: content,
         modality: MODALITY.VIDEO,
-        meta: { model: usedModel, group: usedGroup, params },
+        meta: {
+          model: usedModel,
+          group: usedGroup,
+          params,
+          promptOptional: allowEmptyPrompt,
+        },
       };
       const loadingMsg = {
         ...createLoadingAssistantMessage(),
@@ -1131,7 +1201,12 @@ const Playground = () => {
         progress: 0,
         modality: MODALITY.VIDEO,
         // 同 image：把 resolution / ratio / duration 带过来，骨架按比例渲染
-        meta: { model: usedModel, group: usedGroup, params },
+        meta: {
+          model: usedModel,
+          group: usedGroup,
+          params,
+          promptOptional: allowEmptyPrompt,
+        },
       };
       let newMessages = [];
       setMessage((prev) => {
@@ -1146,7 +1221,7 @@ const Playground = () => {
         prompt,
         params,
         content,
-        promptOptional,
+        promptOptional: allowEmptyPrompt,
         onUpdate: (patch) => applyVideoUpdate(loadingMsg.id, patch),
       });
 
@@ -1181,6 +1256,7 @@ const Playground = () => {
               model: usedModel,
               group: usedGroup,
               params: params || {},
+              promptOptional: allowEmptyPrompt,
             },
           };
         });
@@ -1261,9 +1337,7 @@ const Playground = () => {
             ...m,
             status: 'complete',
             modality: MODALITY.AUDIO,
-            content: [
-              { type: 'audio_url', audio_url: { url: result.url } },
-            ],
+            content: [{ type: 'audio_url', audio_url: { url: result.url } }],
           };
         });
         setTimeout(() => saveMessagesImmediately(next), 0);
@@ -1309,7 +1383,12 @@ const Playground = () => {
           // error：STT 走文本气泡，MessageContent 的 error 分支读 content 而非
           // errorMessage，所以把错误文案同时写进 content 才显示得出来。
           const errText = patch.errorMessage || t('语音识别失败');
-          return { ...m, status: 'error', content: errText, errorMessage: errText };
+          return {
+            ...m,
+            status: 'error',
+            content: errText,
+            errorMessage: errText,
+          };
         });
         setTimeout(() => saveMessagesImmediately(next), 0);
         return next;
@@ -1415,7 +1494,12 @@ const Playground = () => {
                 status: 'loading',
               };
             }
-            return { ...m, status: 'error', content: errText, errorMessage: errText };
+            return {
+              ...m,
+              status: 'error',
+              content: errText,
+              errorMessage: errText,
+            };
           }
           return m;
         });
@@ -1683,7 +1767,9 @@ const Playground = () => {
     const loadingMessage = {
       ...createLoadingAssistantMessage(),
       modality:
-        currentModality === MODALITY.MULTIMODAL ? MODALITY.MULTIMODAL : MODALITY.TEXT,
+        currentModality === MODALITY.MULTIMODAL
+          ? MODALITY.MULTIMODAL
+          : MODALITY.TEXT,
       meta: { model: inputs.model, group: inputs.group },
     };
 
@@ -1790,7 +1876,9 @@ const Playground = () => {
         // STT（语音识别）模型不接受文本框发送——它需要上传音频文件转写，
         // 走输入框左侧的音频上传按钮。
         Toast.warning({
-          content: t('该模型是语音识别模型，请用输入框的音频上传按钮上传音频进行转写'),
+          content: t(
+            '该模型是语音识别模型，请用输入框的音频上传按钮上传音频进行转写',
+          ),
           duration: 3,
         });
         return;
@@ -1800,6 +1888,7 @@ const Playground = () => {
       return;
     }
     if (currentModality === MODALITY.VIDEO) {
+      if (!validateRequiredMediaInputs()) return;
       // 把当前 imageInputsValues 按 schema slot 的 x-content-role 拍平成
       // content 数组：图 → {type:'image_url', image_url:{url}, role}
       //               视频 → {type:'video_url', video_url:{url}, role}
@@ -1816,11 +1905,36 @@ const Playground = () => {
         // 遍历顺序：图片（first/last_frame → reference） → 视频 → 音频。
         // 上游 doubao 不依赖顺序，但保持稳定排列方便调试 / 日志阅读。
         const slotsToWalk = [
-          { slot: imageInputSlots.firstFrame, scope: 'playground-video-image', contentType: 'image_url', defaultRole: 'first_frame' },
-          { slot: imageInputSlots.lastFrame, scope: 'playground-video-image', contentType: 'image_url', defaultRole: 'last_frame' },
-          { slot: imageInputSlots.reference, scope: 'playground-video-image', contentType: 'image_url', defaultRole: 'reference_image' },
-          { slot: imageInputSlots.video, scope: 'playground-video-video', contentType: 'video_url', defaultRole: 'reference_video' },
-          { slot: imageInputSlots.audio, scope: 'playground-video-audio', contentType: 'audio_url', defaultRole: 'reference_audio' },
+          {
+            slot: imageInputSlots.firstFrame,
+            scope: 'playground-video-image',
+            contentType: 'image_url',
+            defaultRole: 'first_frame',
+          },
+          {
+            slot: imageInputSlots.lastFrame,
+            scope: 'playground-video-image',
+            contentType: 'image_url',
+            defaultRole: 'last_frame',
+          },
+          {
+            slot: imageInputSlots.reference,
+            scope: 'playground-video-image',
+            contentType: 'image_url',
+            defaultRole: 'reference_image',
+          },
+          {
+            slot: imageInputSlots.video,
+            scope: 'playground-video-video',
+            contentType: 'video_url',
+            defaultRole: 'reference_video',
+          },
+          {
+            slot: imageInputSlots.audio,
+            scope: 'playground-video-audio',
+            contentType: 'audio_url',
+            defaultRole: 'reference_audio',
+          },
         ].filter((s) => s.slot);
 
         for (const { slot, scope, contentType, defaultRole } of slotsToWalk) {
@@ -1851,7 +1965,9 @@ const Playground = () => {
                     ? t('上传音频失败：')
                     : t('上传图片失败：');
               showError(label + getEntryName(entry));
-              continue;
+              // required 槽虽然仍有 File，但 content 已经缺项；继续提交只会
+              // 产生一个注定失败的请求，因此任一素材上传失败都终止本次发送。
+              return;
             }
             const role = slot.contentRole || defaultRole;
             if (contentType === 'image_url') {
@@ -1972,9 +2088,7 @@ const Playground = () => {
       throw new Error(`下载图片失败 (HTTP ${res.status})`);
     }
     const blob = await res.blob();
-    const ext = ((blob.type && blob.type.split('/')[1]) || 'png').split(
-      '+',
-    )[0];
+    const ext = ((blob.type && blob.type.split('/')[1]) || 'png').split('+')[0];
     return new File([blob], `${baseName}-${Date.now()}.${ext}`, {
       type: blob.type || 'image/png',
     });
@@ -2014,6 +2128,7 @@ const Playground = () => {
         paramsOverride: savedParams,
         modelOverride: savedModel,
         groupOverride: savedGroup,
+        promptOptionalOverride: savedMeta.promptOptional,
       });
       return;
     }
@@ -2037,7 +2152,9 @@ const Playground = () => {
         if (imgParts.length > 0 && slotKey) {
           try {
             const files = await Promise.all(
-              imgParts.map((p, i) => dataUrlToFile(p.image_url.url, `ref-${i}`)),
+              imgParts.map((p, i) =>
+                dataUrlToFile(p.image_url.url, `ref-${i}`),
+              ),
             );
             imageInputs = { [slotKey]: files.length === 1 ? files[0] : files };
           } catch (e) {
@@ -2167,13 +2284,21 @@ const Playground = () => {
   //                              事件（true 时会调 handleAddReferenceImage，
   //                              文本类模型也设 true 以便父层 toast 反馈）
   //   showUploadButton       —— 输入框右侧是否渲染「+」基座按钮
-  //                              （仅 image/video 且有 image input slot）
+  //                              （image/video 且有对应媒体 input slot）
   const supportsImageAttach = currentModality === MODALITY.MULTIMODAL;
   const supportsImageInputSlot =
     (currentModality === MODALITY.IMAGE ||
       currentModality === MODALITY.VIDEO) &&
     hasImageInputSlot(imageInputsSchema);
-  const showUploadButton = supportsImageInputSlot;
+  const supportsVideoInputSlot =
+    currentModality === MODALITY.VIDEO && !!imageInputSlots.video;
+  const supportsAudioInputSlot =
+    currentModality === MODALITY.VIDEO && !!imageInputSlots.audio;
+  const supportsAnyVideoMediaSlot =
+    currentModality === MODALITY.VIDEO && hasMediaInputSlot(imageInputsSchema);
+  const showUploadButton =
+    (currentModality === MODALITY.IMAGE && supportsImageInputSlot) ||
+    supportsAnyVideoMediaSlot;
   // 文本/audio/embedding 等也允许走 ingest，让 toast 在父层统一提示
   const acceptsReferenceImage = true;
 
@@ -2185,7 +2310,10 @@ const Playground = () => {
     audioTranscribing ||
     (Array.isArray(message) &&
       message.some(
-        (m) => m.status === 'loading' || m.status === 'incomplete' || m.status === 'polling',
+        (m) =>
+          m.status === 'loading' ||
+          m.status === 'incomplete' ||
+          m.status === 'polling',
       ));
 
   // 用 useRef 缓存「File → object URL」，避免每次渲染都新建 URL；
@@ -2239,14 +2367,15 @@ const Playground = () => {
         .filter((x) => x.dataUrl && x.dataUrl.trim() !== '');
     }
     // image 模型：用 reference slot（向后兼容老 schema 也走这一支）
-    // video 模型：仅 omni 模式下用 reference slot；first_last 模式由 firstLastFrameImages 接管
+    // video 模型：omni 模式优先用 reference slot；只有 first_frame 的模型
+    // 则把该单槽复用为堆叠 UI。first_last 模式由 firstLastFrameImages 接管。
     const useRefSlot =
       (currentModality === MODALITY.IMAGE && imageInputSlots.reference) ||
       (currentModality === MODALITY.VIDEO &&
         videoInputMode === 'omni' &&
-        imageInputSlots.reference);
+        videoOmniImageSlot);
     if (useRefSlot) {
-      const slot = imageInputSlots.reference;
+      const slot = useRefSlot;
       const v = imageInputsValues?.[slot.key];
       const arr = Array.isArray(v) ? v : isSlotEntry(v) ? [v] : [];
       return arr.filter(isSlotEntry).map((entry, i) => {
@@ -2280,6 +2409,7 @@ const Playground = () => {
     inputs.imageUrls,
     imageInputsValues,
     imageInputSlots,
+    videoOmniImageSlot,
     videoInputMode,
     fileToUrl,
     fileUploadFlags,
@@ -2531,7 +2661,7 @@ const Playground = () => {
             ? imageInputSlots.video
             : mediaType === 'audio'
               ? imageInputSlots.audio
-              : imageInputSlots.reference;
+              : videoOmniImageSlot;
         if (!targetSlot) {
           Toast.warning({
             content:
@@ -2567,7 +2697,10 @@ const Playground = () => {
         // 视频/音频 File entry：add 前做客户端 [大小 / 时长] 校验。校验失败
         // 直接 toast + return，不入 slot 也不上传；避免"先出现再消失"的闪烁。
         // 图片 entry 不做时长校验（无意义），大小限制由 R2 scope 兜（30MB）
-        if ((mediaType === 'video' || mediaType === 'audio') && isFileEntry(entry)) {
+        if (
+          (mediaType === 'video' || mediaType === 'audio') &&
+          isFileEntry(entry)
+        ) {
           if (targetSlot.maxBytes && entry.size > targetSlot.maxBytes) {
             const mb = Math.round(targetSlot.maxBytes / (1024 * 1024));
             Toast.warning({
@@ -2591,16 +2724,22 @@ const Playground = () => {
                 Toast.warning({
                   content:
                     mediaType === 'video'
-                      ? t('单个视频时长需在 {{min}}-{{max}} 秒之间，当前 {{cur}} 秒', {
-                          min: minD || 0,
-                          max: maxD || '∞',
-                          cur: dur.toFixed(1),
-                        })
-                      : t('单个音频时长需在 {{min}}-{{max}} 秒之间，当前 {{cur}} 秒', {
-                          min: minD || 0,
-                          max: maxD || '∞',
-                          cur: dur.toFixed(1),
-                        }),
+                      ? t(
+                          '单个视频时长需在 {{min}}-{{max}} 秒之间，当前 {{cur}} 秒',
+                          {
+                            min: minD || 0,
+                            max: maxD || '∞',
+                            cur: dur.toFixed(1),
+                          },
+                        )
+                      : t(
+                          '单个音频时长需在 {{min}}-{{max}} 秒之间，当前 {{cur}} 秒',
+                          {
+                            min: minD || 0,
+                            max: maxD || '∞',
+                            cur: dur.toFixed(1),
+                          },
+                        ),
                   duration: 3,
                 });
                 forgetDuration(entry);
@@ -2648,7 +2787,10 @@ const Playground = () => {
       }
 
       // image gen modality：仅图片，写 reference slot
-      const refSlot = imageInputSlots.reference;
+      const refSlot =
+        currentModality === MODALITY.VIDEO
+          ? videoOmniImageSlot
+          : imageInputSlots.reference;
       if (currentModality === MODALITY.IMAGE && refSlot) {
         if (mediaType !== 'image') {
           Toast.warning({
@@ -2694,6 +2836,7 @@ const Playground = () => {
       inputs.imageUrls,
       imageInputsValues,
       imageInputSlots,
+      videoOmniImageSlot,
       handleInputChange,
       startUpload,
       ensureDurationProbe,
@@ -2794,7 +2937,8 @@ const Playground = () => {
   const removeMediaReferenceByKey = React.useCallback(
     (key, mediaType) => {
       const list = mediaType === 'video' ? referenceVideos : referenceAudios;
-      const slot = mediaType === 'video' ? imageInputSlots.video : imageInputSlots.audio;
+      const slot =
+        mediaType === 'video' ? imageInputSlots.video : imageInputSlots.audio;
       const target = list.find((x) => x.key === key);
       if (!target || !slot) return;
       const cur = imageInputsValues?.[slot.key];
@@ -2838,14 +2982,21 @@ const Playground = () => {
       const target = referenceImages.find((x) => x.key === key);
       if (!target) return;
       if (currentModality === MODALITY.MULTIMODAL) {
-        const cur = (inputs.imageUrls || []).filter((u) => u && u.trim() !== '');
+        const cur = (inputs.imageUrls || []).filter(
+          (u) => u && u.trim() !== '',
+        );
         const next = cur.slice();
         next.splice(target.idx, 1);
         handleInputChange('imageUrls', next.length > 0 ? next : ['']);
         if (next.length === 0) handleInputChange('imageEnabled', false);
         return;
       }
-      const refSlot = imageInputSlots.reference;
+      // HappyHorse i2v 只有 first_frame、没有 reference_image。展示层已经用
+      // videoOmniImageSlot 把它复用成单图堆叠，删除也必须读取同一个槽。
+      const refSlot =
+        currentModality === MODALITY.VIDEO
+          ? videoOmniImageSlot
+          : imageInputSlots.reference;
       if (
         (currentModality === MODALITY.IMAGE ||
           currentModality === MODALITY.VIDEO) &&
@@ -2877,6 +3028,7 @@ const Playground = () => {
       inputs.imageUrls,
       imageInputsValues,
       imageInputSlots,
+      videoOmniImageSlot,
       handleInputChange,
       forgetUpload,
     ],
@@ -3042,8 +3194,12 @@ const Playground = () => {
                   paramValues={imageParamValues}
                   onParamValuesChange={setImageParamValues}
                   loading={isAnyGenerating}
+                  promptOptional={promptOptional}
                   acceptsReferenceImage={acceptsReferenceImage}
                   showUploadButton={showUploadButton}
+                  supportsImageInputSlot={supportsImageInputSlot}
+                  supportsVideoInputSlot={supportsVideoInputSlot}
+                  supportsAudioInputSlot={supportsAudioInputSlot}
                   referenceImages={referenceImages}
                   onAddReferenceImage={handleAddReferenceImage}
                   onRemoveReferenceImage={handleRemoveReferenceImage}

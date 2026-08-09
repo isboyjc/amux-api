@@ -152,7 +152,10 @@ export const useVideoGeneration = ({ onDebug } = {}) => {
     (taskId, onUpdate) => {
       if (!taskId) return;
       if (pollsRef.current.has(taskId)) return;
-      const intervalId = setInterval(() => tick(taskId, onUpdate), POLL_INTERVAL_MS);
+      const intervalId = setInterval(
+        () => tick(taskId, onUpdate),
+        POLL_INTERVAL_MS,
+      );
       pollsRef.current.set(taskId, {
         intervalId,
         startedAt: Date.now(),
@@ -198,7 +201,6 @@ export const useVideoGeneration = ({ onDebug } = {}) => {
         showError(t('请输入 Prompt'));
         return null;
       }
-
       // metadata 承载"上游私有参数 + 富内容数组"；Doubao adapter 会把
       // metadata 反序列化到 requestPayload，content 也会被合并进去。
       const metadata = { ...(params || {}) };
@@ -226,13 +228,14 @@ export const useVideoGeneration = ({ onDebug } = {}) => {
         const res = await API.post(SUBMIT_ENDPOINT, payload);
         const body = res?.data;
         const responseTs = new Date().toISOString();
-        onDebug?.({ response: JSON.stringify(body, null, 2), timestamp: responseTs });
+        onDebug?.({
+          response: JSON.stringify(body, null, 2),
+          timestamp: responseTs,
+        });
 
         if (res?.status >= 400 || body?.error) {
           const msg =
-            body?.error?.message ||
-            body?.message ||
-            t('视频生成任务提交失败');
+            body?.error?.message || body?.message || t('视频生成任务提交失败');
           showError(msg);
           return { error: msg, raw: body };
         }
@@ -245,7 +248,11 @@ export const useVideoGeneration = ({ onDebug } = {}) => {
         }
 
         startPolling(taskId, onUpdate);
-        return { taskId, status: body?.status || VIDEO_STATUS.QUEUED, raw: body };
+        return {
+          taskId,
+          status: body?.status || VIDEO_STATUS.QUEUED,
+          raw: body,
+        };
       } catch (err) {
         const msg =
           err?.response?.data?.message ||

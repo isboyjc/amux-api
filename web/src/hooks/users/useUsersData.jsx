@@ -17,14 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useEffect } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
+import { UserContext } from '../../context/User';
 
 export const useUsersData = () => {
   const { t } = useTranslation();
+  const [userState] = useContext(UserContext);
   const [compactMode, setCompactMode] = useTableCompactMode('users');
 
   // State management
@@ -35,6 +37,7 @@ export const useUsersData = () => {
   const [searching, setSearching] = useState(false);
   const [groupOptions, setGroupOptions] = useState([]);
   const [userCount, setUserCount] = useState(0);
+  const [selectedUsers, setSelectedUsers] = useState([]);
 
   // Modal states
   const [showAddUser, setShowAddUser] = useState(false);
@@ -72,6 +75,37 @@ export const useUsersData = () => {
       list[i].key = list[i].id;
     }
     setUsers(list);
+    setSelectedUsers([]);
+  };
+
+  const isUserSelectable = (user) => {
+    const currentRole = userState?.user?.role || 0;
+    return (
+      user.DeletedAt === null &&
+      user.role !== 100 &&
+      (currentRole === 100 || currentRole > user.role)
+    );
+  };
+
+  const rowSelection = {
+    selectedRowKeys: selectedUsers.map((user) => user.id),
+    getCheckboxProps: (record) => ({
+      disabled: !isUserSelectable(record),
+    }),
+    onChange: (selectedRowKeys, selectedRows) => {
+      setSelectedUsers(selectedRows.filter(isUserSelectable));
+    },
+  };
+
+  const toggleUserSelection = (user) => {
+    if (!isUserSelectable(user)) {
+      return;
+    }
+    setSelectedUsers((currentUsers) =>
+      currentUsers.some((item) => item.id === user.id)
+        ? currentUsers.filter((item) => item.id !== user.id)
+        : [...currentUsers, user],
+    );
   };
 
   // Load users data
@@ -158,33 +192,43 @@ export const useUsersData = () => {
     // Trigger loading state to force table re-render
     setLoading(true);
 
-    const res = await API.post('/api/user/manage', {
-      id: userId,
-      action,
-    });
-
-    const { success, message } = res.data;
-    if (success) {
-      showSuccess(t('操作成功完成！'));
-      const user = res.data.data;
-
-      // Create a new array and new object to ensure React detects changes
-      const newUsers = users.map((u) => {
-        if (u.id === userId) {
-          if (action === 'delete') {
-            return { ...u, DeletedAt: new Date() };
-          }
-          return { ...u, status: user.status, role: user.role };
-        }
-        return u;
+    try {
+      const res = await API.post('/api/user/manage', {
+        id: userId,
+        action,
       });
 
-      setUsers(newUsers);
-    } else {
-      showError(message);
-    }
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('操作成功完成！'));
+        const user = res.data.data;
 
-    setLoading(false);
+        // Create a new array and new object to ensure React detects changes
+        const newUsers = users.map((u) => {
+          if (u.id === userId) {
+            if (action === 'delete') {
+              return { ...u, DeletedAt: new Date() };
+            }
+            return { ...u, status: user.status, role: user.role };
+          }
+          return u;
+        });
+
+        setUsers(newUsers);
+        return true;
+      }
+      showError(message);
+      return false;
+    } catch (error) {
+      showError(
+        error?.response?.data?.message ||
+          error?.message ||
+          t('操作失败，请重试'),
+      );
+      return false;
+    } finally {
+      setLoading(false);
+    }
   };
 
   const resetUserPasskey = async (user) => {
@@ -228,7 +272,13 @@ export const useUsersData = () => {
     if (searchKeyword === '' && searchGroup === '' && searchRisk === '') {
       loadUsers(page, pageSize).then();
     } else {
-      searchUsers(page, pageSize, searchKeyword, searchGroup, searchRisk).then();
+      searchUsers(
+        page,
+        pageSize,
+        searchKeyword,
+        searchGroup,
+        searchRisk,
+      ).then();
     }
   };
 
@@ -273,6 +323,38 @@ export const useUsersData = () => {
       await loadUsers(page, pageSize);
     } else {
       await searchUsers(page, pageSize, searchKeyword, searchGroup, searchRisk);
+    }
+  };
+
+  const batchManageUsers = async (action) => {
+    if (selectedUsers.length === 0) {
+      showError(t('请至少选择一个用户'));
+      return false;
+    }
+
+    setLoading(true);
+    try {
+      const res = await API.post('/api/user/manage/batch', {
+        ids: selectedUsers.map((user) => user.id),
+        action,
+      });
+      const { success, message, data } = res.data;
+      if (!success) {
+        showError(message);
+        return false;
+      }
+
+      showSuccess(`${t('操作成功完成！')} (${data?.count || 0})`);
+      setSelectedUsers([]);
+      await refresh();
+      return true;
+    } catch (error) {
+      showError(
+        error?.response?.data?.message || error?.message || t('批量操作失败'),
+      );
+      return false;
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -326,6 +408,13 @@ export const useUsersData = () => {
     searching,
     groupOptions,
 
+    // Selection state
+    selectedUsers,
+    setSelectedUsers,
+    rowSelection,
+    toggleUserSelection,
+    isUserSelectable,
+
     // Modal state
     showAddUser,
     showEditUser,
@@ -347,6 +436,7 @@ export const useUsersData = () => {
     loadUsers,
     searchUsers,
     manageUser,
+    batchManageUsers,
     resetUserPasskey,
     resetUserTwoFA,
     handlePageChange,

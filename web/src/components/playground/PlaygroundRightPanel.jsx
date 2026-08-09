@@ -121,9 +121,11 @@ const PlaygroundRightPanel = ({
         />
       )}
 
-      {/* 图片 / 音频 workspace：按当前模型的 param_schema 动态渲染参数 */}
+      {/* 图片 / 视频 / 音频 workspace：按当前模型的 param_schema 动态渲染参数 */}
       {isSchemaWorkspace && (
-        <div className={customRequestMode ? 'opacity-50 pointer-events-none' : ''}>
+        <div
+          className={customRequestMode ? 'opacity-50 pointer-events-none' : ''}
+        >
           <SchemaParamsRenderer
             schema={paramSchema}
             values={paramValues}
@@ -242,7 +244,9 @@ const PlaygroundRightPanel = ({
       </div>
 
       <div className='flex-1 overflow-y-auto'>
-        {activeTab === RIGHT_PANEL_TABS.DEBUG ? renderDebugTab() : renderParamsTab()}
+        {activeTab === RIGHT_PANEL_TABS.DEBUG
+          ? renderDebugTab()
+          : renderParamsTab()}
       </div>
     </Card>
   );

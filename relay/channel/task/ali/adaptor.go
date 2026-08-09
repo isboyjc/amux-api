@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -41,10 +42,10 @@ type AliVideoInput struct {
 	AudioURL       string          `json:"audio_url,omitempty"`       // 音频URL（旧版 wan2.5）
 	NegativePrompt string          `json:"negative_prompt,omitempty"` // 反向提示词
 	Template       string          `json:"template,omitempty"`        // 视频特效模板
-	Media          []AliVideoMedia `json:"media,omitempty"`           // Wan 2.7 新版多模态素材
+	Media          []AliVideoMedia `json:"media,omitempty"`           // 新版视频模型多模态素材
 }
 
-// AliVideoMedia 是 Wan 2.7 input.media 中的单个媒体素材。
+// AliVideoMedia 是阿里视频模型 input.media 中的单个媒体素材。
 type AliVideoMedia struct {
 	Type string `json:"type"`
 	URL  string `json:"url"`
@@ -59,6 +60,7 @@ type AliVideoParameters struct {
 	PromptExtend *bool   `json:"prompt_extend,omitempty"` // 是否开启 prompt 智能改写
 	Watermark    *bool   `json:"watermark,omitempty"`     // 是否添加水印
 	Audio        *bool   `json:"audio,omitempty"`         // 是否添加音频（旧版 wan2.5）
+	AudioSetting *string `json:"audio_setting,omitempty"` // HappyHorse 视频编辑声音控制
 	Seed         *int    `json:"seed,omitempty"`          // 随机数种子（显式 0 必须发送）
 }
 
@@ -87,9 +89,9 @@ type AliVideoOutput struct {
 
 // AliUsage 使用统计
 type AliUsage struct {
-	Duration            dto.IntValue `json:"duration,omitempty"`
-	InputVideoDuration  dto.IntValue `json:"input_video_duration,omitempty"`
-	OutputVideoDuration dto.IntValue `json:"output_video_duration,omitempty"`
+	Duration            float64      `json:"duration,omitempty"`
+	InputVideoDuration  float64      `json:"input_video_duration,omitempty"`
+	OutputVideoDuration float64      `json:"output_video_duration,omitempty"`
 	VideoCount          dto.IntValue `json:"video_count,omitempty"`
 	SR                  dto.IntValue `json:"SR,omitempty"`
 	Ratio               string       `json:"ratio,omitempty"`
@@ -117,6 +119,7 @@ type AliMetadata struct {
 	PromptExtend *bool   `json:"prompt_extend,omitempty"` // 是否开启prompt智能改写
 	Watermark    *bool   `json:"watermark,omitempty"`     // 是否添加水印
 	Audio        *bool   `json:"audio,omitempty"`         // 是否添加音频
+	AudioSetting *string `json:"audio_setting,omitempty"` // HappyHorse 视频编辑声音控制
 	Seed         *int    `json:"seed,omitempty"`          // 随机数种子
 }
 
@@ -160,8 +163,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return taskErr
 	}
 	if taskReq, err := getAliTaskRequest(c); err == nil {
-		if getAliVideoModelKind(taskReq.Model) == aliVideoModelHappyHorse {
-			info.Action = constant.TaskActionTextGenerate
+		if action := actionForAliVideoModelKind(getAliVideoModelKind(taskReq.Model)); action != "" {
+			info.Action = action
 		} else if strings.Contains(strings.ToLower(taskReq.Model), "i2v") ||
 			taskReq.InputReference != "" || taskReq.Image != "" || len(taskReq.Images) > 0 {
 			info.Action = constant.TaskActionGenerate
@@ -194,11 +197,17 @@ func (a *TaskAdaptor) ValidateMappedRequestAndSetAction(c *gin.Context, info *re
 		return service.TaskErrorWrapperLocal(err, code, http.StatusBadRequest)
 	}
 
-	switch getAliVideoModelKind(aliReq.Model) {
-	case aliVideoModelHappyHorse:
-		info.Action = constant.TaskActionTextGenerate
-	case aliVideoModelWan27:
-		info.Action = constant.TaskActionGenerate
+	if action := actionForAliVideoModelKind(getAliVideoModelKind(aliReq.Model)); action != "" {
+		info.Action = action
+	}
+	if isHappyHorseModelKind(getAliVideoModelKind(aliReq.Model)) {
+		pricingModel := aliReq.Model
+		if info != nil && strings.TrimSpace(info.OriginModelName) != "" {
+			pricingModel = info.OriginModelName
+		}
+		if _, err := billing_setting.ComputeVideoCost(pricingModel, happyHorseVideoUsage(aliReq)); err != nil {
+			return service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
+		}
 	}
 	return nil
 }
@@ -268,6 +277,34 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil || aliReq == nil {
 		return nil
 	}
+	if isHappyHorseModelKind(getAliVideoModelKind(aliReq.Model)) {
+		pricingModel := aliReq.Model
+		if info != nil && strings.TrimSpace(info.OriginModelName) != "" {
+			pricingModel = info.OriginModelName
+		}
+		usage := happyHorseVideoUsage(aliReq)
+		cost, err := billing_setting.ComputeVideoCost(pricingModel, usage)
+		if err != nil {
+			return nil
+		}
+		// 官方协议允许省略 resolution。把价目表解析出的默认档位写回快照，
+		// 避免终态响应缺少 usage.SR 时只能靠空值再次猜测。
+		usage.Resolution = cost.Resolution
+		logger.LogJson(c, "happyhorse cost breakdown", cost)
+		c.Set(constant.CtxKeyVideoUsageSnapshot, aliVideoUsageSnapshot(usage))
+		c.Set(constant.CtxKeyVideoBillingDetail, map[string]any{
+			"resolution":     cost.Resolution,
+			"output_seconds": usage.OutputSeconds,
+			"image_count":    usage.ImageCount,
+			"video_seconds":  usage.VideoSeconds,
+			"output":         cost.Output,
+			"image":          cost.Image,
+			"video":          cost.Video,
+			"total":          cost.Total,
+			"estimated":      getAliVideoModelKind(aliReq.Model) == aliVideoModelHappyHorseEdit,
+		})
+		return map[string]float64{billing_setting.VideoCostRatioKey: cost.Total}
+	}
 
 	otherRatios := map[string]float64{
 		"seconds": float64(effectiveDuration(aliReq)),
@@ -280,6 +317,113 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		otherRatios[k] = v
 	}
 	return otherRatios
+}
+
+// AdjustBillingOnComplete 按 HappyHorse 官方 usage 进行最终结算。
+// usage.duration 已是计费总时长；Video Edit 中它包含输入与输出视频时长之和，
+// 因此不能再乘 video_count，也不能只使用 output_video_duration。
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.TaskInfo) int {
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return 0
+	}
+	bc := task.PrivateData.BillingContext
+	if _, ok := billing_setting.GetVideoPricing(bc.OriginModelName); !ok {
+		return 0
+	}
+
+	modelName := strings.TrimSpace(task.Properties.UpstreamModelName)
+	if modelName == "" {
+		modelName = strings.TrimSpace(bc.OriginModelName)
+	}
+	if !isHappyHorseModelKind(getAliVideoModelKind(modelName)) {
+		return 0
+	}
+
+	usage, ok := parseAliTaskUsage(task.Data)
+	if !ok || usage.Duration <= 0 {
+		return 0
+	}
+
+	usageForBilling := billing_setting.VideoUsage{}
+	if snap := bc.VideoUsage; snap != nil {
+		usageForBilling = billing_setting.VideoUsage{
+			Resolution:    snap.Resolution,
+			OutputSeconds: snap.OutputSeconds,
+			ImageCount:    snap.ImageCount,
+			AudioSeconds:  snap.AudioSeconds,
+			VideoSeconds:  snap.VideoSeconds,
+			HasVideoInput: snap.HasVideoInput || snap.VideoSeconds > 0,
+		}
+	}
+	if usage.SR > 0 {
+		usageForBilling.Resolution = fmt.Sprintf("%dP", int(usage.SR))
+	}
+	// HappyHorse 的 usage.duration 已是官方最终计费总时长。Video Edit 中它
+	// 包含输入和输出视频时长之和，因此统一记入 OutputSeconds，不能再把输入
+	// 视频拆出来重复计价。
+	usageForBilling.OutputSeconds = usage.Duration
+	usageForBilling.VideoSeconds = 0
+	cost, err := billing_setting.ComputeVideoCost(bc.OriginModelName, usageForBilling)
+	if err != nil {
+		return 0
+	}
+	bc.VideoUsage = aliVideoUsageSnapshot(usageForBilling)
+
+	groupRatio := bc.GroupRatio
+	if groupRatio <= 0 {
+		groupRatio = 1
+	}
+	baseQuota := int(billing_setting.VideoBasePrice * common.QuotaPerUnit * groupRatio)
+	return int(float64(baseQuota) * cost.Total)
+}
+
+func parseAliTaskUsage(data []byte) (*AliUsage, bool) {
+	if len(data) == 0 {
+		return nil, false
+	}
+	var response AliVideoResponse
+	if err := common.Unmarshal(data, &response); err == nil && response.Usage != nil && response.Usage.Duration > 0 {
+		return response.Usage, true
+	}
+
+	// 兼容上游本身也是 new-api 时的 TaskResponse[Task] 包装结构。
+	var wrapped struct {
+		Data model.Task `json:"data"`
+	}
+	if err := common.Unmarshal(data, &wrapped); err == nil && len(wrapped.Data.Data) > 0 && !bytes.Equal(wrapped.Data.Data, data) {
+		return parseAliTaskUsage(wrapped.Data.Data)
+	}
+	return nil, false
+}
+
+func happyHorseVideoUsage(req *AliVideoRequest) billing_setting.VideoUsage {
+	usage := billing_setting.VideoUsage{OutputSeconds: float64(effectiveDuration(req))}
+	if req == nil {
+		return usage
+	}
+	if req.Parameters != nil && req.Parameters.Resolution != nil {
+		usage.Resolution = *req.Parameters.Resolution
+	}
+	for _, media := range req.Input.Media {
+		switch strings.ToLower(strings.TrimSpace(media.Type)) {
+		case "first_frame", "reference_image":
+			usage.ImageCount++
+		case "video", "reference_video":
+			usage.HasVideoInput = true
+		}
+	}
+	return usage
+}
+
+func aliVideoUsageSnapshot(usage billing_setting.VideoUsage) *model.VideoUsageSnapshot {
+	return &model.VideoUsageSnapshot{
+		Resolution:    usage.Resolution,
+		OutputSeconds: usage.OutputSeconds,
+		ImageCount:    usage.ImageCount,
+		AudioSeconds:  usage.AudioSeconds,
+		VideoSeconds:  usage.VideoSeconds,
+		HasVideoInput: usage.HasVideoInput || usage.VideoSeconds > 0,
+	}
 }
 
 // DoRequest delegates to common helper

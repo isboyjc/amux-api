@@ -133,10 +133,15 @@ var DefaultParamSchemas = map[string]string{
 // DefaultModelParamSchemas 为无需管理员额外配置即可使用的模型提供精确参数
 // Schema。数据库中的 exact/rule param_schema 仍拥有更高优先级。
 var DefaultModelParamSchemas = map[string]string{
-	"happyhorse-1.1-t2v":    happyHorseVideoParamSchema,
-	"happyhorse-1.0-t2v":    happyHorseVideoParamSchema,
-	"wan2.7-i2v-2026-04-25": wan27VideoParamSchema,
-	"MiniMax-H3":            minimaxH3VideoParamSchema,
+	"happyhorse-1.1-t2v":        happyHorseT2VParamSchema,
+	"happyhorse-1.0-t2v":        happyHorseT2VParamSchema,
+	"happyhorse-1.1-i2v":        happyHorseI2VParamSchema,
+	"happyhorse-1.0-i2v":        happyHorseI2VParamSchema,
+	"happyhorse-1.1-r2v":        happyHorseR2VParamSchema,
+	"happyhorse-1.0-r2v":        happyHorseR2VParamSchema,
+	"happyhorse-1.0-video-edit": happyHorseVideoEditParamSchema,
+	"wan2.7-i2v-2026-04-25":     wan27VideoParamSchema,
+	"MiniMax-H3":                minimaxH3VideoParamSchema,
 	// Seedance 2.5 的每个可用名字都要登记一份：这张表是【精确匹配模型名】的，
 	// 漏一个，管理员用那个名字配渠道时操练场就拿不到参数面板和素材上传槽——
 	// 请求能发、钱也收得对，唯独右栏是空的，很难往 schema 上想。
@@ -332,13 +337,13 @@ const minimaxH3VideoParamSchema = `{
   }
 }`
 
-const happyHorseVideoParamSchema = `{
+const happyHorseT2VParamSchema = `{
   "type": "object",
   "properties": {
     "resolution": {
       "type": "string",
       "title": "分辨率",
-      "enum": ["480P", "720P", "1080P"],
+      "enum": ["720P", "1080P"],
       "default": "1080P"
     },
     "ratio": {
@@ -368,8 +373,144 @@ const happyHorseVideoParamSchema = `{
   }
 }`
 
+const happyHorseI2VParamSchema = `{
+  "type": "object",
+  "x-prompt-optional": true,
+  "properties": {
+    "first_frame": {
+      "type": "string",
+      "format": "image",
+      "title": "首帧图像",
+      "x-content-role": "first_frame",
+      "x-max-mb": 20
+    },
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["720P", "1080P"],
+      "default": "1080P"
+    },
+    "duration": {
+      "type": "integer",
+      "title": "时长（秒）",
+      "minimum": 3,
+      "maximum": 15,
+      "default": 5
+    },
+    "watermark": {
+      "type": "boolean",
+      "title": "添加 Happy Horse 水印",
+      "default": true
+    },
+    "seed": {
+      "type": "integer",
+      "title": "随机种子",
+      "minimum": 0,
+      "maximum": 2147483647
+    }
+  },
+  "required": ["first_frame"]
+}`
+
+const happyHorseR2VParamSchema = `{
+  "type": "object",
+  "properties": {
+    "reference_images": {
+      "type": "array",
+      "title": "参考图像",
+      "description": "按上传顺序在 Prompt 中使用 [Image 1]、[Image 2] 等标识引用",
+      "minItems": 1,
+      "maxItems": 9,
+      "items": {"type": "string", "format": "image"},
+      "x-content-role": "reference_image",
+      "x-max-mb-per-item": 20
+    },
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["720P", "1080P"],
+      "default": "1080P"
+    },
+    "ratio": {
+      "type": "string",
+      "title": "宽高比",
+      "enum": ["16:9", "9:16", "3:4", "4:3", "4:5", "5:4", "1:1", "9:21", "21:9"],
+      "default": "16:9"
+    },
+    "duration": {
+      "type": "integer",
+      "title": "时长（秒）",
+      "minimum": 3,
+      "maximum": 15,
+      "default": 5
+    },
+    "watermark": {
+      "type": "boolean",
+      "title": "添加 Happy Horse 水印",
+      "default": true
+    },
+    "seed": {
+      "type": "integer",
+      "title": "随机种子",
+      "minimum": 0,
+      "maximum": 2147483647
+    }
+  },
+  "required": ["reference_images"]
+}`
+
+const happyHorseVideoEditParamSchema = `{
+  "type": "object",
+  "properties": {
+    "source_video": {
+      "type": "string",
+      "format": "video",
+      "title": "待编辑视频",
+      "x-content-role": "reference_video",
+      "x-max-mb": 100,
+      "x-min-duration-seconds": 3,
+      "x-max-duration-seconds": 60,
+      "x-max-total-duration-seconds": 60
+    },
+    "reference_images": {
+      "type": "array",
+      "title": "参考图像",
+      "maxItems": 5,
+      "items": {"type": "string", "format": "image"},
+      "x-content-role": "reference_image",
+      "x-max-mb-per-item": 20
+    },
+    "resolution": {
+      "type": "string",
+      "title": "分辨率",
+      "enum": ["720P", "1080P"],
+      "default": "1080P"
+    },
+    "watermark": {
+      "type": "boolean",
+      "title": "添加 Happy Horse 水印",
+      "default": true
+    },
+    "audio_setting": {
+      "type": "string",
+      "title": "声音控制",
+      "enum": ["auto", "origin"],
+      "enumLabels": {"auto": "模型自动处理", "origin": "保留原始声音"},
+      "default": "auto"
+    },
+    "seed": {
+      "type": "integer",
+      "title": "随机种子",
+      "minimum": 0,
+      "maximum": 2147483647
+    }
+  },
+  "required": ["source_video"]
+}`
+
 const wan27VideoParamSchema = `{
   "type": "object",
+  "x-prompt-optional": true,
   "properties": {
     "reference_images": {
       "type": "array",

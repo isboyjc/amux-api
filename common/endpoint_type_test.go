@@ -10,16 +10,53 @@ func TestAliVideoEndpointTypes(t *testing.T) {
 	for _, modelName := range []string{
 		"happyhorse-1.1-t2v",
 		"happyhorse-1.0-t2v",
+		"happyhorse-1.1-i2v",
+		"happyhorse-1.0-i2v",
+		"happyhorse-1.1-r2v",
+		"happyhorse-1.0-r2v",
+		"happyhorse-1.0-video-edit",
 		"wan2.7-i2v-2026-04-25",
+		"wan2.5-i2v-preview",
+		"wan2.2-i2v-flash",
+		"wan2.2-i2v-plus",
+		"wanx2.1-i2v-plus",
+		"wanx2.1-i2v-turbo",
 	} {
 		got := GetEndpointTypesByChannelType(constant.ChannelTypeAli, modelName)
-		if len(got) != 1 || got[0] != constant.EndpointTypeOpenAIVideo {
+		want := []constant.EndpointType{
+			constant.EndpointTypeOpenAIVideo,
+			constant.EndpointTypeDashScopeVideo,
+		}
+		if len(got) != len(want) {
 			t.Fatalf("endpoint types for %s=%v", modelName, got)
 		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("endpoint types for %s=%v, want=%v", modelName, got, want)
+			}
+		}
 	}
-	got := GetEndpointTypesByChannelType(constant.ChannelTypeAli, "qwen-plus")
-	if len(got) != 1 || got[0] != constant.EndpointTypeOpenAI {
-		t.Fatalf("qwen-plus endpoint types=%v", got)
+	for _, modelName := range []string{"qwen-plus", "wanx-v1"} {
+		got := GetEndpointTypesByChannelType(constant.ChannelTypeAli, modelName)
+		if len(got) != 1 || got[0] != constant.EndpointTypeOpenAI {
+			t.Fatalf("non-video Ali model %s endpoint types=%v", modelName, got)
+		}
+	}
+}
+
+func TestAliVideoEndpointsHaveDefaultPaths(t *testing.T) {
+	want := map[constant.EndpointType]string{
+		constant.EndpointTypeOpenAIVideo:    "/v1/video/generations",
+		constant.EndpointTypeDashScopeVideo: "/api/v1/services/aigc/video-generation/video-synthesis",
+	}
+	for endpointType, path := range want {
+		info, ok := GetDefaultEndpointInfo(endpointType)
+		if !ok {
+			t.Fatalf("endpoint %q has no default info", endpointType)
+		}
+		if info.Path != path || info.Method != "POST" {
+			t.Fatalf("endpoint %q info=%+v, want path=%q method=POST", endpointType, info, path)
+		}
 	}
 }
 
