@@ -20,7 +20,11 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import { Card, Avatar, Typography, Table, Tag } from '@douyinfe/semi-ui';
 import { IconCoinMoneyStroked } from '@douyinfe/semi-icons';
-import { calculateModelPrice, getModelPriceItems } from '../../../../../helpers';
+import {
+  calculateModelPrice,
+  getModelPriceItems,
+  getVideoPriceItems,
+} from '../../../../../helpers';
 
 const { Text } = Typography;
 
@@ -75,12 +79,23 @@ const ModelPricingTable = ({
             ? t('动态计费')
             : modelData?.billing_mode === 'per_hour'
               ? t('按小时计费')
-              : modelData?.quota_type === 0
-                ? t('按量计费')
-                : modelData?.quota_type === 1
-                  ? t('按次计费')
-                  : '-',
-        priceItems: getModelPriceItems(priceData, t, siteDisplayType),
+              : modelData?.video_pricing
+                ? t('视频计费')
+                : modelData?.quota_type === 0
+                  ? t('按量计费')
+                  : modelData?.quota_type === 1
+                    ? t('按次计费')
+                    : '-',
+        // 视频模型的价格在价目表里，走 getModelPriceItems 会显示成
+        // 「模型价格 $1.00 / 次」——那个 $1 只是哨兵基准价。
+        priceItems: modelData?.video_pricing
+          ? getVideoPriceItems(
+              modelData.video_pricing,
+              groupRatioValue,
+              displayPrice,
+              t,
+            )
+          : getModelPriceItems(priceData, t, siteDisplayType),
       };
     });
 
@@ -99,9 +114,11 @@ const ModelPricingTable = ({
     ];
 
     const isDynamic = modelData?.billing_mode === 'tiered_expr';
+    const isVideo = !!modelData?.video_pricing;
 
-    // 动态计费时始终显示倍率列，否则根据设置
-    if (showRatio || isDynamic) {
+    // 动态计费与视频计费时始终显示倍率列：这两种的展示单价都是「基础单价
+    // × 分组倍率」的结果，不给出倍率用户无法核对
+    if (showRatio || isDynamic || isVideo) {
       columns.push({
         title: t('分组倍率'),
         dataIndex: 'ratio',
@@ -122,6 +139,7 @@ const ModelPricingTable = ({
         else if (text === t('按次计费')) color = 'teal';
         else if (text === t('按小时计费')) color = 'cyan';
         else if (text === t('动态计费')) color = 'amber';
+        else if (text === t('视频计费')) color = 'violet';
         return (
           <Tag color={color} size='small' shape='circle'>
             {text || '-'}

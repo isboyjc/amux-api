@@ -1,0 +1,531 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Doubao Seedance 2.5 视频生成 · 通用端点",
+    "version": "1.0.0",
+    "description": "本网关的统一视频生成协议。同一套请求体换个 `model` 就能切换到其它厂商的视频模型，不必为每家改一遍客户端。\n\n如果你已经按火山方舟官方文档写好了客户端，也可以直接用原生端点（seedance-2-5-native-v3.json），把 base URL 指过来即可。\n\n## 调用流程\n\n1. `POST /v1/video/generations` 提交任务，拿到 `task_id`\n2. 轮询 `GET /v1/video/generations/{task_id}` 直到 `data.status` 为 `SUCCESS` / `FAILURE`\n3. 成功后从 `data.result_url` 取视频地址\n\n建议轮询间隔 5~10 秒。`/v1/videos` 与 `/v1/videos/{task_id}` 是 OpenAI 风格的等价端点。\n\n## 三种互斥场景\n\n**首帧**、**首尾帧**、**多模态参考**（参考图 / 参考视频 / 参考音频）三者不可混用，网关会在提交前拒绝混合请求。\n\n> 单独传入 1 张**不带 `role`** 的图片等同于 `first_frame`（官方的图生视频-首帧写法）；传多张或与其它素材混用时，无 `role` 的图片按参考图处理。\n\n\n## 提示词是可选的\n\n与多数视频模型不同，Seedance 2.5 允许不带提示词：纯首尾帧、甚至只传一段参考音频都是合法组合。但四类内容（文本 / 图片 / 视频 / 音频）不能全空。\n\n\n## 素材要求\n\n**图片**（首帧 / 尾帧 / 参考图）\n\n| 项 | 要求 |\n| --- | --- |\n| 格式 | jpeg / png / webp / bmp / tiff / gif / heic / heif |\n| 宽高比 | 0.4 ~ 2.5 |\n| 宽高长度 | 300 ~ 6000 px |\n| 大小 | 单张 < 30 MB |\n| 数量 | 首帧 1 张、首尾帧 2 张、参考图 1~30 张 |\n\n**参考视频**\n\n| 项 | 要求 |\n| --- | --- |\n| 格式 | mp4 / mov（视频 H.264、H.265；音频 AAC、MP3） |\n| 分辨率 | 480p / 720p / 1080p / 4k |\n| 时长 | 单个 2~30 秒，最多 10 个，合计 ≤ 30 秒 |\n| 尺寸 | 宽高比 0.4~2.5；宽高 300~6000 px；总像素 409,600 ~ 8,295,044 |\n| 帧率 | 24 ~ 60 FPS |\n| 大小 | 单个 ≤ 200 MB |\n\n**参考音频**\n\n| 项 | 要求 |\n| --- | --- |\n| 格式 | wav / mp3 |\n| 时长 | 单段 2~30 秒，最多 10 段，合计 ≤ 30 秒 |\n| 大小 | 单个 ≤ 15 MB |\n\n整个请求体不超过 64 MB。\n\n> **含真人人脸的素材**：上游不接受直接上传含真人人脸的参考图 / 参考视频。可改用该账号近 30 天内由 Seedance 2.5 / 2.0 生成的含人脸产物、预置虚拟人像，或已授权的真人素材。\n\n## 提示词内传参（`--` 弱校验）\n\n上游支持在提示词末尾追加 `--rs 720p --rt 16:9 --dur 5 --wm true` 这类参数，网关原样透传、不做解析。两点注意：\n\n- 它是**弱校验**，写错了会被上游忽略而不是报错；请求体里的同名参数是强校验，推荐用请求体\n- 网关的**预扣**只看请求体，所以用 `--dur` 改时长会让预扣与实际不符。**最终扣费不受影响** —— 结算按上游返回的真实用量重算，多退少补\n\n## 计费\n\n按「输出分辨率 × 计费秒数」计费，**计费秒数 = 输出时长 + 参考视频时长**。输入参考图与参考音频不单独收费。\n\n输入含参考视频时，整单换一档更低的单价（这是上游的规则，不是本站优惠）：\n\n| 分辨率 | 输入不含视频 | 输入含参考视频 |\n| --- | --- | --- |\n| 720p | $0.22541/秒 | $0.13542/秒 |\n| 480p | $0.10416/秒 | $0.06258/秒 |\n\n单价按每档分辨率里像素最多的宽高比定，保证任何比例都不会成本倒挂。实际扣费 = 上表算出的金额 × 你所在分组的倍率。具体单价以模型广场展示为准。\n\n**预扣与结算**：`duration` 为 `-1`（默认值，模型自选时长）时提交阶段无法预知时长，按 15 秒预扣；带参考视频时其真实时长同样只有 URL 无从得知，按官方上限 30 秒预扣。任务完成后网关按上游返回的真实用量重算，多退少补。"
+  },
+  "servers": [
+    {
+      "url": "https://your-gateway.example.com",
+      "description": "将 URL 替换为你的网关地址"
+    }
+  ],
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "视频生成",
+      "description": "网关统一视频协议"
+    }
+  ],
+  "paths": {
+    "/v1/video/generations": {
+      "post": {
+        "tags": [
+          "视频生成"
+        ],
+        "summary": "提交视频生成任务",
+        "operationId": "createVideoGeneration",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VideoGenerationRequest"
+              },
+              "examples": {
+                "text-to-video": {
+                  "summary": "文生视频",
+                  "value": {
+                    "model": "doubao-seedance-2-5",
+                    "prompt": "小猫对着镜头打哈欠，阳光洒在窗台上",
+                    "duration": 5,
+                    "metadata": {
+                      "resolution": "720p",
+                      "aspect_ratio": "16:9"
+                    }
+                  }
+                },
+                "auto-duration": {
+                  "summary": "由模型决定时长",
+                  "value": {
+                    "model": "doubao-seedance-2-5",
+                    "prompt": "一镜到底的城市夜景航拍",
+                    "duration": -1,
+                    "metadata": {
+                      "resolution": "720p"
+                    }
+                  }
+                },
+                "first-last-frame": {
+                  "summary": "首尾帧生视频",
+                  "value": {
+                    "model": "doubao-seedance-2-5",
+                    "prompt": "镜头从近景平滑推向远景",
+                    "images": [
+                      "https://example.com/first.jpg",
+                      "https://example.com/last.jpg"
+                    ],
+                    "metadata": {
+                      "resolution": "720p"
+                    }
+                  }
+                },
+                "multimodal-reference": {
+                  "summary": "多模态参考生视频",
+                  "value": {
+                    "model": "doubao-seedance-2-5",
+                    "prompt": "让画面里的人物按参考视频的节奏起舞",
+                    "metadata": {
+                      "resolution": "720p",
+                      "reference_image_urls": [
+                        "https://example.com/ref.jpg"
+                      ],
+                      "reference_video_urls": [
+                        "https://example.com/ref.mp4"
+                      ],
+                      "reference_audio_urls": [
+                        "https://example.com/bgm.wav"
+                      ]
+                    }
+                  }
+                },
+                "audio-only": {
+                  "summary": "仅音频（无需提示词）",
+                  "value": {
+                    "model": "doubao-seedance-2-5",
+                    "metadata": {
+                      "resolution": "720p",
+                      "reference_audio_urls": [
+                        "https://example.com/voice.mp3"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已提交",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoSubmitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "参数不合法（含互斥场景混用、2.5 不支持的参数、算不出价格等）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/video/generations/{task_id}": {
+      "get": {
+        "tags": [
+          "视频生成"
+        ],
+        "summary": "查询视频生成任务",
+        "operationId": "getVideoGeneration",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务详情",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskQueryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "在 `Authorization: Bearer <你的 API Key>` 头中传入令牌。"
+      }
+    },
+    "schemas": {
+      "VideoGenerationRequest": {
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "模型名。`doubao-seedance-2-5` 与火山官方 endpoint 名 `doubao-seedance-2-5-260628` 等价。",
+            "examples": [
+              "doubao-seedance-2-5"
+            ]
+          },
+          "prompt": {
+            "type": "string",
+            "description": "提示词。**可选** —— 纯首尾帧、仅参考音频等组合都合法，但四类内容不能全空。"
+          },
+          "duration": {
+            "type": "integer",
+            "default": -1,
+            "description": "视频时长（秒）。`-1` 表示由模型在 4~30 秒内自选；其余取值范围 4~30。视频编辑任务只接受 `-1`。也可写在 `metadata.duration` 里（顶层优先）。",
+            "examples": [
+              -1,
+              5,
+              10
+            ]
+          },
+          "size": {
+            "type": "string",
+            "description": "输出分辨率。接受 `480p` / `720p`，也接受含 `480` / `720` 的尺寸串（如 `1280x720`）。与 `metadata.resolution` 同时提供时以后者为准。1080p / 4k 会直接报错而不是降级。",
+            "enum": [
+              "480p",
+              "720p"
+            ],
+            "default": "720p"
+          },
+          "images": {
+            "type": "array",
+            "description": "首尾帧的简写形式：第 1 项为首帧，第 2 项为尾帧。若同时在 `metadata` 里显式声明了 `first_frame_image` / `last_frame_image`，以 `metadata` 为准。",
+            "maxItems": 2,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/VideoGenerationMetadata"
+          }
+        }
+      },
+      "VideoGenerationMetadata": {
+        "type": "object",
+        "description": "Seedance 2.5 专有参数。",
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "480p",
+              "720p"
+            ],
+            "default": "720p"
+          },
+          "aspect_ratio": {
+            "type": "string",
+            "enum": [
+              "adaptive",
+              "21:9",
+              "16:9",
+              "4:3",
+              "1:1",
+              "3:4",
+              "9:16"
+            ],
+            "default": "adaptive",
+            "description": "输出视频宽高比。`adaptive` 表示由模型按任务类型和输入内容自动适配。\n\n- **首帧 / 首尾帧**：官方默认且仅支持 `adaptive`（输出跟随首帧图片），指定具体比例会被网关拒绝\n- **视频编辑 / 视频延长**：同样只支持 `adaptive`（输出跟随待编辑视频）\n- **文生视频 / 参考生视频**：可指定，也可用 `adaptive` 让模型自选"
+          },
+          "duration": {
+            "type": "integer",
+            "description": "与顶层 `duration` 等价，顶层优先。取 `-1` 表示由模型自选时长。\n\n**视频编辑任务**只接受 `-1`，且待编辑视频的时长需在 4~30 秒内，否则上游报错。\n\n`-1` 时的实际时长以查询接口返回的 `duration` 为准，它等于 `实际总帧数 / 24` 向下取整（133 帧的视频真实时长 5.54 秒，返回 5）。"
+          },
+          "first_frame_image": {
+            "type": "string",
+            "format": "uri"
+          },
+          "last_frame_image": {
+            "type": "string",
+            "format": "uri",
+            "description": "提供尾帧时必须同时提供首帧。"
+          },
+          "reference_image_urls": {
+            "type": "array",
+            "maxItems": 30,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "参考图，最多 30 张。与首/尾帧互斥。"
+          },
+          "reference_video_urls": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "参考视频，最多 10 段，单段 2~30 秒、合计 ≤30 秒。与首/尾帧互斥。**带参考视频会切换到更低的计费单价档**。"
+          },
+          "reference_audio_urls": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "参考音频，最多 10 段，单段 2~30 秒、合计 ≤30 秒。与首/尾帧互斥。不单独计费。"
+          },
+          "generate_audio": {
+            "type": "boolean",
+            "default": true,
+            "description": "是否生成与画面同步的音频。"
+          },
+          "output_format": {
+            "type": "string",
+            "enum": [
+              "mp4",
+              "mov"
+            ],
+            "default": "mp4"
+          },
+          "watermark": {
+            "type": "boolean",
+            "default": false
+          },
+          "return_last_frame": {
+            "type": "boolean",
+            "default": false,
+            "description": "是否额外生成尾帧图像。注意：网关当前不对外返回尾帧地址。"
+          },
+          "web_search": {
+            "type": "boolean",
+            "default": false,
+            "description": "开启联网搜索，由模型自主判断是否搜索。等价于 `tools: [{\"type\": \"web_search\"}]`。"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9,
+            "default": 0
+          },
+          "execution_expires_after": {
+            "type": "integer",
+            "minimum": 3600,
+            "maximum": 259200,
+            "default": 172800,
+            "description": "任务超时阈值（秒）。"
+          },
+          "safety_identifier": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "终端用户的唯一标识，建议传哈希值。"
+          },
+          "content": {
+            "type": "array",
+            "description": "富媒体的另一种写法，结构与火山 v3 原生协议的 `content` 一致。与上面的 `reference_*_urls` 可混用，最终会合并。",
+            "items": {
+              "$ref": "#/components/schemas/ContentItem"
+            }
+          }
+        }
+      },
+      "ContentItem": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text",
+              "image_url",
+              "video_url",
+              "audio_url"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "image_url": {
+            "$ref": "#/components/schemas/URLRef"
+          },
+          "video_url": {
+            "$ref": "#/components/schemas/URLRef"
+          },
+          "audio_url": {
+            "$ref": "#/components/schemas/URLRef"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "first_frame",
+              "last_frame",
+              "reference_image",
+              "reference_video",
+              "reference_audio"
+            ],
+            "description": "图片可为 `first_frame` / `last_frame` / `reference_image`（最多 30 张）；视频固定 `reference_video`（最多 10 个，单个 2~30 秒、合计 ≤30 秒）；音频固定 `reference_audio`（最多 10 段，同上限）。\n\n**首帧**、**首尾帧**、**多模态参考** 是三种互斥场景，不能混用。只传 1 张图且不带 `role` 时等同于 `first_frame`。传 `last_frame` 必须同时传 `first_frame`；两张图可以相同，宽高比不一致时以首帧为准、尾帧自动居中裁剪。"
+          }
+        }
+      },
+      "URLRef": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "支持三种写法：\n- **公网 URL**\n- **Base64**：`data:image/<格式>;base64,<编码>`（格式需小写）。大文件请勿使用，请求体上限 64 MB\n- **素材 ID**：`asset://<ASSET_ID>`，取自火山的素材 & 虚拟人像库"
+          }
+        }
+      },
+      "VideoSubmitResponse": {
+        "type": "object",
+        "description": "提交成功后的响应。`task_id` 用于后续查询。",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "任务 ID，与 `task_id` 相同。"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string",
+            "enum": [
+              "video"
+            ]
+          },
+          "model": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued"
+            ]
+          },
+          "progress": {
+            "type": "integer",
+            "examples": [
+              0
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 时间戳（秒）。"
+          }
+        }
+      },
+      "TaskQueryResponse": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "固定为 `success`。业务失败信息在 `data.status` 与 `data.fail_reason` 里。",
+            "examples": [
+              "success"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TaskDetail"
+          }
+        }
+      },
+      "TaskDetail": {
+        "type": "object",
+        "properties": {
+          "task_id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "examples": [
+              "generate"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "任务状态。`SUCCESS` 与 `FAILURE` 为终态，其余需继续轮询。上游的任务超时（`expired`）会归一为 `FAILURE`。",
+            "enum": [
+              "NOT_START",
+              "SUBMITTED",
+              "QUEUED",
+              "IN_PROGRESS",
+              "SUCCESS",
+              "FAILURE"
+            ]
+          },
+          "progress": {
+            "type": "string",
+            "examples": [
+              "50%"
+            ]
+          },
+          "result_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "视频地址，仅 `status` 为 `SUCCESS` 时返回。"
+          },
+          "fail_reason": {
+            "type": "string"
+          },
+          "submit_time": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "start_time": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "finish_time": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "quota": {
+            "type": "integer",
+            "description": "本次任务的最终扣费额度。任务完成后网关会按上游真实用量重算，这里是结算后的值。"
+          }
+        }
+      },
+      "TaskError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

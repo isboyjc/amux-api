@@ -31,8 +31,15 @@ type DoubaoV3VideoContent struct {
 }
 
 type DoubaoV3VideoUsage struct {
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	CompletionTokens int                     `json:"completion_tokens"`
+	TotalTokens      int                     `json:"total_tokens"`
+	ToolUsage        *DoubaoV3VideoToolUsage `json:"tool_usage,omitempty"`
+}
+
+// DoubaoV3VideoToolUsage 是工具的实际调用次数。web_search 为 0 表示模型
+// 判断后没有联网搜索。
+type DoubaoV3VideoToolUsage struct {
+	WebSearch int `json:"web_search"`
 }
 
 type DoubaoV3VideoError struct {

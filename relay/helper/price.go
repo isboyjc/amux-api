@@ -167,6 +167,14 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types.PriceData, error) {
 	groupRatioInfo := HandleGroupRatio(c, info)
 
+	// 视频模型的报价完全由 video_pricing 价目表决定（适配器在 EstimateBilling
+	// 里把整单金额作为 OtherRatio 返回），这里只需要给一个固定基准价。
+	// 不走 ModelPrice 查表：那张表由管理员维护且会被 DB 配置整体覆盖，视频模型
+	// 不该因为管理员没给它填一个无意义的 $1 就被判定为"未配置价格"。
+	if _, ok := billing_setting.GetVideoPricing(info.OriginModelName); ok {
+		return buildPerCallPriceData(billing_setting.VideoBasePrice, groupRatioInfo), nil
+	}
+
 	modelPrice, success := ratio_setting.GetModelPrice(info.OriginModelName, true)
 	usePrice := success
 	var modelRatio float64
@@ -224,11 +232,34 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	return priceData, nil
 }
 
+// buildPerCallPriceData 按固定单价组装按次计费的 PriceData。
+func buildPerCallPriceData(modelPrice float64, groupRatioInfo types.GroupRatioInfo) types.PriceData {
+	quota := int(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
+	freeModel := false
+	if !operation_setting.GetQuotaSetting().EnableFreeModelPreConsume {
+		if groupRatioInfo.GroupRatio == 0 || modelPrice == 0 {
+			quota = 0
+			freeModel = true
+		}
+	}
+	return types.PriceData{
+		FreeModel:      freeModel,
+		ModelPrice:     modelPrice,
+		UsePrice:       true,
+		Quota:          quota,
+		GroupRatioInfo: groupRatioInfo,
+	}
+}
+
 func HasModelBillingConfig(modelName string) bool {
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}
 	if _, ok, _ := ratio_setting.GetModelRatio(modelName); ok {
+		return true
+	}
+	// 视频模型靠价目表定价，不需要 ModelPrice / ModelRatio 条目
+	if _, ok := billing_setting.GetVideoPricing(modelName); ok {
 		return true
 	}
 	if billing_setting.GetBillingMode(modelName) != billing_setting.BillingModeTieredExpr {

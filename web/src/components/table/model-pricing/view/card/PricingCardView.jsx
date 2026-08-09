@@ -19,14 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  Card,
-  Tag,
-  Tooltip,
-  Empty,
-  Avatar,
-  Modal,
-} from '@douyinfe/semi-ui';
+import { Card, Tag, Tooltip, Empty, Avatar, Modal } from '@douyinfe/semi-ui';
 import { IconCreditCard } from '@douyinfe/semi-icons';
 import {
   Type,
@@ -43,6 +36,7 @@ import {
 } from '@douyinfe/semi-illustrations';
 import {
   calculateModelPrice,
+  formatVideoOutputPrices,
   getLobeHubIcon,
   parsePricingReference,
   formatGroupDiscount,
@@ -87,8 +81,7 @@ const buildCapabilityLabels = (t) => ({
   rerank: t('重排'),
 });
 
-const isDark = () =>
-  document.body.getAttribute('theme-mode') === 'dark';
+const isDark = () => document.body.getAttribute('theme-mode') === 'dark';
 
 const getCardShadow = (type) => {
   if (isDark()) {
@@ -221,21 +214,32 @@ const PricingCardView = ({
   const renderModelAvatar = (model) => {
     if (!model || !model.model_name) {
       return (
-        <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
+        <div
+          className={CARD_STYLES.container}
+          style={CARD_STYLES.containerStyle}
+        >
           <Avatar size='small'>?</Avatar>
         </div>
       );
     }
     if (model.icon) {
       return (
-        <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
-          <div className={CARD_STYLES.icon}>{getLobeHubIcon(model.icon, 28)}</div>
+        <div
+          className={CARD_STYLES.container}
+          style={CARD_STYLES.containerStyle}
+        >
+          <div className={CARD_STYLES.icon}>
+            {getLobeHubIcon(model.icon, 28)}
+          </div>
         </div>
       );
     }
     if (model.vendor_icon) {
       return (
-        <div className={CARD_STYLES.container} style={CARD_STYLES.containerStyle}>
+        <div
+          className={CARD_STYLES.container}
+          style={CARD_STYLES.containerStyle}
+        >
           <div className={CARD_STYLES.icon}>
             {getLobeHubIcon(model.vendor_icon, 28)}
           </div>
@@ -270,6 +274,9 @@ const PricingCardView = ({
     if (model.billing_mode === 'per_hour') {
       return <PlainChip accent>{t('按小时计费')}</PlainChip>;
     }
+    if (model.video_pricing) {
+      return <PlainChip accent>{t('视频计费')}</PlainChip>;
+    }
     if (model.quota_type === 1) {
       return <PlainChip accent>{t('按次计费')}</PlainChip>;
     }
@@ -286,10 +293,13 @@ const PricingCardView = ({
   // - 动态计费 chip：中性 chip，多档时合并为「动态计费（N档）」一个标签
   // - 含时间条件 / 含请求条件：未命中时的中性提示
   const renderDynamicAuxChips = (model, priceData) => {
-    if (model.billing_mode !== 'tiered_expr' || !model.billing_expr) return null;
+    if (model.billing_mode !== 'tiered_expr' || !model.billing_expr)
+      return null;
     const exprBody = model.billing_expr.replace(/^v\d+:/, '');
     const tierCount = (exprBody.match(/tier\(/g) || []).length;
-    const hasTimeCondition = /\b(?:hour|minute|weekday|month|day)\(/.test(exprBody);
+    const hasTimeCondition = /\b(?:hour|minute|weekday|month|day)\(/.test(
+      exprBody,
+    );
     const hasRequestCondition = /\b(?:param|header)\(/.test(exprBody);
     const firedRules = priceData?.firedRules || [];
     const chips = [];
@@ -304,7 +314,9 @@ const PricingCardView = ({
         : t('特惠进行中（规则）');
       const tooltipLines = firedRules.map((r) => {
         const desc = describeRuleGroup(r, t);
-        const m = Number(r.multiplier).toFixed(4).replace(/\.?0+$/, '');
+        const m = Number(r.multiplier)
+          .toFixed(4)
+          .replace(/\.?0+$/, '');
         return `${desc} ×${m}`;
       });
       chips.push({
@@ -319,14 +331,19 @@ const PricingCardView = ({
     chips.push({
       key: 'dyn',
       accent: true,
-      label: tierCount > 1 ? t('动态计费（{{n}}档）', { n: tierCount }) : t('动态计费'),
+      label:
+        tierCount > 1
+          ? t('动态计费（{{n}}档）', { n: tierCount })
+          : t('动态计费'),
     });
 
     // 3) 含 X 条件：仅在未命中对应类别时展示作为说明性提示
     if (firedRules.length === 0) {
       // 没有任何规则命中：两种条件都按配置显示
-      if (hasTimeCondition) chips.push({ key: 'has-time', label: t('含时间条件') });
-      if (hasRequestCondition) chips.push({ key: 'has-request', label: t('含请求条件') });
+      if (hasTimeCondition)
+        chips.push({ key: 'has-time', label: t('含时间条件') });
+      if (hasRequestCondition)
+        chips.push({ key: 'has-request', label: t('含请求条件') });
     } else {
       // 命中了部分规则：另一类如果配置了仍展示
       const firedHasTime = firedRules.some((r) =>
@@ -350,18 +367,23 @@ const PricingCardView = ({
         </PlainChip>
       );
       return c.tooltip ? (
-        <Tooltip key={c.key} content={c.tooltip} position='top' showArrow={false}>
+        <Tooltip
+          key={c.key}
+          content={c.tooltip}
+          position='top'
+          showArrow={false}
+        >
           {node}
         </Tooltip>
-      ) : node;
+      ) : (
+        node
+      );
     });
   };
 
   // 标签行（计费类型 + 自定义标签合并到一行；自定义标签统一中性色）
   const renderTagsRow = (model, priceData) => {
-    const tagArr = model.tags
-      ? model.tags.split(',').filter(Boolean)
-      : [];
+    const tagArr = model.tags ? model.tags.split(',').filter(Boolean) : [];
     const customTags = tagArr.map((tg, idx) => (
       <PlainChip key={`custom-${idx}`}>{tg}</PlainChip>
     ));
@@ -371,13 +393,13 @@ const PricingCardView = ({
         {renderDynamicAuxChips(model, priceData)}
         {tagArr.length > 0 &&
           renderLimitedItems({
-          items: customTags.map((tag, idx) => ({
-            key: `custom-${idx}`,
-            element: tag,
-          })),
-          renderItem: (item) => item.element,
-          maxDisplay: 4,
-        })}
+            items: customTags.map((tag, idx) => ({
+              key: `custom-${idx}`,
+              element: tag,
+            })),
+            renderItem: (item) => item.element,
+            maxDisplay: 4,
+          })}
       </div>
     );
   };
@@ -478,6 +500,9 @@ const PricingCardView = ({
           // PriceLine 与按次价格行内部都有 value !== originalValue 自检，
           // 这里始终把 originalPriceData 传下去，由它们决定是否渲染划线即可。
 
+          const isVideo = !!model.video_pricing;
+          // isPerCall 必须保持「非按量」的原语义——下面 {!isPerCall} 门控着
+          // token 价格行，视频模型不能让它们渲染出来。
           const isPerCall = model.quota_type === 1;
           const priceSuffix = getPriceSuffix(priceData);
 
@@ -614,10 +639,7 @@ const PricingCardView = ({
                         onClick={(e) => {
                           e.stopPropagation();
                           const targetGroup = priceData.usedGroup;
-                          if (
-                            targetGroup &&
-                            !isGroupUsable(targetGroup)
-                          ) {
+                          if (targetGroup && !isGroupUsable(targetGroup)) {
                             showUpgradeModal(targetGroup);
                             return;
                           }
@@ -754,8 +776,36 @@ const PricingCardView = ({
                   </div>
                 </div>
 
+                {/* 视频计费：按分辨率列每秒单价，哨兵基准价对用户没有意义 */}
+                {isVideo && (
+                  <div
+                    className='text-xs mb-3 px-2 py-1.5 rounded-md'
+                    style={{
+                      backgroundColor: 'var(--semi-color-fill-0)',
+                      color: 'var(--semi-color-text-1)',
+                    }}
+                  >
+                    {formatVideoOutputPrices(
+                      model.video_pricing,
+                      priceData.usedGroupRatio,
+                      displayPrice,
+                    ).map((line) => (
+                      <div key={line.resolution}>
+                        <span style={{ color: 'var(--semi-color-text-2)' }}>
+                          {line.resolution}:
+                        </span>{' '}
+                        <span className='font-semibold'>{line.price}</span>
+                        <span style={{ color: 'var(--semi-color-text-2)' }}>
+                          {' '}
+                          / {t('秒')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {/* 按次计费单价行 */}
-                {isPerCall && (
+                {isPerCall && !isVideo && (
                   <div
                     className='text-xs mb-3 px-2 py-1.5 rounded-md'
                     style={{
@@ -895,23 +945,23 @@ const PlainChip = ({ children, accent, warning }) => {
     fg = 'var(--semi-color-warning)';
   }
   return (
-  <span
-    style={{
-      display: 'inline-flex',
-      alignItems: 'center',
-      height: 20,
-      padding: '0 8px',
-      borderRadius: 4,
-      fontSize: 11,
-      fontWeight: 500,
-      lineHeight: 1,
-      backgroundColor: bg,
-      color: fg,
-      whiteSpace: 'nowrap',
-    }}
-  >
-    {children}
-  </span>
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        height: 20,
+        padding: '0 8px',
+        borderRadius: 4,
+        fontSize: 11,
+        fontWeight: 500,
+        lineHeight: 1,
+        backgroundColor: bg,
+        color: fg,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {children}
+    </span>
   );
 };
 
@@ -1030,7 +1080,10 @@ const PriceLine = ({ label, value, originalValue, suffix }) => {
         <span style={{ color: 'var(--semi-color-text-3)' }}>-</span>
       ) : (
         <>
-          <span className='font-medium' style={{ color: 'var(--semi-color-text-0)' }}>
+          <span
+            className='font-medium'
+            style={{ color: 'var(--semi-color-text-0)' }}
+          >
             {value}
           </span>
           {showOriginal && (
@@ -1069,8 +1122,12 @@ const PricingReferenceBlock = ({ data, t }) => {
           {it.official && (
             <span className='line-through text-gray-400'>{it.official}</span>
           )}
-          {it.ours && <span className='font-semibold text-green-500'>{it.ours}</span>}
-          {it.discount && <span className='text-green-500'>({it.discount})</span>}
+          {it.ours && (
+            <span className='font-semibold text-green-500'>{it.ours}</span>
+          )}
+          {it.discount && (
+            <span className='text-green-500'>({it.discount})</span>
+          )}
         </div>
       ))}
     </div>

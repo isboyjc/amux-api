@@ -83,11 +83,17 @@ const PlaygroundRightPanel = ({
     currentModality === MODALITY.MULTIMODAL;
   const isChatWorkspace = isTextLike;
   const isImageWorkspace = currentModality === MODALITY.IMAGE;
-  // schema 驱动的参数面板：image 与 audio（TTS 的 voice/speed、STT 的
-  // language 等）都按当前模型 param_schema 动态渲染。管理员在模型管理里给
-  // 模型配了 schema 就自动出现在右栏。
+  // schema 驱动的参数面板：image / video / audio 都按当前模型 param_schema
+  // 动态渲染。管理员在模型管理里给模型配了 schema 就自动出现在右栏。
+  //
+  // video 必须包含在内：输入框工具栏只渲染 TOOLBAR_PARAM_KEYS 白名单里的
+  // enum / 有界数字（分辨率、宽高比、时长），其余参数——布尔开关（水印、
+  // prompt 改写）、无界数字（seed）、纯文本（反向提示词）——只有右栏这一个
+  // 入口。漏掉 video 会让这些参数彻底调不到。
   const isSchemaWorkspace =
-    currentModality === MODALITY.IMAGE || currentModality === MODALITY.AUDIO;
+    currentModality === MODALITY.IMAGE ||
+    currentModality === MODALITY.VIDEO ||
+    currentModality === MODALITY.AUDIO;
   const isUnsupportedModality =
     !PLAYGROUND_SUPPORTED_MODALITIES.has(currentModality);
   const modalityLabel = getModalityShortLabel(t, currentModality);

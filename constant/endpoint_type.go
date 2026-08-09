@@ -12,6 +12,9 @@ const (
 	EndpointTypeImageGeneration       EndpointType = "image-generation"
 	EndpointTypeEmbeddings            EndpointType = "embeddings"
 	EndpointTypeOpenAIVideo           EndpointType = "openai-video"
+	// EndpointTypeVolcengineVideo 是火山方舟（Ark）v3 视频协议的原生兼容端点。
+	// 键名沿用线上已有配置里手填的 "volcengine"，避免存量模型记录失效。
+	EndpointTypeVolcengineVideo EndpointType = "volcengine"
 	//EndpointTypeMidjourney     EndpointType = "midjourney-proxy"
 	//EndpointTypeSuno           EndpointType = "suno-proxy"
 	//EndpointTypeKling          EndpointType = "kling"

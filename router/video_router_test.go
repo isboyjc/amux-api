@@ -23,6 +23,9 @@ func TestVideoRouterRegistersGenericAndDashScopeRoutes(t *testing.T) {
 		http.MethodGet + " /v1/video/generations/:task_id",
 		http.MethodPost + " /api/v1/services/aigc/video-generation/video-synthesis",
 		http.MethodGet + " /api/v1/tasks/:task_id",
+		// MiniMax v2 原生协议：查询走路径参数，与官方一致
+		http.MethodPost + " /v2/video_generation",
+		http.MethodGet + " /v2/query/video_generation/:task_id",
 	} {
 		if !routes[expected] {
 			t.Fatalf("missing route %s", expected)

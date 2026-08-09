@@ -17,7 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo, useState } from 'react';
-import { API, showError, showSuccess } from '../../../../helpers';
+import {
+  API,
+  DEFAULT_VIDEO_MODEL_SPEC,
+  isVideoPricingConfigured,
+  showError,
+  showSuccess,
+  specToVideoEditorState,
+  summarizeVideoPricing,
+  videoEditorStateToSpec,
+} from '../../../../helpers';
 import {
   combineBillingExpr,
   splitBillingExprAndRequestRules,
@@ -42,6 +51,9 @@ const EMPTY_MODEL = {
   audioOutputPrice: '',
   billingExpr: '',
   requestRuleExpr: '',
+  // 视频计费的价目表，编辑器状态形态（分辨率是带 id 的行数组）。
+  // 非视频模型为 null。
+  videoPricing: null,
   rawRatios: {
     modelRatio: '',
     completionRatio: '',
@@ -149,6 +161,27 @@ const buildModelState = (name, sourceMaps) => {
     };
   }
 
+  // 有价目表就是视频计费——与后端 GetBillingMode 的推断保持一致，
+  // 管理员不需要为内置视频模型再显式设一次模式。
+  //
+  // 覆盖项优先，其次内置默认表（VideoPricingDefaults 是 option 接口给的只读
+  // 派生项）。不看内置表的话，靠默认定价跑的模型会显示成「按量计费 + 空倍率」，
+  // 管理员会以为没配价，然后去填一个根本不生效的 ModelRatio。
+  const videoSpec =
+    sourceMaps.ModelVideoPricing?.[name] ??
+    sourceMaps.VideoPricingDefaults?.[name] ??
+    sourceMaps.VideoPricingAliases?.[name];
+  if (billingMode === 'video' || videoSpec) {
+    return {
+      ...EMPTY_MODEL,
+      name,
+      billingMode: 'video',
+      videoPricing: specToVideoEditorState(videoSpec),
+      rawRatios: { ...EMPTY_MODEL.rawRatios },
+      hasConflict: false,
+    };
+  }
+
   const modelRatio = toNumericString(sourceMaps.ModelRatio[name]);
   const completionRatio = toNumericString(sourceMaps.CompletionRatio[name]);
   const completionRatioMeta = normalizeCompletionRatioMeta(
@@ -236,13 +269,27 @@ const buildModelState = (name, sourceMaps) => {
 
 export const isBasePricingUnset = (model) =>
   model.billingMode !== 'tiered_expr' &&
-  !hasValue(model.fixedPrice) && !hasValue(model.inputPrice);
+  // 视频模型的价格在价目表里，不占用 ModelPrice / ModelRatio
+  !(
+    model.billingMode === 'video' &&
+    isVideoPricingConfigured(model.videoPricing)
+  ) &&
+  !hasValue(model.fixedPrice) &&
+  !hasValue(model.inputPrice);
 
 export const getModelWarnings = (model, t) => {
   if (!model) {
     return [];
   }
   if (model.billingMode === 'tiered_expr') {
+    return [];
+  }
+  if (model.billingMode === 'video') {
+    if (!isVideoPricingConfigured(model.videoPricing)) {
+      return [
+        t('视频计费需要至少配置一个分辨率的输出单价，否则请求会被拒绝。'),
+      ];
+    }
     return [];
   }
   const warnings = [];
@@ -305,8 +352,8 @@ export const getModelWarnings = (model, t) => {
 export const buildSummaryText = (model, t) => {
   const requestRuleSuffix =
     model.billingMode === 'tiered_expr' && model.requestRuleExpr
-    ? `，${t('请求规则')}`
-    : '';
+      ? `，${t('请求规则')}`
+      : '';
   if (model.billingMode === 'tiered_expr') {
     const expr = model.billingExpr;
     if (!expr) return `${t('表达式计费')}${requestRuleSuffix}`;
@@ -315,6 +362,10 @@ export const buildSummaryText = (model, t) => {
       return `${t('表达式计费')}${requestRuleSuffix}`;
     }
     return `${t('阶梯计费')} (${tierCount} ${t('档')})${requestRuleSuffix}`;
+  }
+
+  if (model.billingMode === 'video') {
+    return summarizeVideoPricing(model.videoPricing, t);
   }
 
   if (model.billingMode === 'per_hour' && hasValue(model.fixedPrice)) {
@@ -368,6 +419,12 @@ const serializeModel = (model, t) => {
     if (hasValue(model.fixedPrice)) {
       result.ModelPrice = toNormalizedNumber(model.fixedPrice);
     }
+    return result;
+  }
+
+  // 视频模型的价格全在 video_pricing 价目表里，不往 ModelPrice / ModelRatio
+  // 写任何条目——写了反而会让后端把它当成按次或按量模型。
+  if (model.billingMode === 'video') {
     return result;
   }
 
@@ -664,8 +721,20 @@ export function useModelPricingEditorState({
       ImageRatio: parseOptionJSON(options.ImageRatio),
       AudioRatio: parseOptionJSON(options.AudioRatio),
       AudioCompletionRatio: parseOptionJSON(options.AudioCompletionRatio),
-      ModelBillingMode: parseOptionJSON(options['billing_setting.billing_mode']),
-      ModelBillingExpr: parseOptionJSON(options['billing_setting.billing_expr']),
+      ModelBillingMode: parseOptionJSON(
+        options['billing_setting.billing_mode'],
+      ),
+      ModelBillingExpr: parseOptionJSON(
+        options['billing_setting.billing_expr'],
+      ),
+      ModelVideoPricing: parseOptionJSON(
+        options['video_pricing_setting.pricing'],
+      ),
+      // 随代码发布的内置价目表，只读。见后端 DefaultVideoPricingJSON。
+      // Defaults 是规范名（决定列表里有哪些行），Aliases 是同一模型的其它可用
+      // 名字（只决定行怎么渲染，不进列表，否则面板会冒出好几行重复记录）。
+      VideoPricingDefaults: parseOptionJSON(options.VideoPricingDefaults),
+      VideoPricingAliases: parseOptionJSON(options.VideoPricingAliases),
     };
 
     const names = new Set([
@@ -681,6 +750,11 @@ export function useModelPricingEditorState({
       ...Object.keys(sourceMaps.AudioCompletionRatio),
       ...Object.keys(sourceMaps.ModelBillingMode),
       ...Object.keys(sourceMaps.ModelBillingExpr),
+      ...Object.keys(sourceMaps.ModelVideoPricing),
+      // 靠内置价目表定价的模型在 DB 里没有任何条目，不把它们的名字加进来，
+      // 「模型定价设置」这个入口（不传 candidateModelNames，列表只来自 DB）
+      // 就永远搜不到它们——面板上查不到、也改不了价。
+      ...Object.keys(sourceMaps.VideoPricingDefaults),
     ]);
 
     const nextModels = Array.from(names)
@@ -897,8 +971,19 @@ export function useModelPricingEditorState({
       if (value === 'tiered_expr' && !model.billingExpr) {
         next.billingExpr = 'tier("base", p * 0 + c * 0)';
       }
+      if (value === 'video' && !model.videoPricing) {
+        next.videoPricing = specToVideoEditorState(DEFAULT_VIDEO_MODEL_SPEC);
+      }
       return next;
     });
+  };
+
+  const handleVideoPricingChange = (nextPricing) => {
+    if (!selectedModel) return;
+    upsertModel(selectedModel.name, (model) => ({
+      ...model,
+      videoPricing: nextPricing,
+    }));
   };
 
   const handleBillingExprChange = (newExpr) => {
@@ -1055,17 +1140,26 @@ export function useModelPricingEditorState({
       const tieredOutput = {
         'billing_setting.billing_mode': {},
         'billing_setting.billing_expr': {},
+        'video_pricing_setting.pricing': {},
       };
 
       for (const model of models) {
-        if (model.billingMode === 'tiered_expr') {
+        if (model.billingMode === 'video') {
+          const spec = videoEditorStateToSpec(model.videoPricing);
+          if (spec && Object.keys(spec.output).length > 0) {
+            tieredOutput['billing_setting.billing_mode'][model.name] = 'video';
+            tieredOutput['video_pricing_setting.pricing'][model.name] = spec;
+          }
+        } else if (model.billingMode === 'tiered_expr') {
           const finalBillingExpr = combineBillingExpr(
             model.billingExpr,
             model.requestRuleExpr,
           );
           if (finalBillingExpr) {
-            tieredOutput['billing_setting.billing_mode'][model.name] = 'tiered_expr';
-            tieredOutput['billing_setting.billing_expr'][model.name] = finalBillingExpr;
+            tieredOutput['billing_setting.billing_mode'][model.name] =
+              'tiered_expr';
+            tieredOutput['billing_setting.billing_expr'][model.name] =
+              finalBillingExpr;
           }
         } else if (model.billingMode === 'per_hour') {
           tieredOutput['billing_setting.billing_mode'][model.name] = 'per_hour';
@@ -1083,7 +1177,10 @@ export function useModelPricingEditorState({
             }
           });
         } catch (e) {
-          if (model.billingMode !== 'tiered_expr') {
+          if (
+            model.billingMode !== 'tiered_expr' &&
+            model.billingMode !== 'video'
+          ) {
             throw e;
           }
         }
@@ -1144,6 +1241,7 @@ export function useModelPricingEditorState({
     handleNumericFieldChange,
     handleBillingModeChange,
     handleBillingExprChange,
+    handleVideoPricingChange,
     handleRequestRuleExprChange,
     handleSubmit,
     addModel,

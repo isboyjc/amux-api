@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -97,6 +98,17 @@ func GetOptions(c *gin.Context) {
 	options = append(options, &model.Option{
 		Key:   "CompletionRatioMeta",
 		Value: buildCompletionRatioMetaValue(optionValues),
+	})
+	// 内置视频价目表：DB 里只存管理员的覆盖项，面板不知道还有一份随代码发布的
+	// 默认表。缺了它，靠内置定价跑的视频模型会被显示成「按量计费 + 空倍率」。
+	// 规范名与别名分开给：前者决定列表里有哪些行，后者只决定行怎么渲染。
+	options = append(options, &model.Option{
+		Key:   billing_setting.VideoPricingDefaultsOptionKey,
+		Value: billing_setting.DefaultVideoPricingJSON(),
+	})
+	options = append(options, &model.Option{
+		Key:   billing_setting.VideoPricingAliasesOptionKey,
+		Value: billing_setting.VideoPricingAliasesJSON(),
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -211,6 +223,17 @@ func UpdateOption(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": err.Error(),
+			})
+			return
+		}
+	case billing_setting.VideoPricingOptionKey:
+		// 视频价目表配错（默认档位不在输出表里、单价为负等）会让该模型的每个
+		// 请求都在预扣费前被拒。必须在落库前挡住，而不是等用户报障。
+		err = billing_setting.CheckVideoPricingJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "视频模型定价设置失败: " + err.Error(),
 			})
 			return
 		}

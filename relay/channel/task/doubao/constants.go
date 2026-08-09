@@ -19,6 +19,11 @@ var ModelList = []string{
 	"seedance-2.0-api",
 	"seedance-2.0-fast",
 	"seedance-2.0-fast-api",
+	// seedance 2.5 走火山官渠，请求解析与计费见 seedance25.go。
+	// 两个名字都列出来：本站对外用 doubao-seedance-2-5，直连官方 endpoint 名
+	// 的调用方用 doubao-seedance-2-5-260628。
+	"doubao-seedance-2-5",
+	"doubao-seedance-2-5-260628",
 }
 
 var ChannelName = "doubao-video"
@@ -40,6 +45,13 @@ var seedanceAliasMap = map[string]string{
 	"doubao-seedance-2-0-fast":        "doubao-seedance-2-0-fast-260128",
 	"seedance-2.0-fast":               "doubao-seedance-2-0-fast-260128",
 	"seedance-2.0-fast-api":           "doubao-seedance-2-0-fast-260128",
+	// 2.5（官渠）。归一到官方 endpoint 名后，IsSeedance25Model 据此分流；
+	// seedancePricingMap 里没有这个键，2.0 的档位倍率因此不会误命中 2.5。
+	"doubao-seedance-2-5-260628": ModelSeedance25Official,
+	"doubao-seedance-2-5":        ModelSeedance25Official,
+	"doubao-seedance-2.5":        ModelSeedance25Official,
+	"seedance-2.5":               ModelSeedance25Official,
+	"seedance-2.5-api":           ModelSeedance25Official,
 }
 
 // CanonicalSeedanceName 把别名归一到官方端点名；非 seedance 名字原样返回，

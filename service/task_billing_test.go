@@ -712,3 +712,89 @@ func TestSettle_NonPerCall_AdaptorAdjustWorks(t *testing.T) {
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
+
+// TestRecalculate_PersistsQuotaColumn 结算后的额度必须落库。
+//
+// 调用方普遍是「先 UpdateWithStatus 写行、再结算」，不写回的话 task.quota 会
+// 永远停在预扣值：钱是对的（用户额度与账单日志都按 delta 结过），但任务详情里
+// 展示的扣费额度对不上。Seedance 2.5 的 duration=-1 尤其明显——预扣按 15 秒、
+// 实收可能只有 5 秒，差三倍。
+func TestRecalculate_PersistsQuotaColumn(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 12, 12, 12
+	const initQuota, preConsumed = 10000, 5000
+	const actualQuota = 1670
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-recalc-persist", 5000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NotZero(t, task.ID)
+
+	RecalculateTaskQuota(ctx, task, actualQuota, "adaptor计费调整")
+
+	assert.Equal(t, actualQuota, task.Quota, "内存里的额度应更新")
+
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	assert.Equal(t, actualQuota, persisted.Quota, "结算后的额度必须写回 DB")
+}
+
+// TestRecalculate_UnsavedTaskDoesNotTouchDB 没落库的 task 不该发出无 where 的
+// 更新——GORM 会拦下来，但更重要的是别让它有机会变成全表更新。
+func TestRecalculate_UnsavedTaskDoesNotTouchDB(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 13, 13, 13
+	seedUser(t, userID, 10000)
+	seedToken(t, tokenID, userID, "sk-recalc-unsaved", 5000)
+	seedChannel(t, channelID)
+
+	// 先放一条无关的 task，验证它不会被误伤
+	other := makeTask(userID, channelID, 8888, tokenID, BillingSourceWallet, 0)
+	require.NoError(t, model.DB.Create(other).Error)
+
+	unsaved := makeTask(userID, channelID, 5000, tokenID, BillingSourceWallet, 0)
+	RecalculateTaskQuota(ctx, unsaved, 3000, "adaptor计费调整")
+
+	var untouched model.Task
+	require.NoError(t, model.DB.First(&untouched, other.ID).Error)
+	assert.Equal(t, 8888, untouched.Quota, "无关任务的额度不该被改动")
+}
+
+// TestTaskBillingOther_VideoBillingDetail 视频模型的 model_price 是哨兵基准价
+// $1，日志里不带分项明细的话，前端只能渲染成「按次 $1 × 分组倍率 = $1」——
+// 和实际扣的钱毫无关系。差额结算那条尤其离谱：实扣 $0.009 却写着 $1。
+func TestTaskBillingOther_VideoBillingDetail(t *testing.T) {
+	task := makeTask(1, 1, 5000, 1, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.OriginModelName = "doubao-seedance-2-5"
+	task.PrivateData.BillingContext.VideoUsage = &model.VideoUsageSnapshot{
+		Resolution:    "720p",
+		OutputSeconds: 5,
+		VideoSeconds:  4,
+		HasVideoInput: true,
+	}
+
+	other := taskBillingOther(task)
+	detail, ok := other["video_billing"].(map[string]interface{})
+	require.True(t, ok, "视频模型必须带分项明细，否则计费过程显示成哨兵价 $1")
+
+	assert.Equal(t, "720p", detail["resolution"])
+	// 含参考视频 → 整单走降档单价 $0.13542，输出 5 秒 + 参考视频 4 秒
+	assert.InDelta(t, 5*0.13542, detail["output"], 1e-9)
+	assert.InDelta(t, 4*0.13542, detail["video"], 1e-9)
+	assert.InDelta(t, 9*0.13542, detail["total"], 1e-9)
+}
+
+// TestTaskBillingOther_NonVideoModelUnaffected 非视频模型不该凭空多出这个字段。
+func TestTaskBillingOther_NonVideoModelUnaffected(t *testing.T) {
+	task := makeTask(1, 1, 5000, 1, BillingSourceWallet, 0)
+	other := taskBillingOther(task)
+	_, exists := other["video_billing"]
+	assert.False(t, exists, "非视频模型不该有 video_billing")
+}

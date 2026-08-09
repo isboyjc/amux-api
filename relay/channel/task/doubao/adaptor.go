@@ -13,15 +13,27 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
+)
+
+// 编译期断言：这两个接口是可选的（relay 靠类型断言决定调不调），签名写错了
+// 不会有编译错误，只会在运行时静默不生效——Seedance 2.5 的参数校验和差额结算
+// 都挂在它们上面，静默失效等于放行错误参数、按预扣多收钱。
+var (
+	_ channel.MappedTaskValidator = (*TaskAdaptor)(nil)
+	_ interface {
+		AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int
+	} = (*TaskAdaptor)(nil)
 )
 
 // APIType represents the type of upstream API
@@ -107,22 +119,22 @@ type responseTask struct {
 
 // ZeroCut API response structure (for task query - full format)
 type zeroCutResponse struct {
-	Code      int    `json:"code"`
-	Message   string `json:"message"`
-	Data      struct {
-		ID     int    `json:"id"`  // Used in query response
-		Type   string `json:"type"`
-		Status string `json:"status"` // RUNNING, SUCCESS, FAILED, PENDING
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		ID     int                    `json:"id"` // Used in query response
+		Type   string                 `json:"type"`
+		Status string                 `json:"status"` // RUNNING, SUCCESS, FAILED, PENDING
 		Param  map[string]interface{} `json:"param"`
 		Output *struct {
-			URL            string `json:"url"`       // 老格式：视频直链
-			VideoURL       string `json:"video_url"` // 新格式：ZeroCut 升级后改用 video_url
-			Error          string `json:"error"`     // Error message for failed tasks
-			Ratio          string `json:"ratio"`
-			Duration       int    `json:"duration"`
-			Resolution     string `json:"resolution"`
-			RevisedPrompt  string `json:"revised_prompt"`
-			Usage          struct {
+			URL           string `json:"url"`       // 老格式：视频直链
+			VideoURL      string `json:"video_url"` // 新格式：ZeroCut 升级后改用 video_url
+			Error         string `json:"error"`     // Error message for failed tasks
+			Ratio         string `json:"ratio"`
+			Duration      int    `json:"duration"`
+			Resolution    string `json:"resolution"`
+			RevisedPrompt string `json:"revised_prompt"`
+			Usage         struct {
 				Credits          int    `json:"credits"`
 				TotalTokens      int    `json:"total_tokens"`
 				CompletionTokens int    `json:"completion_tokens"`
@@ -137,10 +149,10 @@ type zeroCutResponse struct {
 
 // ZeroCut create response (for task creation)
 type zeroCutCreateResponse struct {
-	Code      int    `json:"code"`
-	Message   string `json:"message"`
-	Data      struct {
-		WorkflowId int    `json:"workflowId"`  // Note: different field name than query response
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		WorkflowId int    `json:"workflowId"` // Note: different field name than query response
 		Status     string `json:"status"`
 	} `json:"data"`
 	Timestamp string `json:"timestamp"`
@@ -173,12 +185,99 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
+	// Seedance 2.5（官渠）的参数校验统一推迟到 ValidateMappedRequestAndSetAction：
+	// 它跑在模型映射之后，别名与官方模型名因此享有完全一致的约束。
+	if IsSeedance25Model(info.OriginModelName) {
+		return a.acceptSeedance25Request(c, info)
+	}
 	// Check if this is Doubao raw format (from /api/v3 route)
 	if c.GetBool("doubao_raw_format") {
 		return a.validateDoubaoRawRequest(c, info)
 	}
 	// OpenAI format (from /v1 route) uses standard validation
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+}
+
+// acceptSeedance25Request 只把请求体读进 context，不做参数校验。
+//
+// 2.5 的提示词是可选的（纯首尾帧、甚至只传一段参考音频都是官方支持的组合），
+// 通用校验那条「prompt 必填」对它不成立；原生协议那条「content 必须含 text
+// 项」同理。真正的校验在 ValidateMappedRequestAndSetAction 里由
+// Seedance25Request.Validate 统一完成。
+//
+// 注意这里认的是 OriginModelName：管理员用 channel.model_mapping 把一个完全
+// 自定义的别名映射到 2.5 时，这一层认不出来，会走到默认的 prompt 必填分支。
+// 这类别名想用无提示词组合，得把别名起成能被 seedanceAliasMap 认出的名字。
+func (a *TaskAdaptor) acceptSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if c.GetBool("doubao_raw_format") {
+		// 原生协议的请求体由 resolveSeedance25Request 直接解析成自己的类型，
+		// 不需要在这里预存
+		info.Action = constant.TaskActionGenerate
+		return nil
+	}
+	return relaycommon.ValidateBasicTaskRequestWithOptions(c, info,
+		constant.TaskActionGenerate, relaycommon.TaskValidateOptions{PromptOptional: true})
+}
+
+// ValidateMappedRequestAndSetAction 在渠道模型映射完成后、价格计算之前执行
+// Seedance 2.5 的专属校验。
+//
+// 这里同时预演一遍计费：算不出价的请求必须在预扣费之前就被拒掉，绝不能放行
+// 一个不知道该收多少钱的任务。
+func (a *TaskAdaptor) ValidateMappedRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if !IsSeedance25Model(info.UpstreamModelName) {
+		return nil
+	}
+	req, err := a.resolveSeedance25Request(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	usage, err := Seedance25Usage(info.OriginModelName, req)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
+	}
+	if _, err := billing_setting.ComputeVideoCost(info.OriginModelName, usage); err != nil {
+		return service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
+	}
+	return nil
+}
+
+// resolveSeedance25Request 把当前请求归一化为 Seedance25Request，带默认值与
+// 校验，结果缓存在 context 上。站内统一协议与火山 v3 原生协议在这里汇合成同
+// 一个结构，之后的校验、计费、上游请求构造全部只认它。
+func (a *TaskAdaptor) resolveSeedance25Request(c *gin.Context) (*Seedance25Request, error) {
+	if cached, exists := c.Get(seedance25RequestContextKey); exists {
+		if req, ok := cached.(*Seedance25Request); ok {
+			return req, nil
+		}
+	}
+
+	var (
+		s25 *Seedance25Request
+		err error
+	)
+	if c.GetBool("doubao_raw_format") {
+		var incoming ArkIncomingRequest
+		if err = common.UnmarshalBodyReusable(c, &incoming); err != nil {
+			return nil, errors.Wrap(err, "invalid volcengine v3 request body")
+		}
+		s25, err = Seedance25FromArkRequest(&incoming)
+	} else {
+		var req relaycommon.TaskSubmitReq
+		if req, err = relaycommon.GetTaskRequest(c); err == nil {
+			s25, err = Seedance25FromTaskSubmitReq(req)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	s25.ApplyDefaults()
+	if err := s25.Validate(); err != nil {
+		return nil, err
+	}
+
+	c.Set(seedance25RequestContextKey, s25)
+	return s25, nil
 }
 
 // validateDoubaoRawRequest validates Doubao official API format
@@ -256,6 +355,12 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 // 仅在 ratio != 1.0 时塞 OtherRatios——720p 不含视频是基准档，没必要在
 // 日志里挂一个无意义的 ratio=1.0 entry，让 BillingContext 干净。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	// Seedance 2.5 走 video_pricing 价目表，返回整单美元金额而不是相对倍率。
+	// 两套计价互不相干：2.5 不在 seedancePricingMap 里，2.0 也没有价目表。
+	if IsSeedance25Model(info.UpstreamModelName) {
+		return a.estimateSeedance25Billing(c, info)
+	}
+
 	// Check if this is Doubao raw format
 	if c.GetBool("doubao_raw_format") {
 		originalReq, exists := c.Get("doubao_original_request")
@@ -282,6 +387,168 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return map[string]float64{"seedance_pricing": ratio}
 	}
 	return nil
+}
+
+// estimateSeedance25Billing 把整单美元金额作为唯一的 OtherRatio 返回。
+//
+// 基础额度是哨兵价 $1（billing_setting.VideoBasePrice），乘上这个金额后就是
+// 真实报价，分组倍率照常作用在最外层。
+//
+// 同时留下两份快照：BillingContext 里的计费口径（终态结算要靠它判断原请求
+// 有没有带参考视频，那决定走哪一档单价），以及消费日志里的分项明细。
+func (a *TaskAdaptor) estimateSeedance25Billing(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	req, err := a.resolveSeedance25Request(c)
+	if err != nil {
+		return nil
+	}
+	usage, err := Seedance25Usage(info.OriginModelName, req)
+	if err != nil {
+		return nil
+	}
+	cost, err := billing_setting.ComputeVideoCost(info.OriginModelName, usage)
+	if err != nil {
+		return nil
+	}
+	logger.LogJson(c, "seedance 2.5 cost breakdown", cost)
+
+	c.Set(constant.CtxKeyVideoUsageSnapshot, videoUsageSnapshot(usage))
+	c.Set(constant.CtxKeyVideoBillingDetail, map[string]any{
+		"resolution":     cost.Resolution,
+		"output_seconds": usage.OutputSeconds,
+		"image_count":    usage.ImageCount,
+		"video_seconds":  usage.VideoSeconds,
+		"output":         cost.Output,
+		"image":          cost.Image,
+		"video":          cost.Video,
+		"total":          cost.Total,
+		// duration=-1 时输出秒数是价目表配的折中值，终态会按上游真实用量重算。
+		// 标出来，免得对账时把预估值当成实际时长。
+		"estimated": req.Duration <= 0 || usage.VideoSeconds > 0,
+	})
+	return map[string]float64{billing_setting.VideoCostRatioKey: cost.Total}
+}
+
+// AdjustBillingOnComplete 用上游返回的真实 token 用量重算额度，多退少补。
+//
+// 为什么认 token 而不是响应里的 duration：duration 只是输出时长，既不含参考
+// 视频的贡献，也不含官方对「含视频输入」任务的最低 token 用量下限。token 是
+// 上游真正的计费口径，这些都已经算在里面了。换算见 Seedance25BillableSeconds。
+//
+// 返回 0 表示保持预扣额度——这是拿不到用量、或任何一步对不上时的安全兜底。
+// 注意它必须配合 settleTaskBillingOnComplete 里「有视频价目表就不按 token
+// 倍率重算」的守卫：否则返回 0 会掉进那条分支，用 ModelRatio（视频模型是 0
+// 或管理员从 2.0 复制来的残值）算出完全错误的金额。
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.TaskInfo) int {
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return 0
+	}
+	bc := task.PrivateData.BillingContext
+	pricing, ok := billing_setting.GetVideoPricing(bc.OriginModelName)
+	if !ok {
+		// 2.0 这类按 token 倍率计费的模型不走这条路，交给通用的 token 重算
+		return 0
+	}
+
+	var stored responseTask
+	if err := common.Unmarshal(task.Data, &stored); err != nil {
+		return 0
+	}
+	tokens := stored.Usage.CompletionTokens
+	if tokens <= 0 {
+		tokens = stored.Usage.TotalTokens
+	}
+
+	// 没有提交时的口径快照就判断不出走哪一档单价。此时默认按「不含视频」结算
+	// 会给带参考视频的任务按 1.66 倍的高单价收钱——宁可保持预扣，也不能朝多收
+	// 的方向猜。正常路径下 EstimateBilling 必然写入快照，走到这里说明数据不全。
+	snap := bc.VideoUsage
+	if snap == nil {
+		return 0
+	}
+	resolution := stored.Resolution
+	if resolution == "" {
+		resolution = snap.Resolution
+	}
+
+	seconds, ok := Seedance25BillableSeconds(tokens, resolution, stored.Ratio, stored.FramesPerSecond)
+	if !ok {
+		return 0
+	}
+	// 计费秒数不可能少于输出时长：真出现说明 token 字段选错了、或上游改了
+	// token 公式。这种时候宁可保持预扣，也不能拿一个算错的数去扣钱。
+	if stored.Duration > 0 && seconds < float64(stored.Duration) {
+		return 0
+	}
+
+	// 原请求带没带参考视频决定走哪一档单价。上游只给一个合并的 token 用量，
+	// 拆不出输出/输入各占多少，所以档位只能靠提交时的快照来还原。
+	// 存量快照没有 HasVideoInput 字段，用 VideoSeconds 兜底。
+	hasVideoInput := snap.HasVideoInput || snap.VideoSeconds > 0
+	usage := billing_setting.VideoUsage{
+		Resolution:    resolution,
+		OutputSeconds: seconds,
+		ImageCount:    snap.ImageCount,
+		HasVideoInput: hasVideoInput,
+	}
+	// 价目表给输入视频单独配了价时才拆分，好让计费明细能看出输出/输入各占
+	// 多少。两档单价相同（2.5 就是如此）时拆不拆总额一样；没配输入视频价时
+	// 拆分会把那部分按 0 计费，所以不拆。
+	if hasVideoInput && stored.Duration > 0 &&
+		float64(stored.Duration) < seconds && pricing.ChargesInputVideo(resolution) {
+		usage.OutputSeconds = float64(stored.Duration)
+		usage.VideoSeconds = seconds - float64(stored.Duration)
+	}
+
+	cost, err := billing_setting.ComputeVideoCost(bc.OriginModelName, usage)
+	if err != nil {
+		return 0
+	}
+	// 把结算口径写回快照：差额结算那条消费日志要靠它渲染分项明细，不改的话
+	// 显示的还是预扣时的秒数，和这笔金额对不上。
+	bc.VideoUsage = videoUsageSnapshot(usage)
+
+	groupRatio := bc.GroupRatio
+	if groupRatio <= 0 {
+		groupRatio = 1
+	}
+	// 必须与预扣用同一套公式（先算基础额度再乘金额，各自截断一次），否则
+	// 预扣本来就准的单子会因为浮点误差产生 1 个单位的虚假差额，凭空多出一条
+	// 退款/补扣日志。
+	baseQuota := int(billing_setting.VideoBasePrice * common.QuotaPerUnit * groupRatio)
+	return int(float64(baseQuota) * cost.Total)
+}
+
+// videoUsageSnapshot 把计费口径转成落库快照。提交时存预扣口径，终态结算时
+// 改写成实际口径，两条日志各自渲染出的明细才对得上自己那笔金额。
+func videoUsageSnapshot(usage billing_setting.VideoUsage) *model.VideoUsageSnapshot {
+	return &model.VideoUsageSnapshot{
+		Resolution:    usage.Resolution,
+		OutputSeconds: usage.OutputSeconds,
+		ImageCount:    usage.ImageCount,
+		AudioSeconds:  usage.AudioSeconds,
+		VideoSeconds:  usage.VideoSeconds,
+		HasVideoInput: usage.HasVideoInput || usage.VideoSeconds > 0,
+	}
+}
+
+// seedance25UpstreamModel 决定发给上游的模型名。
+//
+// 管理员显式配了 channel.model_mapping 就完全听它的——上游可能是只认某个对外
+// 别名的第三方；没配映射时归一到火山官方 endpoint 名，因为 2.5 的前提就是直
+// 连官渠，把 "doubao-seedance-2-5" 原样发过去官方不认。
+//
+// 这与 2.0 那条路径「一律不自动归一」的取舍不同，原因也在这里：2.0 对接的是
+// 第三方聚合器，替换成官方端点名会被直接拒掉。
+func (a *TaskAdaptor) seedance25UpstreamModel(info *relaycommon.RelayInfo) string {
+	if info.IsModelMapped {
+		return info.UpstreamModelName
+	}
+	canonical, ok := CanonicalSeedanceName(strings.ToLower(strings.TrimSpace(info.UpstreamModelName)))
+	if !ok {
+		return info.UpstreamModelName
+	}
+	info.UpstreamModelName = canonical
+	return canonical
 }
 
 // lookupSeedancePricing 先尝试 UpstreamModelName（含 model_mapping 结果），
@@ -377,6 +644,20 @@ func hasVideoInMetadata(metadata map[string]interface{}) bool {
 
 // BuildRequestBody converts request into Doubao specific format.
 func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	if IsSeedance25Model(info.UpstreamModelName) {
+		s25, err := a.resolveSeedance25Request(c)
+		if err != nil {
+			return nil, err
+		}
+		arkReq := s25.ToArkRequest(a.seedance25UpstreamModel(info))
+		logger.LogJson(c, "seedance 2.5 video request body", arkReq)
+		data, err := common.Marshal(arkReq)
+		if err != nil {
+			return nil, err
+		}
+		return bytes.NewReader(data), nil
+	}
+
 	// Check if this is Doubao raw format (from /api/v3 route)
 	if c.GetBool("doubao_raw_format") {
 		// Use original request directly without conversion
@@ -478,7 +759,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 
 	if err := common.Unmarshal(responseBody, &zeroCutCreateResp); err == nil && zeroCutCreateResp.Code > 0 && zeroCutCreateResp.Data.WorkflowId > 0 {
 		// ZeroCut create format detected
-		
+
 		// Check for error (non-200 code)
 		if zeroCutCreateResp.Code != 200 {
 			taskErr = service.TaskErrorWrapper(
@@ -488,7 +769,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			)
 			return
 		}
-		
+
 		// Convert ZeroCut response to standard format
 		dResp.ID = strconv.Itoa(zeroCutCreateResp.Data.WorkflowId)
 	} else {
@@ -496,7 +777,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		var zeroCutResp zeroCutResponse
 		if err := common.Unmarshal(responseBody, &zeroCutResp); err == nil && zeroCutResp.Code > 0 && zeroCutResp.Data.ID > 0 {
 			// ZeroCut query format detected
-			
+
 			// Check for error (non-200 code)
 			if zeroCutResp.Code != 200 {
 				taskErr = service.TaskErrorWrapper(
@@ -506,7 +787,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 				)
 				return
 			}
-			
+
 			// Convert ZeroCut response to standard format
 			dResp.ID = strconv.Itoa(zeroCutResp.Data.ID)
 		} else {
@@ -515,7 +796,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 				taskErr = service.TaskErrorWrapper(errors.Wrapf(err, "body: %s", responseBody), "unmarshal_response_body_failed", http.StatusInternalServerError)
 				return
 			}
-			
+
 			if dResp.ID == "" {
 				taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 				return
@@ -655,7 +936,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	var zeroCutResp zeroCutResponse
 	if err := common.Unmarshal(respBody, &zeroCutResp); err == nil && zeroCutResp.Code > 0 && zeroCutResp.Data.ID > 0 {
 		// ZeroCut format detected
-		
+
 		// Check for error response
 		if zeroCutResp.Code != 200 {
 			taskResult.Status = model.TaskStatusFailure
@@ -663,7 +944,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Reason = fmt.Sprintf("code %d: %s", zeroCutResp.Code, zeroCutResp.Message)
 			return &taskResult, nil
 		}
-		
+
 		// Parse status
 		switch zeroCutResp.Data.Status {
 		case "PENDING":
@@ -728,6 +1009,16 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
 		taskResult.Reason = resTask.Error.Message
+	case arkStatusExpired:
+		// 任务在 execution_expires_after 内没跑完，上游已经终止它。漏掉这个
+		// 分支会掉进 default 被当成「进行中」，任务永远到不了终态，预扣的
+		// 额度也就永远不释放。
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = "100%"
+		taskResult.Reason = resTask.Error.Message
+		if taskResult.Reason == "" {
+			taskResult.Reason = "task expired"
+		}
 	default:
 		// Unknown status, treat as processing
 		taskResult.Status = model.TaskStatusInProgress
@@ -849,6 +1140,19 @@ func (a *TaskAdaptor) ConvertToDoubaoV3(originTask *model.Task) ([]byte, error) 
 				resp.Ratio = oResp.Ratio
 				resp.Seed = oResp.Seed
 				resp.FramesPerSecond = oResp.FramesPerSecond
+				// 联网搜索的实际调用次数：官方在 usage.tool_usage 里给，
+				// 客户端靠它判断这一单有没有真的走搜索。
+				if oResp.Usage.ToolUsage.WebSearch > 0 {
+					if resp.Usage == nil {
+						resp.Usage = &dto.DoubaoV3VideoUsage{
+							CompletionTokens: originTask.CompletionTokens,
+							TotalTokens:      originTask.TotalTokens,
+						}
+					}
+					resp.Usage.ToolUsage = &dto.DoubaoV3VideoToolUsage{
+						WebSearch: oResp.Usage.ToolUsage.WebSearch,
+					}
+				}
 			}
 		}
 	}

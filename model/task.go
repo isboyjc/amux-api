@@ -120,6 +120,22 @@ type TaskBillingContext struct {
 	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
 	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
 	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	// VideoUsage 是提交时的视频计费口径快照。终态结算要靠它判断输入素材
+	// 的归属——上游只给一个合并的 input_seconds，不知道原请求带的是参考
+	// 视频还是参考音频（后者免费），全算成视频会多收钱。
+	VideoUsage *VideoUsageSnapshot `json:"video_usage,omitempty"`
+}
+
+type VideoUsageSnapshot struct {
+	Resolution    string  `json:"resolution,omitempty"`
+	OutputSeconds float64 `json:"output_seconds,omitempty"`
+	ImageCount    int     `json:"image_count,omitempty"`
+	AudioSeconds  float64 `json:"audio_seconds,omitempty"`
+	VideoSeconds  float64 `json:"video_seconds,omitempty"`
+	// HasVideoInput 决定走哪一档单价。结算时上游只给一个合并的用量，拆不出
+	// 输出/输入，VideoSeconds 可能是 0，档位只能靠这个字段还原。存量数据里
+	// 它是 false，读的时候要用 VideoSeconds > 0 兜底。
+	HasVideoInput bool `json:"has_video_input,omitempty"`
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）

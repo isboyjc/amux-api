@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -627,6 +628,12 @@ func RelayTask(c *gin.Context) {
 		if result.Platform == constant.TaskPlatformAmuxSTT {
 			perCallBilling = false
 		}
+		// 视频模型同理：ModelPrice 只是哨兵基准价（UsePrice=true），真实报价
+		// 由价目表按参数算出，且参考素材时长在提交时只能按上限预估，必须允许
+		// 终态按上游返回的真实用量多退少补。
+		if _, ok := billing_setting.GetVideoPricing(relayInfo.OriginModelName); ok {
+			perCallBilling = false
+		}
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,
 			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
@@ -634,6 +641,11 @@ func RelayTask(c *gin.Context) {
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  perCallBilling,
+		}
+		if snapshot, ok := c.Get(constant.CtxKeyVideoUsageSnapshot); ok {
+			if usage, ok := snapshot.(*model.VideoUsageSnapshot); ok {
+				task.PrivateData.BillingContext.VideoUsage = usage
+			}
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

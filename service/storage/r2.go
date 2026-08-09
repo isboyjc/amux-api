@@ -103,8 +103,8 @@ func pickNonEmpty(values ...string) string {
 }
 
 // resolveConfig 把 admin 面板配置（DB）与环境变量合流。优先级：
-//   1) admin 配置（system_setting.StorageSettings）
-//   2) 环境变量 R2_*（部署兜底，给老方式留迁移期）
+//  1. admin 配置（system_setting.StorageSettings）
+//  2. 环境变量 R2_*（部署兜底，给老方式留迁移期）
 //
 // 注意：这里每次调用都拉一遍——StorageSettings 是单例 struct，DB 加载完
 // 会原地改字段，所以任何时候 GetStorageSettings() 都拿到最新值。
@@ -270,20 +270,57 @@ func sanitizePathPrefix(p string) string {
 	return out
 }
 
-// extFromContentType 优先从 Content-Type 推扩展名；命中失败再退回到原始
-// 文件名的扩展名；都没有就用 ".bin"。
+// canonicalMediaExt 是常见媒体 Content-Type 的规范扩展名。
+//
+// 不能用 mime.ExtensionsByType 的首选值：它按字典序返回候选，
+// video/mp4 给 ".m4v"、image/jpeg 给 ".jfif"、audio/mpeg 给 ".m2a"，
+// 而上游厂商普遍按 URL 后缀白名单校验素材（MiniMax H3 只收
+// .mp4/.mov、JPG/PNG/WEBP/HEIC/HEIF、WAV/MP3），这些冷门后缀会被直接拒收。
+// 同样的坑在视频归档那边已经踩过一次，见 archive.go 的 archiveExt。
+var canonicalMediaExt = map[string]string{
+	"video/mp4":       ".mp4",
+	"video/quicktime": ".mov",
+	"video/webm":      ".webm",
+	"image/jpeg":      ".jpg",
+	"image/png":       ".png",
+	"image/webp":      ".webp",
+	"image/gif":       ".gif",
+	"image/heic":      ".heic",
+	"image/heif":      ".heif",
+	"audio/mpeg":      ".mp3",
+	"audio/mp3":       ".mp3",
+	"audio/wav":       ".wav",
+	"audio/x-wav":     ".wav",
+	"audio/wave":      ".wav",
+}
+
+// extFromContentType 推断对象扩展名。
+//
+// 顺序：原始文件名后缀 → 规范媒体类型表 → mime 通用查表 → ".bin"。
+// 文件名优先是因为它就是用户实际持有的那个后缀，而对象 key 的后缀会成为
+// 素材 URL 的一部分、被上游按白名单校验；MIME 反推本身是多对一的，猜错就
+// 会让一个完全合法的文件被上游拒收。
 func extFromContentType(contentType, filename string) string {
-	if contentType != "" {
-		// mime.ExtensionsByType 可能返回多个，挑第一个；返回值带 "."
-		exts, _ := mime.ExtensionsByType(contentType)
-		if len(exts) > 0 {
-			return exts[0]
+	if filename != "" {
+		// 长度限制挡住 "file.verylongthing" 这种把无关后缀当扩展名的情况
+		if ext := strings.ToLower(path.Ext(filename)); ext != "" && len(ext) <= 6 {
+			return ext
 		}
 	}
-	if filename != "" {
-		ext := strings.ToLower(path.Ext(filename))
-		if ext != "" {
-			return ext
+
+	// Content-Type 可能带参数（如 "video/mp4; codecs=avc1"），只取主体
+	mediaType := contentType
+	if parsed, _, err := mime.ParseMediaType(contentType); err == nil {
+		mediaType = parsed
+	}
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+
+	if ext, ok := canonicalMediaExt[mediaType]; ok {
+		return ext
+	}
+	if mediaType != "" {
+		if exts, _ := mime.ExtensionsByType(mediaType); len(exts) > 0 {
+			return exts[0]
 		}
 	}
 	return ".bin"

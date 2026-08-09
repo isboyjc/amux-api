@@ -174,15 +174,27 @@ export const useVideoGeneration = ({ onDebug } = {}) => {
    *          reference_audio 等 role；由调用方构造。
    */
   const generate = useCallback(
-    async ({ model, group, prompt, params = {}, content, onUpdate }) => {
+    async ({
+      model,
+      group,
+      prompt,
+      params = {},
+      content,
+      promptOptional = false,
+      onUpdate,
+    }) => {
       if (!model) {
         showError(t('请先选择模型'));
         return null;
       }
       const trimmedPrompt = (prompt || '').trim();
-      // prompt 强制必填——上游服务商（Ali / Sora 等）即便首/末帧 / 参考图齐全
-      // 也会拒收空 prompt，前置拦截给用户即时反馈，不绕一圈再失败
-      if (!trimmedPrompt) {
+      const hasContent = Array.isArray(content) && content.length > 0;
+      // prompt 默认强制必填——上游服务商（Ali / Sora 等）即便首/末帧 / 参考图
+      // 齐全也会拒收空 prompt，前置拦截给用户即时反馈，不绕一圈再失败。
+      // promptOptional 由模型 schema 的 x-prompt-optional 声明，用于 Seedance
+      // 2.5 这类官方支持无提示词组合的模型；即便如此也得有素材，四类内容全空
+      // 的请求没有任何意义。
+      if (!trimmedPrompt && !(promptOptional && hasContent)) {
         showError(t('请输入 Prompt'));
         return null;
       }

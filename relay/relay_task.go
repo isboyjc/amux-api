@@ -22,6 +22,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/sjson"
@@ -209,6 +210,18 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
+	// 5.1 视频定价模型的兜底校验：基础额度是哨兵价 $1，真实报价必须由适配器
+	//     以 video_cost 的形式给出。若管理员给一个不支持视频计费的模型配了
+	//     价目表（配置面板允许填任意模型名），这里必须拦下——放行的话会拿
+	//     $1 当基准价乘上该适配器自己的倍率，算出一个完全错误的金额。
+	if _, ok := billing_setting.GetVideoPricing(modelName); ok {
+		if _, produced := info.PriceData.OtherRatios[billing_setting.VideoCostRatioKey]; !produced {
+			return nil, service.TaskErrorWrapperLocal(
+				fmt.Errorf("model %s has video pricing configured but the channel adaptor does not support video billing", modelName),
+				"model_price_error", http.StatusBadRequest)
+		}
+	}
+
 	// 6. 将 OtherRatios 应用到基础额度
 	if !common.StringsContains(constant.TaskPricePatches, modelName) {
 		for _, ra := range info.PriceData.OtherRatios {
@@ -304,7 +317,8 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
-		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
+		// 必须 return：漏掉会带着 nil 的 respBuilder 往下走并 panic。
+		return service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
 	}
 
 	respBody, taskErr := respBuilder(c)
@@ -408,12 +422,33 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	// 火山方舟 v3 协议查询端点：返回火山官方 v3 结构（由 adaptor 转换）
 	isDoubaoV3API := strings.HasPrefix(c.Request.RequestURI, "/api/v3/contents/generations/tasks/")
 	// DashScope 官方兼容查询端点：返回 output.task_status / video_url 结构。
+	// MiniMax v2 官方兼容查询端点：返回 task_id / status / video_url 结构。
+	isMinimaxV2API := strings.HasPrefix(c.Request.RequestURI, "/v2/query/video_generation")
 
 	// Gemini/Vertex/Doubao 支持实时查询：用户 fetch 时直接从上游拉取最新状态。
 	// OpenAI 与 Doubao v3 格式由各自的转换分支负责构建响应体，因此让实时查询
 	// 只负责刷新+结算 task（skipCustomResponse=true），不构建自定义格式响应。
-	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI || isDoubaoV3API || isAliVideoAPI); len(realtimeResp) > 0 {
+	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI || isDoubaoV3API || isAliVideoAPI || isMinimaxV2API); len(realtimeResp) > 0 {
 		respBody = realtimeResp
+		return
+	}
+
+	// MiniMax v2 协议格式: 走 adaptor 的 ConvertToMinimaxV2
+	if isMinimaxV2API {
+		adaptor := GetTaskAdaptor(originTask.Platform)
+		if adaptor == nil {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("invalid channel id: %d", originTask.ChannelId), "invalid_channel_id", http.StatusBadRequest)
+			return
+		}
+		converter, ok := adaptor.(channel.MinimaxV2VideoConverter)
+		if !ok {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
+			return
+		}
+		respBody, err = converter.ConvertToMinimaxV2(originTask)
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "convert_to_minimax_v2_failed", http.StatusInternalServerError)
+		}
 		return
 	}
 

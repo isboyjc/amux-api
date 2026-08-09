@@ -40,6 +40,11 @@ type QueryTaskResponse struct {
 	VideoWidth  int      `json:"video_width,omitempty"`
 	VideoHeight int      `json:"video_height,omitempty"`
 	BaseResp    BaseResp `json:"base_resp"`
+	// v2 查询响应可能直接给结果地址而不是 file_id。两个字段都解析，
+	// ParseTaskResult 优先用直链，缺失时回退到 file_id 二次检索。
+	VideoURL string `json:"video_url,omitempty"`
+	// v2 用它区分生成与再生成任务，当前只读不用。
+	TaskType string `json:"task_type,omitempty"`
 }
 
 type ErrorInfo struct {
@@ -81,6 +86,16 @@ type FileObject struct {
 
 func GetModelConfig(model string) ModelConfig {
 	configs := map[string]ModelConfig{
+		// H3 的档位与旧模型完全不同（768P/2K、4~15 秒任意整数），不能落到
+		// 函数末尾那个 720P / 仅 6 秒的兜底配置上。
+		ModelMiniMaxH3: {
+			Name:              ModelMiniMaxH3,
+			DefaultResolution: H3Resolution2K,
+			SupportedDurations: []int{
+				4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+			},
+			SupportedResolutions: []string{H3Resolution768P, H3Resolution2K},
+		},
 		"MiniMax-Hailuo-2.3": {
 			Name:                 "MiniMax-Hailuo-2.3",
 			DefaultResolution:    Resolution768P,
