@@ -149,11 +149,9 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 		hasInputReference = true
 	}
 
-	// HappyHorse i2v 官方协议允许只提供首帧而省略 prompt；其它任务仍维持
-	// 通用接口的 prompt 必填约束，避免把无效请求推迟到上游才失败。
-	normalizedModel := strings.ToLower(strings.TrimSpace(model))
-	promptOptional := strings.HasPrefix(normalizedModel, "happyhorse-") && strings.Contains(normalizedModel, "-i2v")
-	if !promptOptional {
+	// 仅为官方文档明确允许无提示词的模型放行；其它任务仍维持通用接口的
+	// prompt 必填约束，避免把无效请求推迟到上游才失败。
+	if !isDirectTaskPromptOptional(model) {
 		if taskErr := validatePrompt(prompt); taskErr != nil {
 			return taskErr
 		}
@@ -185,6 +183,12 @@ func ValidateMultipartDirect(c *gin.Context, info *RelayInfo) *dto.TaskError {
 	storeTaskRequest(c, info, action, req)
 
 	return nil
+}
+
+func isDirectTaskPromptOptional(model string) bool {
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	return strings.HasPrefix(normalizedModel, "wan2.7-i2v") ||
+		(strings.HasPrefix(normalizedModel, "happyhorse-") && strings.Contains(normalizedModel, "-i2v"))
 }
 
 func isKnownTaskField(field string) bool {

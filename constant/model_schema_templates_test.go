@@ -101,3 +101,15 @@ func TestHappyHorseSchemasDoNotExpose480P(t *testing.T) {
 		}
 	}
 }
+
+func TestWan27SchemaAllowsPromptOmission(t *testing.T) {
+	var schema map[string]interface{}
+	if err := common.UnmarshalJsonStr(
+		constant.GetDefaultModelParamSchema("wan2.7-i2v-2026-04-25"), &schema,
+	); err != nil {
+		t.Fatalf("parse Wan 2.7 schema: %v", err)
+	}
+	if schema["x-prompt-optional"] != true {
+		t.Fatalf("x-prompt-optional=%v, want true", schema["x-prompt-optional"])
+	}
+}

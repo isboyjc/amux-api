@@ -46,19 +46,9 @@ import {
   OUTPUT_CAPABILITY_FALLBACK,
 } from '../../../../constants/modalityLabels';
 import { MODALITY } from '../../../../constants/playground.constants';
+import { ENDPOINT_TEMPLATE } from '../../../../constants/endpoint.constants';
 
 const { Text, Title } = Typography;
-
-// Example endpoint template for quick fill
-const ENDPOINT_TEMPLATE = {
-  openai: { path: '/v1/chat/completions', method: 'POST' },
-  'openai-response': { path: '/v1/responses', method: 'POST' },
-  'openai-response-compact': { path: '/v1/responses/compact', method: 'POST' },
-  anthropic: { path: '/v1/messages', method: 'POST' },
-  gemini: { path: '/v1beta/models/{model}:generateContent', method: 'POST' },
-  'jina-rerank': { path: '/v1/rerank', method: 'POST' },
-  'image-generation': { path: '/v1/images/generations', method: 'POST' },
-};
 
 // 价格参考模板：用于在模型广场详情页展示官方价 vs 本站价对比
 const PRICING_REFERENCE_TEMPLATE = {
@@ -561,6 +551,7 @@ const EditModelModal = (props) => {
                       editorType='object'
                       template={ENDPOINT_TEMPLATE}
                       templateLabel={t('填入模板')}
+                      templateSelectable
                       extraText={t('留空则使用默认端点；支持 {path, method}')}
                       extraFooter={
                         endpointGroups.length > 0 && (

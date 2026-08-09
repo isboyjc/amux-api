@@ -510,6 +510,7 @@ const happyHorseVideoEditParamSchema = `{
 
 const wan27VideoParamSchema = `{
   "type": "object",
+  "x-prompt-optional": true,
   "properties": {
     "reference_images": {
       "type": "array",
