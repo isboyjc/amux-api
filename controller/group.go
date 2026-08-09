@@ -29,6 +29,7 @@ func GetUserGroups(c *gin.Context) {
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
 	userUsableGroups := service.GetUserUsableGroups(userGroup)
+	includeUserGroup := c.Query("include_user_group") == "true"
 
 	// 预先收集各分组的可用模型，供分组列表展示及 auto 聚合使用
 	groupModelsCache := make(map[string][]string)
@@ -52,7 +53,7 @@ func GetUserGroups(c *gin.Context) {
 			//
 			// 多分组链同样只从「该等级下可见的渠道分组」里选：等级分组本身不挂渠道，
 			// 放进链里也只会被选路零成本跳过，没有任何意义。
-			if groupName == userGroup {
+			if groupName == userGroup && !includeUserGroup {
 				continue
 			}
 			usableGroups[groupName] = map[string]interface{}{

@@ -11,6 +11,11 @@ var ModelList = []string{
 	"gte-rerank-v2",
 	"happyhorse-1.1-t2v",
 	"happyhorse-1.0-t2v",
+	"happyhorse-1.1-i2v",
+	"happyhorse-1.0-i2v",
+	"happyhorse-1.1-r2v",
+	"happyhorse-1.0-r2v",
+	"happyhorse-1.0-video-edit",
 	"wan2.7-i2v-2026-04-25",
 }
 

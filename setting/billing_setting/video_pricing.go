@@ -140,6 +140,20 @@ var defaultVideoPricing = buildDefaultVideoPricing()
 
 func buildDefaultVideoPricing() map[string]VideoPricing {
 	return map[string]VideoPricing{
+		// Alibaba Model Studio HappyHorse 官方按输出分辨率和计费时长收费。
+		// 官方价目表未给出 480P 档位，因此内置配置只接受 720P / 1080P。
+		// 管理员可通过 video_pricing_setting.pricing 覆盖这里的默认单价。
+		// https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api#/api/?type=model&url=3029821
+		// https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api#/api/?type=model&url=3030778
+		// https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api#/api/?type=model&url=3030779
+		"happyhorse-1.1-t2v":        happyHorse11Pricing(),
+		"happyhorse-1.1-i2v":        happyHorse11Pricing(),
+		"happyhorse-1.1-r2v":        happyHorse11Pricing(),
+		"happyhorse-1.0-t2v":        happyHorse10Pricing(),
+		"happyhorse-1.0-i2v":        happyHorse10Pricing(),
+		"happyhorse-1.0-r2v":        happyHorse10Pricing(),
+		"happyhorse-1.0-video-edit": happyHorse10Pricing(),
+
 		// https://platform.minimax.io/docs/guides/pricing-paygo
 		// 输出：2K $0.13/s、768P $0.08/s
 		// 输入：音频免费；图片官方前 5 张免费之后 $0.04/张（本站不设免费额度）；
@@ -164,6 +178,28 @@ func buildDefaultVideoPricing() map[string]VideoPricing {
 		},
 
 		"doubao-seedance-2-5": seedance25Pricing(),
+	}
+}
+
+func happyHorse11Pricing() VideoPricing {
+	return VideoPricing{
+		Unit:              VideoPricingUnitSecond,
+		DefaultResolution: "1080P",
+		Output: map[string]float64{
+			"720P":  0.14,
+			"1080P": 0.18,
+		},
+	}
+}
+
+func happyHorse10Pricing() VideoPricing {
+	return VideoPricing{
+		Unit:              VideoPricingUnitSecond,
+		DefaultResolution: "1080P",
+		Output: map[string]float64{
+			"720P":  0.14,
+			"1080P": 0.24,
+		},
 	}
 }
 
@@ -260,9 +296,9 @@ const VideoPricingAliasesOptionKey = "VideoPricingAliases"
 // DefaultVideoPricingJSON 把内置价目表的【规范名】序列化给管理端展示。
 //
 // 管理端的模型定价面板只拿得到 DB 里的覆盖项。不给它这份数据，靠内置定价跑的
-// 视频模型（MiniMax-H3、Seedance 2.5）在面板上会显示成「按量计费 + 空倍率」，
-// 管理员会以为没配价，然后去填一个根本不会生效的 ModelRatio——面板说的和实际
-// 扣的钱对不上，是最难查的一类问题。
+// 视频模型（HappyHorse、MiniMax-H3、Seedance 2.5）在面板上会显示成
+// 「按量计费 + 空倍率」，管理员会以为没配价，然后去填一个根本不会生效的
+// ModelRatio——面板说的和实际扣的钱对不上，是最难查的一类问题。
 func DefaultVideoPricingJSON() string {
 	jsonBytes, err := common.Marshal(defaultVideoPricing)
 	if err != nil {

@@ -20,6 +20,7 @@ import (
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
+	videoBillingLogDetail, isVideoBilling := c.Get(constant.CtxKeyVideoBillingDetail)
 	// 支持任务仅按次计费
 	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
@@ -35,6 +36,12 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 				logContent = fmt.Sprintf("%s, 计算参数：%s", logContent, strings.Join(contents, ", "))
 			}
 		}
+	}
+	if isVideoBilling {
+		// video_cost 是整单美元金额，不是普通倍率参数。不要再把内部键名直接
+		// 暴露成「计算参数」，统一以视频任务预扣展示；分辨率、时长和分项金额
+		// 由结构化 video_billing 字段负责渲染。
+		logContent = "视频任务预扣"
 	}
 	other := make(map[string]interface{})
 	other["is_task"] = true
@@ -53,8 +60,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	}
 	// 视频计费明细：前端据此渲染分项计费过程。缺了它，视频模型的日志只会
 	// 显示「按次 $1 × 倍率」——那个 $1 是哨兵基准价，对用户没有意义。
-	if detail, exists := c.Get(constant.CtxKeyVideoBillingDetail); exists {
-		other["video_billing"] = detail
+	if isVideoBilling {
+		other["video_billing"] = videoBillingLogDetail
+		other["billing_stage"] = "pre_consume"
+		other["pre_consumed_quota"] = info.PriceData.Quota
 	}
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
@@ -221,10 +230,18 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
+	logContent := ""
+	if _, isVideoBilling := other["video_billing"]; isVideoBilling {
+		logContent = "视频任务退款"
+		other["billing_stage"] = "failure_refund"
+		other["pre_consumed_quota"] = quota
+		other["actual_quota"] = 0
+		other["settlement_delta"] = -quota
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
-		Content:   "",
+		Content:   logContent,
 		ChannelId: task.ChannelId,
 		ModelName: taskModelName(task),
 		Quota:     quota,
@@ -297,10 +314,20 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	other["task_id"] = task.TaskID
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
+	other["settlement_delta"] = quotaDelta
+	logContent := reason
+	if _, isVideoBilling := other["video_billing"]; isVideoBilling {
+		other["billing_stage"] = "settlement"
+		if quotaDelta > 0 {
+			logContent = "视频任务补扣"
+		} else {
+			logContent = "视频任务退款"
+		}
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   logType,
-		Content:   reason,
+		Content:   logContent,
 		ChannelId: task.ChannelId,
 		ModelName: taskModelName(task),
 		Quota:     logQuota,

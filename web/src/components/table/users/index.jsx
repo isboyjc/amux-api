@@ -58,6 +58,11 @@ const UsersPage = () => {
     compactMode,
     setCompactMode,
 
+    // Selection state
+    selectedUsers,
+    setSelectedUsers,
+    batchManageUsers,
+
     // Translation
     t,
   } = usersData;
@@ -88,7 +93,14 @@ const UsersPage = () => {
         }
         actionsArea={
           <div className='flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
-            <UsersActions setShowAddUser={setShowAddUser} t={t} />
+            <UsersActions
+              setShowAddUser={setShowAddUser}
+              selectedUsers={selectedUsers}
+              setSelectedUsers={setSelectedUsers}
+              batchManageUsers={batchManageUsers}
+              loading={loading}
+              t={t}
+            />
 
             <UsersFilters
               formInitValues={formInitValues}

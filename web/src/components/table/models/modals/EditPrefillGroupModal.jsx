@@ -36,19 +36,9 @@ import { IconLayers, IconSave, IconClose } from '@douyinfe/semi-icons';
 import { API, showError, showSuccess } from '../../../../helpers';
 import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { ENDPOINT_TEMPLATE } from '../../../../constants/endpoint.constants';
 
 const { Text, Title } = Typography;
-
-// Example endpoint template for quick fill
-const ENDPOINT_TEMPLATE = {
-  openai: { path: '/v1/chat/completions', method: 'POST' },
-  'openai-response': { path: '/v1/responses', method: 'POST' },
-  'openai-response-compact': { path: '/v1/responses/compact', method: 'POST' },
-  anthropic: { path: '/v1/messages', method: 'POST' },
-  gemini: { path: '/v1beta/models/{model}:generateContent', method: 'POST' },
-  'jina-rerank': { path: '/v1/rerank', method: 'POST' },
-  'image-generation': { path: '/v1/images/generations', method: 'POST' },
-};
 
 const EditPrefillGroupModal = ({
   visible,
@@ -250,6 +240,7 @@ const EditPrefillGroupModal = ({
                       }
                       template={ENDPOINT_TEMPLATE}
                       templateLabel={t('填入模板')}
+                      templateSelectable
                       extraText={t('键为端点类型，值为路径和方法对象')}
                     />
                   ) : (

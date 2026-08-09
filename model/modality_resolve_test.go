@@ -23,6 +23,7 @@ func TestInferModalityFromEndpoints(t *testing.T) {
 		{"rerank", `["jina-rerank"]`, constant.ModalityRerank},
 		{"embedding", `["embeddings"]`, constant.ModalityEmbedding},
 		{"video", `["openai-video"]`, constant.ModalityVideo},
+		{"DashScope video", `["dashscope-video"]`, constant.ModalityVideo},
 		{"gemini chat", `["gemini"]`, constant.ModalityText},
 		{"image in array", `["openai","image-generation"]`, constant.ModalityImage},
 		{"unknown only", `["something-weird"]`, ""},
@@ -310,7 +311,14 @@ func TestMatchModalityByPatterns_Priority(t *testing.T) {
 }
 
 func TestResolveModalityForName_HappyHorseVideo(t *testing.T) {
-	if got := ResolveModalityForName("happyhorse-1.1-t2v", nil, nil); got != constant.ModalityVideo {
-		t.Fatalf("HappyHorse modality=%q, want=%q", got, constant.ModalityVideo)
+	for _, modelName := range []string{
+		"happyhorse-1.1-t2v",
+		"happyhorse-1.1-i2v",
+		"happyhorse-1.1-r2v",
+		"happyhorse-1.0-video-edit",
+	} {
+		if got := ResolveModalityForName(modelName, nil, nil); got != constant.ModalityVideo {
+			t.Fatalf("HappyHorse modality for %s=%q, want=%q", modelName, got, constant.ModalityVideo)
+		}
 	}
 }

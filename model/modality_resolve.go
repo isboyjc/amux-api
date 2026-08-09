@@ -18,6 +18,7 @@ var endpointModalityPriority = []struct {
 }{
 	{constant.EndpointTypeImageGeneration, constant.ModalityImage},
 	{constant.EndpointTypeOpenAIVideo, constant.ModalityVideo},
+	{constant.EndpointTypeDashScopeVideo, constant.ModalityVideo},
 	{constant.EndpointTypeJinaRerank, constant.ModalityRerank},
 	{constant.EndpointTypeEmbeddings, constant.ModalityEmbedding},
 }
@@ -60,6 +61,7 @@ func inferFromEndpointSet(keys map[constant.EndpointType]struct{}, specializedOn
 // 推断 modality。endpoints 可以是：
 //   - JSON 对象：{"openai": {...}, "image-generation": {...}}
 //   - JSON 数组：["openai", "image-generation"]
+//
 // 返回空字符串表示无法推断。
 func InferModalityFromEndpoints(raw string) string {
 	raw = strings.TrimSpace(raw)
@@ -128,9 +130,9 @@ func ResolveModality(m *Model) string {
 //  1. exact 记录显式 modality             — 该模型的管理员最终裁决
 //  2. exact 记录 endpoints 推断           — 该模型自带的能力声明
 //  3. 运行时 endpoints 特化信号           — image/video/rerank/embedding
-//                                          （间接包含管理员补充的 image 模式）
+//     （间接包含管理员补充的 image 模式）
 //  4. 管理员 CustomModalityPatterns 命中  — 跨模型的通用补充规则
-//                                          （不依赖 Model 记录）
+//     （不依赖 Model 记录）
 //  5. rule 记录显式 modality              — 家族级（如 gemini 前缀）默认
 //  6. rule 记录 endpoints 推断            — 家族级弱信号
 //  7. 运行时 endpoints 弱信号 (text)      — 只有 chat 的回退

@@ -1082,11 +1082,18 @@ export const renderModelOption = (item) => {
   };
 
   const modalityKey = modality || 'text';
-  const shortLabel = getModalityShortLabel(i18next.t.bind(i18next), modalityKey);
+  const shortLabel = getModalityShortLabel(
+    i18next.t.bind(i18next),
+    modalityKey,
+  );
   const tagColor = MODALITY_COLOR[modalityKey] || 'grey';
 
   return (
-    <div style={baseStyle} onClick={handleClick} onMouseEnter={handleMouseEnter}>
+    <div
+      style={baseStyle}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+    >
       <Typography.Text
         strong
         type={disabled ? 'tertiary' : undefined}
@@ -1797,6 +1804,47 @@ export function renderVideoBillingProcess(other) {
 
   const lines = [];
 
+  const stage =
+    other?.billing_stage ||
+    (other?.task_id != null ? 'settlement' : 'pre_consume');
+  const hasPreConsumed = Number.isFinite(Number(other?.pre_consumed_quota));
+  const hasActual = Number.isFinite(Number(other?.actual_quota));
+  const preConsumed = hasPreConsumed ? Number(other.pre_consumed_quota) : 0;
+  const actual = hasActual ? Number(other.actual_quota) : preConsumed;
+  const rawDelta = Number.isFinite(Number(other?.settlement_delta))
+    ? Number(other.settlement_delta)
+    : actual - preConsumed;
+
+  if (stage === 'pre_consume') {
+    lines.push(buildBillingText('视频任务预扣'));
+    if (hasPreConsumed) {
+      lines.push(
+        buildBillingText('预扣 {{amount}}', {
+          amount: renderQuota(preConsumed, 6),
+        }),
+      );
+    }
+  } else if (stage !== 'pre_consume' && hasPreConsumed && hasActual) {
+    const isRefund = rawDelta < 0;
+    lines.push(
+      isRefund
+        ? buildBillingText('视频任务退款')
+        : buildBillingText('视频任务补扣'),
+    );
+    lines.push(
+      buildBillingText(
+        isRefund
+          ? '预扣 {{pre}}，实际 {{actual}}，退还 {{delta}}'
+          : '预扣 {{pre}}，实际 {{actual}}，补扣 {{delta}}',
+        {
+          pre: renderQuota(preConsumed, 6),
+          actual: renderQuota(actual, 6),
+          delta: renderQuota(Math.abs(rawDelta), 6),
+        },
+      ),
+    );
+  }
+
   // 分项：只列真正产生费用的项，避免一堆 $0.000000 干扰阅读
   if (num(detail.output) > 0) {
     lines.push(
@@ -1857,10 +1905,9 @@ export function renderVideoBillingProcess(other) {
 
 export function renderTaskBillingProcess(other, content) {
   if (other?.task_id != null) {
-    return renderBillingArticle(
-      [content].filter(Boolean),
-      { showReferenceNote: false },
-    );
+    return renderBillingArticle([content].filter(Boolean), {
+      showReferenceNote: false,
+    });
   }
   return renderBillingArticle([
     buildBillingText('任务预扣费（将在任务完成后按实际token重算）'),
@@ -2477,7 +2524,10 @@ export function parseTiersFromExpr(exprStr) {
   try {
     const { body } = stripExprVersion(exprStr);
     const condGroup = `((?:(?:p|c|len)\\s*(?:<|<=|>|>=)\\s*[\\d.eE+]+)(?:\\s*&&\\s*(?:p|c|len)\\s*(?:<|<=|>|>=)\\s*[\\d.eE+]+)*)`;
-    const tierRe = new RegExp(`(?:${condGroup}\\s*\\?\\s*)?tier\\("([^"]*)",\\s*([^)]+)\\)`, 'g');
+    const tierRe = new RegExp(
+      `(?:${condGroup}\\s*\\?\\s*)?tier\\("([^"]*)",\\s*([^)]+)\\)`,
+      'g',
+    );
     const tiers = [];
     let m;
     while ((m = tierRe.exec(body)) !== null) {
@@ -2486,7 +2536,8 @@ export function parseTiersFromExpr(exprStr) {
       if (condStr) {
         for (const cp of condStr.split(/\s*&&\s*/)) {
           const cm = cp.trim().match(/^(p|c|len)\s*(<|<=|>|>=)\s*([\d.eE+]+)$/);
-          if (cm) conditions.push({ var: cm[1], op: cm[2], value: Number(cm[3]) });
+          if (cm)
+            conditions.push({ var: cm[1], op: cm[2], value: Number(cm[3]) });
         }
       }
       const tier = parseTierBody(m[3]);
@@ -2524,7 +2575,7 @@ function getTieredEffectiveTokens(opts, exprStr) {
   const ccGeneric = Number(opts.cache_creation_tokens) || 0;
   // Claude reports explicit 5m/1h splits; non-Claude reports a single generic
   // cache_creation_tokens (with optional 5m alias). Prefer the more specific.
-  const cc = isClaudeSemantic ? cc5m : (cc5m || ccGeneric);
+  const cc = isClaudeSemantic ? cc5m : cc5m || ccGeneric;
   if (!isClaudeSemantic) {
     if (usedVars.cr) p -= cr;
     if (usedVars.cc) p -= cc;
@@ -2541,46 +2592,103 @@ function getTieredEffectiveTokens(opts, exprStr) {
 
 function tieredPriceLine(varKey, vars) {
   switch (varKey) {
-    case 'p': return i18next.t('输入价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'c': return i18next.t('输出价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'cr': return i18next.t('缓存读取价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'cc': return i18next.t('缓存创建价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'cc1h': return i18next.t('1h缓存创建价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'img': return i18next.t('图片输入价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'img_o': return i18next.t('图片输出价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'ai': return i18next.t('音频输入价格 {{symbol}}{{price}} / 1M tokens', vars);
-    case 'ao': return i18next.t('音频输出价格 {{symbol}}{{price}} / 1M tokens', vars);
-    default: return '';
+    case 'p':
+      return i18next.t('输入价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'c':
+      return i18next.t('输出价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'cr':
+      return i18next.t('缓存读取价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc':
+      return i18next.t('缓存创建价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc1h':
+      return i18next.t('1h缓存创建价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'img':
+      return i18next.t('图片输入价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'img_o':
+      return i18next.t('图片输出价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'ai':
+      return i18next.t('音频输入价格 {{symbol}}{{price}} / 1M tokens', vars);
+    case 'ao':
+      return i18next.t('音频输出价格 {{symbol}}{{price}} / 1M tokens', vars);
+    default:
+      return '';
   }
 }
 
 function tieredPriceLineColon(varKey, vars) {
   switch (varKey) {
-    case 'p': return i18next.t('输入价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'c': return i18next.t('输出价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'cr': return i18next.t('缓存读取价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'cc': return i18next.t('缓存创建价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'cc1h': return i18next.t('1h缓存创建价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'img': return i18next.t('图片输入价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'img_o': return i18next.t('图片输出价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'ai': return i18next.t('音频输入价格：{{symbol}}{{price}} / 1M tokens', vars);
-    case 'ao': return i18next.t('音频输出价格：{{symbol}}{{price}} / 1M tokens', vars);
-    default: return '';
+    case 'p':
+      return i18next.t('输入价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'c':
+      return i18next.t('输出价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'cr':
+      return i18next.t('缓存读取价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc':
+      return i18next.t('缓存创建价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'cc1h':
+      return i18next.t('1h缓存创建价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'img':
+      return i18next.t('图片输入价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'img_o':
+      return i18next.t('图片输出价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'ai':
+      return i18next.t('音频输入价格：{{symbol}}{{price}} / 1M tokens', vars);
+    case 'ao':
+      return i18next.t('音频输出价格：{{symbol}}{{price}} / 1M tokens', vars);
+    default:
+      return '';
   }
 }
 
 function tieredFormulaTerm(varKey, vars) {
   switch (varKey) {
-    case 'p': return i18next.t('输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'c': return i18next.t('输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'cr': return i18next.t('缓存读取 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'cc': return i18next.t('缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'cc1h': return i18next.t('1h缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'img': return i18next.t('图片输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'img_o': return i18next.t('图片输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'ai': return i18next.t('音频输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    case 'ao': return i18next.t('音频输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}', vars);
-    default: return '';
+    case 'p':
+      return i18next.t(
+        '输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'c':
+      return i18next.t(
+        '输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'cr':
+      return i18next.t(
+        '缓存读取 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'cc':
+      return i18next.t(
+        '缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'cc1h':
+      return i18next.t(
+        '1h缓存创建 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'img':
+      return i18next.t(
+        '图片输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'img_o':
+      return i18next.t(
+        '图片输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'ai':
+      return i18next.t(
+        '音频输入 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    case 'ao':
+      return i18next.t(
+        '音频输出 {{tokens}} tokens / 1M tokens * {{symbol}}{{price}}',
+        vars,
+      );
+    default:
+      return '';
   }
 }
 
@@ -2680,7 +2788,11 @@ export function renderTieredModelPrice(opts) {
     tiered_quota_per_unit: tieredQuotaPerUnit,
   } = opts;
   let exprStr = '';
-  try { exprStr = decodeTieredExprB64(exprB64); } catch { /* ignore */ }
+  try {
+    exprStr = decodeTieredExprB64(exprB64);
+  } catch {
+    /* ignore */
+  }
   const tiers = parseTiersFromExpr(exprStr);
   if (tiers.length === 0) {
     return i18next.t('阶梯计费（表达式解析失败）');
@@ -2712,15 +2824,14 @@ export function renderTieredModelPrice(opts) {
   // (cache/image/audio) only when they were actually used in this request.
   const pricedVars = BILLING_PRICING_VARS.filter(
     (v) =>
-      (tier[v.field] || 0) > 0 &&
-      (v.isBase || (tokensByVar[v.key] || 0) > 0),
+      (tier[v.field] || 0) > 0 && (v.isBase || (tokensByVar[v.key] || 0) > 0),
   );
 
   let tierBaseUsd = 0;
   const additiveParts = activeVars.map((v) => {
     const coeff = tier[v.field];
     const tk = tokensByVar[v.key];
-    tierBaseUsd += (coeff * tk) / 1_000_000;
+    tierBaseUsd += (coeff * tk) / 1000000;
     return tieredFormulaTerm(v.key, {
       tokens: tk,
       symbol,
@@ -2791,7 +2902,11 @@ export function renderTieredLogContent(opts) {
     tiered_quota_per_unit: tieredQuotaPerUnit,
   } = opts;
   let exprStr = '';
-  try { exprStr = decodeTieredExprB64(exprB64); } catch { /* ignore */ }
+  try {
+    exprStr = decodeTieredExprB64(exprB64);
+  } catch {
+    /* ignore */
+  }
   const tiers = parseTiersFromExpr(exprStr);
   if (tiers.length === 0) {
     return i18next.t('阶梯计费（表达式解析失败）');
@@ -2805,8 +2920,7 @@ export function renderTieredLogContent(opts) {
   const tokensByVar = getTieredEffectiveTokens(opts, exprStr);
   const pricedVars = BILLING_PRICING_VARS.filter(
     (v) =>
-      (tier[v.field] || 0) > 0 &&
-      (v.isBase || (tokensByVar[v.key] || 0) > 0),
+      (tier[v.field] || 0) > 0 && (v.isBase || (tokensByVar[v.key] || 0) > 0),
   );
 
   // Reconstruct the tier base USD to derive the effective rule multiplier.
@@ -2814,7 +2928,7 @@ export function renderTieredLogContent(opts) {
   BILLING_PRICING_VARS.forEach((v) => {
     const coeff = tier[v.field] || 0;
     const tk = tokensByVar[v.key] || 0;
-    if (coeff > 0 && tk > 0) tierBaseUsd += (coeff * tk) / 1_000_000;
+    if (coeff > 0 && tk > 0) tierBaseUsd += (coeff * tk) / 1000000;
   });
   const quotaPerUnit = tieredQuotaPerUnit || getQuotaPerUnit() || 500000;
   let ruleMultiplier = 1;
@@ -2879,7 +2993,11 @@ export function renderTieredModelPriceSimple(opts) {
     outputMode = 'segments',
   } = opts;
   let exprStr = '';
-  try { exprStr = decodeTieredExprB64(exprB64); } catch { /* ignore */ }
+  try {
+    exprStr = decodeTieredExprB64(exprB64);
+  } catch {
+    /* ignore */
+  }
   const tiers = parseTiersFromExpr(exprStr);
   const tier = findMatchedTier(tiers, matchedTier);
 
@@ -2908,7 +3026,7 @@ export function renderTieredModelPriceSimple(opts) {
       BILLING_PRICING_VARS.forEach((v) => {
         const coeff = tier[v.field] || 0;
         const tk = tokensByVar[v.key] || 0;
-        if (coeff > 0 && tk > 0) tierBaseUsd += (coeff * tk) / 1_000_000;
+        if (coeff > 0 && tk > 0) tierBaseUsd += (coeff * tk) / 1000000;
       });
       const quotaPerUnit = tieredQuotaPerUnit || getQuotaPerUnit() || 500000;
       let ruleMultiplier = 1;
@@ -2933,11 +3051,14 @@ export function renderTieredModelPriceSimple(opts) {
     }
 
     if (tier && isPriceDisplayMode(displayMode)) {
-      const hasAnyCacheTokens = cacheTokens > 0 || cacheCreationTokens > 0
-        || cacheCreationTokens5m > 0 || cacheCreationTokens1h > 0;
-      const priceSegments = BILLING_PRICING_VARS
-        .filter((v) => v.group !== 'cache' || hasAnyCacheTokens)
-        .map((v) => [v.field, v.shortLabel]);
+      const hasAnyCacheTokens =
+        cacheTokens > 0 ||
+        cacheCreationTokens > 0 ||
+        cacheCreationTokens5m > 0 ||
+        cacheCreationTokens1h > 0;
+      const priceSegments = BILLING_PRICING_VARS.filter(
+        (v) => v.group !== 'cache' || hasAnyCacheTokens,
+      ).map((v) => [v.field, v.shortLabel]);
       for (const [field, label] of priceSegments) {
         if (tier[field] > 0) {
           segments.push({

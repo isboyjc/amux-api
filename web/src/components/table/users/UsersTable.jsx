@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useContext, useMemo, useState } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
+import { Checkbox, Empty } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
@@ -34,6 +34,7 @@ import ResetPasskeyModal from './modals/ResetPasskeyModal';
 import ResetTwoFAModal from './modals/ResetTwoFAModal';
 import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
 import AffiliateRelationModal from './modals/AffiliateRelationModal';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
 
 const UsersTable = (usersData) => {
   const {
@@ -52,8 +53,13 @@ const UsersTable = (usersData) => {
     refresh,
     resetUserPasskey,
     resetUserTwoFA,
+    selectedUsers,
+    rowSelection,
+    toggleUserSelection,
+    isUserSelectable,
     t,
   } = usersData;
+  const isMobile = useIsMobile();
 
   // Modal states
   const [showPromoteModal, setShowPromoteModal] = useState(false);
@@ -69,8 +75,7 @@ const UsersTable = (usersData) => {
   const [showAffiliateRelationModal, setShowAffiliateRelationModal] =
     useState(false);
   const [statusState] = useContext(StatusContext);
-  const currencySymbol =
-    statusState?.status?.stripe_currency_symbol || '$';
+  const currencySymbol = statusState?.status?.stripe_currency_symbol || '$';
 
   // Modal handlers
   const showPromoteUserModal = (user) => {
@@ -173,16 +178,44 @@ const UsersTable = (usersData) => {
 
   // Handle compact mode by removing fixed positioning
   const tableColumns = useMemo(() => {
-    return compactMode
+    const displayColumns = compactMode
       ? columns.map((col) => {
-        if (col.dataIndex === 'operate') {
-          const { fixed, ...rest } = col;
-          return rest;
-        }
-        return col;
-      })
+          if (col.dataIndex === 'operate') {
+            const { fixed, ...rest } = col;
+            return rest;
+          }
+          return col;
+        })
       : columns;
-  }, [compactMode, columns]);
+
+    if (!isMobile) {
+      return displayColumns;
+    }
+
+    return [
+      {
+        title: t('选择'),
+        key: 'selection',
+        render: (text, record) => (
+          <Checkbox
+            checked={selectedUsers.some((user) => user.id === record.id)}
+            disabled={!isUserSelectable(record)}
+            onChange={() => toggleUserSelection(record)}
+            aria-label={`${t('选择')} ${record.username}`}
+          />
+        ),
+      },
+      ...displayColumns,
+    ];
+  }, [
+    compactMode,
+    columns,
+    isMobile,
+    isUserSelectable,
+    selectedUsers,
+    t,
+    toggleUserSelection,
+  ]);
 
   return (
     <>
@@ -202,6 +235,7 @@ const UsersTable = (usersData) => {
         hidePagination={true}
         loading={loading}
         onRow={handleRow}
+        rowSelection={isMobile ? undefined : rowSelection}
         empty={
           <Empty
             image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}

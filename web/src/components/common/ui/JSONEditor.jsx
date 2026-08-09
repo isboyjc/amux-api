@@ -35,8 +35,14 @@ import {
   Col,
   Divider,
   Tooltip,
+  Dropdown,
 } from '@douyinfe/semi-ui';
-import { IconPlus, IconDelete, IconAlertTriangle } from '@douyinfe/semi-icons';
+import {
+  IconPlus,
+  IconDelete,
+  IconAlertTriangle,
+  IconChevronDown,
+} from '@douyinfe/semi-icons';
 
 const { Text } = Typography;
 
@@ -57,6 +63,7 @@ const JSONEditor = ({
   showClear = true,
   template,
   templateLabel,
+  templateSelectable = false,
   editorType = 'keyValue',
   rules = [],
   formApi = null,
@@ -312,28 +319,44 @@ const JSONEditor = ({
     [keyValuePairs, handleVisualChange],
   );
 
-  // 填入模板
-  const fillTemplate = useCallback(() => {
-    if (template) {
-      const templateString = JSON.stringify(template, null, 2);
+  const applyTemplate = useCallback(
+    (nextTemplate) => {
+      const templateString = JSON.stringify(nextTemplate, null, 2);
 
       if (formApi && field) {
         formApi.setValue(field, templateString);
       }
 
       setManualText(templateString);
-      setKeyValuePairs(objectToKeyValueArray(template, keyValuePairs));
+      setKeyValuePairs(objectToKeyValueArray(nextTemplate, keyValuePairs));
       onChange?.(templateString);
       setJsonError('');
-    }
-  }, [
-    template,
-    onChange,
-    formApi,
-    field,
-    objectToKeyValueArray,
-    keyValuePairs,
-  ]);
+    },
+    [onChange, formApi, field, objectToKeyValueArray, keyValuePairs],
+  );
+
+  // 填入完整模板，保持现有调用方的覆盖行为。
+  const fillTemplate = useCallback(() => {
+    if (template) applyTemplate(template);
+  }, [template, applyTemplate]);
+
+  // 选择对象模板中的单个键，并合并到当前配置。
+  const fillTemplateEntry = useCallback(
+    (templateKey) => {
+      if (
+        !template ||
+        !Object.prototype.hasOwnProperty.call(template, templateKey)
+      ) {
+        return;
+      }
+      const currentObject = keyValueArrayToObject(keyValuePairs);
+      applyTemplate({
+        ...currentObject,
+        [templateKey]: template[templateKey],
+      });
+    },
+    [template, keyValuePairs, keyValueArrayToObject, applyTemplate],
+  );
 
   // 渲染值输入控件（支持嵌套）
   const renderValueInput = (pairId, pairKey, value) => {
@@ -646,11 +669,36 @@ const JSONEditor = ({
               <TabPane tab={t('手动编辑')} itemKey='manual' />
             </Tabs>
 
-            {template && templateLabel && (
-              <Button type='tertiary' onClick={fillTemplate} size='small'>
-                {templateLabel}
-              </Button>
-            )}
+            {template &&
+              templateLabel &&
+              (templateSelectable ? (
+                <Dropdown
+                  trigger='click'
+                  position='bottomRight'
+                  render={
+                    <Dropdown.Menu
+                      style={{ maxHeight: 320, overflowY: 'auto' }}
+                    >
+                      {Object.keys(template).map((templateKey) => (
+                        <Dropdown.Item
+                          key={templateKey}
+                          onClick={() => fillTemplateEntry(templateKey)}
+                        >
+                          {templateKey}
+                        </Dropdown.Item>
+                      ))}
+                    </Dropdown.Menu>
+                  }
+                >
+                  <Button type='tertiary' size='small'>
+                    {templateLabel} <IconChevronDown size='small' />
+                  </Button>
+                </Dropdown>
+              ) : (
+                <Button type='tertiary' onClick={fillTemplate} size='small'>
+                  {templateLabel}
+                </Button>
+              ))}
           </div>
         }
         headerStyle={{ padding: '12px 16px' }}

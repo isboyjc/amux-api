@@ -21,7 +21,10 @@ type aliVideoModelKind int
 
 const (
 	aliVideoModelLegacy aliVideoModelKind = iota
-	aliVideoModelHappyHorse
+	aliVideoModelHappyHorseT2V
+	aliVideoModelHappyHorseI2V
+	aliVideoModelHappyHorseR2V
+	aliVideoModelHappyHorseEdit
 	aliVideoModelWan27
 )
 
@@ -38,13 +41,34 @@ func ptr[T any](value T) *T {
 func getAliVideoModelKind(modelName string) aliVideoModelKind {
 	modelName = strings.ToLower(strings.TrimSpace(modelName))
 	switch {
-	case strings.HasPrefix(modelName, "happyhorse-"):
-		return aliVideoModelHappyHorse
+	case strings.HasPrefix(modelName, "happyhorse-") && strings.Contains(modelName, "-video-edit"):
+		return aliVideoModelHappyHorseEdit
+	case strings.HasPrefix(modelName, "happyhorse-") && strings.Contains(modelName, "-r2v"):
+		return aliVideoModelHappyHorseR2V
+	case strings.HasPrefix(modelName, "happyhorse-") && strings.Contains(modelName, "-i2v"):
+		return aliVideoModelHappyHorseI2V
+	case strings.HasPrefix(modelName, "happyhorse-") && strings.Contains(modelName, "-t2v"):
+		return aliVideoModelHappyHorseT2V
 	case strings.HasPrefix(modelName, "wan2.7-i2v"):
 		return aliVideoModelWan27
 	default:
 		return aliVideoModelLegacy
 	}
+}
+
+func isHappyHorseModelKind(kind aliVideoModelKind) bool {
+	return kind >= aliVideoModelHappyHorseT2V && kind <= aliVideoModelHappyHorseEdit
+}
+
+func actionForAliVideoModelKind(kind aliVideoModelKind) string {
+	if kind == aliVideoModelHappyHorseT2V {
+		return constant.TaskActionTextGenerate
+	}
+	if kind == aliVideoModelHappyHorseI2V || kind == aliVideoModelHappyHorseR2V ||
+		kind == aliVideoModelHappyHorseEdit || kind == aliVideoModelWan27 {
+		return constant.TaskActionGenerate
+	}
+	return ""
 }
 
 func normalizeAliBaseURL(baseURL string) (string, error) {
@@ -55,7 +79,16 @@ func normalizeAliBaseURL(baseURL string) (string, error) {
 	if strings.Contains(strings.ToLower(baseURL), "{workspaceid}") {
 		return "", errors.New("replace WorkspaceId placeholder in ali video base URL")
 	}
-	baseURL = strings.TrimSuffix(baseURL, "/api/v1")
+	// 阿里控制台给出的 Workspace API 地址可能以 /api 或 /api/v1 结尾，
+	// 而下面的提交与查询逻辑会统一补完整的 /api/v1/... 路径。两种后缀都
+	// 归一到站点根地址，避免形成 /api/api/v1/... 导致上游 404。
+	lowerBaseURL := strings.ToLower(baseURL)
+	for _, suffix := range []string{"/api/v1", "/api"} {
+		if strings.HasSuffix(lowerBaseURL, suffix) {
+			baseURL = baseURL[:len(baseURL)-len(suffix)]
+			break
+		}
+	}
 	return strings.TrimRight(baseURL, "/"), nil
 }
 
@@ -137,6 +170,9 @@ func mergeParameters(dst *AliVideoParameters, src *AliVideoParameters) {
 	if src.Audio != nil {
 		dst.Audio = src.Audio
 	}
+	if src.AudioSetting != nil {
+		dst.AudioSetting = src.AudioSetting
+	}
 	if src.Seed != nil {
 		dst.Seed = src.Seed
 	}
@@ -155,6 +191,7 @@ func applyMetadataParameters(dst *AliVideoParameters, metadata *AliMetadata) {
 		PromptExtend: metadata.PromptExtend,
 		Watermark:    metadata.Watermark,
 		Audio:        metadata.Audio,
+		AudioSetting: metadata.AudioSetting,
 		Seed:         metadata.Seed,
 	})
 }
@@ -180,10 +217,11 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 		return nil, err
 	}
 
-	switch getAliVideoModelKind(upstreamModel) {
-	case aliVideoModelHappyHorse:
+	kind := getAliVideoModelKind(upstreamModel)
+	switch {
+	case isHappyHorseModelKind(kind):
 		return convertHappyHorseRequest(upstreamModel, req, metadata)
-	case aliVideoModelWan27:
+	case kind == aliVideoModelWan27:
 		return convertWan27Request(upstreamModel, req, metadata)
 	default:
 		return convertLegacyAliRequest(upstreamModel, req, metadata)
@@ -191,11 +229,16 @@ func (a *TaskAdaptor) convertToAliRequest(info *relaycommon.RelayInfo, req relay
 }
 
 func convertHappyHorseRequest(modelName string, req relaycommon.TaskSubmitReq, metadata *AliMetadata) (*AliVideoRequest, error) {
+	kind := getAliVideoModelKind(modelName)
+	if !isHappyHorseModelKind(kind) {
+		return nil, fmt.Errorf("unsupported HappyHorse model: %s", modelName)
+	}
+
 	duration, err := requestDuration(req)
 	if err != nil {
 		return nil, err
 	}
-	if duration == nil {
+	if kind != aliVideoModelHappyHorseEdit && duration == nil {
 		duration = ptr(5)
 	}
 	resolution := "1080P"
@@ -211,36 +254,24 @@ func convertHappyHorseRequest(modelName string, req relaycommon.TaskSubmitReq, m
 		Input: AliVideoInput{Prompt: req.Prompt},
 		Parameters: &AliVideoParameters{
 			Resolution: ptr(resolution),
-			Ratio:      ptr("16:9"),
-			Duration:   duration,
 			Watermark:  ptr(true),
 		},
 	}
-	if req.InputReference != "" || req.Image != "" || len(req.Images) > 0 {
-		aliReq.Input.ImgURL = firstNonEmpty(req.InputReference, req.Image)
-		if aliReq.Input.ImgURL == "" && len(req.Images) > 0 {
-			aliReq.Input.ImgURL = req.Images[0]
-		}
+	if kind == aliVideoModelHappyHorseT2V || kind == aliVideoModelHappyHorseR2V {
+		aliReq.Parameters.Ratio = ptr("16:9")
+	}
+	if duration != nil {
+		aliReq.Parameters.Duration = duration
 	}
 	applyMetadataParameters(aliReq.Parameters, metadata)
+	if err := appendHappyHorseMedia(aliReq, kind, req, metadata); err != nil {
+		return nil, err
+	}
 	if metadata != nil {
-		if len(metadata.Content) > 0 {
-			return nil, errors.New("HappyHorse text-to-video does not accept media content")
-		}
 		if metadata.Input != nil {
-			aliReq.Input.Media = append(aliReq.Input.Media, metadata.Input.Media...)
-			aliReq.Input.ImgURL = firstNonEmpty(metadata.Input.ImgURL, aliReq.Input.ImgURL)
-			aliReq.Input.FirstFrameURL = firstNonEmpty(metadata.Input.FirstFrameURL, aliReq.Input.FirstFrameURL)
-			aliReq.Input.LastFrameURL = firstNonEmpty(metadata.Input.LastFrameURL, aliReq.Input.LastFrameURL)
-			aliReq.Input.AudioURL = firstNonEmpty(metadata.Input.AudioURL, aliReq.Input.AudioURL)
 			aliReq.Input.NegativePrompt = firstNonEmpty(metadata.Input.NegativePrompt, aliReq.Input.NegativePrompt)
 			aliReq.Input.Template = firstNonEmpty(metadata.Input.Template, aliReq.Input.Template)
 		}
-		aliReq.Input.Media = append(aliReq.Input.Media, metadata.Media...)
-		aliReq.Input.ImgURL = firstNonEmpty(metadata.ImgURL, aliReq.Input.ImgURL, req.InputReference)
-		aliReq.Input.FirstFrameURL = firstNonEmpty(metadata.FirstFrameURL, aliReq.Input.FirstFrameURL)
-		aliReq.Input.LastFrameURL = firstNonEmpty(metadata.LastFrameURL, aliReq.Input.LastFrameURL)
-		aliReq.Input.AudioURL = firstNonEmpty(metadata.AudioURL, aliReq.Input.AudioURL)
 		aliReq.Input.NegativePrompt = firstNonEmpty(metadata.NegativePrompt, aliReq.Input.NegativePrompt)
 		aliReq.Input.Template = firstNonEmpty(metadata.Template, aliReq.Input.Template)
 	}
@@ -248,6 +279,90 @@ func convertHappyHorseRequest(modelName string, req relaycommon.TaskSubmitReq, m
 		return nil, err
 	}
 	return aliReq, nil
+}
+
+func appendHappyHorseMedia(aliReq *AliVideoRequest, kind aliVideoModelKind, req relaycommon.TaskSubmitReq, metadata *AliMetadata) error {
+	if aliReq == nil {
+		return errors.New("HappyHorse request is required")
+	}
+	defaultImageType := "reference_image"
+	if kind == aliVideoModelHappyHorseI2V {
+		defaultImageType = "first_frame"
+	}
+	appendMedia := func(mediaType, url string) {
+		if strings.TrimSpace(url) == "" {
+			return
+		}
+		aliReq.Input.Media = append(aliReq.Input.Media, AliVideoMedia{Type: mediaType, URL: url})
+	}
+
+	requestImages := req.Images
+	if req.InputReference != "" {
+		requestImages = []string{req.InputReference}
+	} else if req.Image != "" {
+		requestImages = []string{req.Image}
+	}
+	for _, imageURL := range requestImages {
+		appendMedia(defaultImageType, imageURL)
+	}
+	if metadata == nil {
+		return nil
+	}
+
+	appendLegacyInput := func(input *AliVideoInput) {
+		if input == nil {
+			return
+		}
+		aliReq.Input.Media = append(aliReq.Input.Media, input.Media...)
+		appendMedia(defaultImageType, input.ImgURL)
+		appendMedia("first_frame", input.FirstFrameURL)
+		appendMedia("last_frame", input.LastFrameURL)
+		appendMedia("audio", input.AudioURL)
+	}
+	appendLegacyInput(metadata.Input)
+	aliReq.Input.Media = append(aliReq.Input.Media, metadata.Media...)
+	appendMedia(defaultImageType, metadata.ImgURL)
+	appendMedia("first_frame", metadata.FirstFrameURL)
+	appendMedia("last_frame", metadata.LastFrameURL)
+	appendMedia("audio", metadata.AudioURL)
+
+	for _, content := range metadata.Content {
+		media, err := happyHorseMediaFromContent(content)
+		if err != nil {
+			return err
+		}
+		aliReq.Input.Media = append(aliReq.Input.Media, media)
+	}
+	return nil
+}
+
+func happyHorseMediaFromContent(content AliContentItem) (AliVideoMedia, error) {
+	role := strings.ToLower(strings.TrimSpace(content.Role))
+	switch strings.ToLower(strings.TrimSpace(content.Type)) {
+	case "image_url":
+		if content.ImageURL == nil || strings.TrimSpace(content.ImageURL.URL) == "" {
+			return AliVideoMedia{}, errors.New("HappyHorse image content URL is required")
+		}
+		if role == "" {
+			role = "reference_image"
+		}
+		if role != "first_frame" && role != "reference_image" {
+			return AliVideoMedia{}, fmt.Errorf("unsupported HappyHorse image role: %s", content.Role)
+		}
+		return AliVideoMedia{Type: role, URL: content.ImageURL.URL}, nil
+	case "video_url":
+		if content.VideoURL == nil || strings.TrimSpace(content.VideoURL.URL) == "" {
+			return AliVideoMedia{}, errors.New("HappyHorse video content URL is required")
+		}
+		if role != "" && role != "reference_video" && role != "video" {
+			return AliVideoMedia{}, fmt.Errorf("unsupported HappyHorse video role: %s", content.Role)
+		}
+		return AliVideoMedia{Type: "video", URL: content.VideoURL.URL}, nil
+	case "audio_url":
+		return AliVideoMedia{}, errors.New("HappyHorse does not accept audio content")
+	default:
+		return AliVideoMedia{}, fmt.Errorf("unsupported HappyHorse content type: %s", content.Type)
+	}
 }
 
 func convertWan27Request(modelName string, req relaycommon.TaskSubmitReq, metadata *AliMetadata) (*AliVideoRequest, error) {
@@ -529,10 +644,11 @@ func validateAliVideoRequest(req *AliVideoRequest) error {
 		return errors.New("seed must be between 0 and 2147483647")
 	}
 
-	switch getAliVideoModelKind(req.Model) {
-	case aliVideoModelHappyHorse:
+	kind := getAliVideoModelKind(req.Model)
+	switch {
+	case isHappyHorseModelKind(kind):
 		return validateHappyHorseRequest(req)
-	case aliVideoModelWan27:
+	case kind == aliVideoModelWan27:
 		return validateWan27Request(req)
 	default:
 		return nil
@@ -540,27 +656,75 @@ func validateAliVideoRequest(req *AliVideoRequest) error {
 }
 
 func validateHappyHorseRequest(req *AliVideoRequest) error {
-	if strings.TrimSpace(req.Input.Prompt) == "" {
-		return errors.New("prompt is required for HappyHorse")
-	}
-	if len(req.Input.Media) > 0 || req.Input.ImgURL != "" || req.Input.FirstFrameURL != "" || req.Input.LastFrameURL != "" || req.Input.AudioURL != "" {
-		return errors.New("HappyHorse text-to-video does not accept media input")
-	}
+	kind := getAliVideoModelKind(req.Model)
 	if req.Input.NegativePrompt != "" || req.Input.Template != "" {
 		return errors.New("HappyHorse does not support negative_prompt or template")
 	}
 	if req.Parameters.Size != nil || req.Parameters.PromptExtend != nil || req.Parameters.Audio != nil {
 		return errors.New("HappyHorse does not support size, prompt_extend or audio parameters")
 	}
+	if req.Input.ImgURL != "" || req.Input.FirstFrameURL != "" || req.Input.LastFrameURL != "" || req.Input.AudioURL != "" {
+		return errors.New("HappyHorse requires media input through input.media")
+	}
 	if req.Parameters.Resolution != nil {
 		resolution, err := normalizeResolution(*req.Parameters.Resolution)
 		if err != nil {
 			return err
 		}
-		if !lo.Contains([]string{"480P", "720P", "1080P"}, resolution) {
+		allowedResolutions := []string{"720P", "1080P"}
+		if !lo.Contains(allowedResolutions, resolution) {
 			return fmt.Errorf("invalid HappyHorse resolution: %s", *req.Parameters.Resolution)
 		}
 		req.Parameters.Resolution = ptr(resolution)
+	}
+	for i := range req.Input.Media {
+		req.Input.Media[i].Type = strings.ToLower(strings.TrimSpace(req.Input.Media[i].Type))
+		req.Input.Media[i].URL = strings.TrimSpace(req.Input.Media[i].URL)
+		if req.Input.Media[i].URL == "" {
+			return fmt.Errorf("HappyHorse media URL is required for %s", req.Input.Media[i].Type)
+		}
+	}
+
+	switch kind {
+	case aliVideoModelHappyHorseT2V:
+		if strings.TrimSpace(req.Input.Prompt) == "" {
+			return errors.New("prompt is required for HappyHorse text-to-video")
+		}
+		if len(req.Input.Media) > 0 {
+			return errors.New("HappyHorse text-to-video does not accept media input")
+		}
+		return validateHappyHorseGenerationParameters(req, true)
+	case aliVideoModelHappyHorseI2V:
+		if len(req.Input.Media) != 1 || req.Input.Media[0].Type != "first_frame" {
+			return errors.New("HappyHorse image-to-video requires exactly one first_frame")
+		}
+		return validateHappyHorseGenerationParameters(req, false)
+	case aliVideoModelHappyHorseR2V:
+		if strings.TrimSpace(req.Input.Prompt) == "" {
+			return errors.New("prompt is required for HappyHorse reference-to-video")
+		}
+		if len(req.Input.Media) < 1 || len(req.Input.Media) > 9 {
+			return errors.New("HappyHorse reference-to-video requires 1 to 9 reference_image items")
+		}
+		for _, media := range req.Input.Media {
+			if media.Type != "reference_image" {
+				return errors.New("HappyHorse reference-to-video only accepts reference_image items")
+			}
+		}
+		return validateHappyHorseGenerationParameters(req, true)
+	case aliVideoModelHappyHorseEdit:
+		return validateHappyHorseEditRequest(req)
+	default:
+		return fmt.Errorf("unsupported HappyHorse model: %s", req.Model)
+	}
+}
+
+func validateHappyHorseGenerationParameters(req *AliVideoRequest, allowRatio bool) error {
+	if req.Parameters.AudioSetting != nil {
+		return errors.New("HappyHorse generation models do not support audio_setting")
+	}
+	if !allowRatio && req.Parameters.Ratio != nil {
+		return errors.New("HappyHorse image-to-video does not support ratio")
 	}
 	if req.Parameters.Ratio != nil && !lo.Contains([]string{"16:9", "9:16", "1:1", "4:3", "3:4", "4:5", "5:4", "9:21", "21:9"}, *req.Parameters.Ratio) {
 		return fmt.Errorf("invalid HappyHorse ratio: %s", *req.Parameters.Ratio)
@@ -568,6 +732,44 @@ func validateHappyHorseRequest(req *AliVideoRequest) error {
 	if req.Parameters.Duration != nil && (*req.Parameters.Duration < 3 || *req.Parameters.Duration > 15) {
 		return errors.New("HappyHorse duration must be between 3 and 15 seconds")
 	}
+	return nil
+}
+
+func validateHappyHorseEditRequest(req *AliVideoRequest) error {
+	if strings.TrimSpace(req.Input.Prompt) == "" {
+		return errors.New("prompt is required for HappyHorse video editing")
+	}
+	if req.Parameters.Ratio != nil || req.Parameters.Duration != nil {
+		return errors.New("HappyHorse video editing does not support ratio or duration parameters")
+	}
+	if req.Parameters.AudioSetting != nil && !lo.Contains([]string{"auto", "origin"}, *req.Parameters.AudioSetting) {
+		return fmt.Errorf("invalid HappyHorse audio_setting: %s", *req.Parameters.AudioSetting)
+	}
+	videoCount := 0
+	referenceImageCount := 0
+	var sourceVideo AliVideoMedia
+	referenceImages := make([]AliVideoMedia, 0, len(req.Input.Media))
+	for _, media := range req.Input.Media {
+		switch media.Type {
+		case "video":
+			videoCount++
+			sourceVideo = media
+		case "reference_image":
+			referenceImageCount++
+			referenceImages = append(referenceImages, media)
+		default:
+			return fmt.Errorf("HappyHorse video editing does not support media type: %s", media.Type)
+		}
+	}
+	if videoCount != 1 {
+		return errors.New("HappyHorse video editing requires exactly one video")
+	}
+	if referenceImageCount > 5 {
+		return errors.New("HappyHorse video editing accepts at most 5 reference_image items")
+	}
+	// 官方示例始终把待编辑视频放在 media[0]，统一重排可避免操练场按
+	// schema 槽位遍历时先收集参考图而改变上游媒体语义。
+	req.Input.Media = append([]AliVideoMedia{sourceVideo}, referenceImages...)
 	return nil
 }
 
@@ -636,8 +838,8 @@ func (a *TaskAdaptor) validateOfficialRequest(c *gin.Context, info *relaycommon.
 	if err := validateAliVideoRequest(req); err != nil {
 		return service.TaskErrorWrapperLocal(err, "InvalidParameter", http.StatusBadRequest)
 	}
-	if getAliVideoModelKind(req.Model) == aliVideoModelHappyHorse {
-		info.Action = constant.TaskActionTextGenerate
+	if action := actionForAliVideoModelKind(getAliVideoModelKind(req.Model)); action != "" {
+		info.Action = action
 	} else {
 		info.Action = constant.TaskActionGenerate
 	}
@@ -705,6 +907,12 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 func effectiveDuration(aliReq *AliVideoRequest) int {
 	if aliReq != nil && aliReq.Parameters != nil && aliReq.Parameters.Duration != nil {
 		return *aliReq.Parameters.Duration
+	}
+	if aliReq != nil && getAliVideoModelKind(aliReq.Model) == aliVideoModelHappyHorseEdit {
+		// Video Edit 的 usage.duration 是输入与输出视频时长之和。提交时无法从
+		// URL 获得素材时长，按官方最短 3 秒输入 + 3 秒输出预扣，完成后再按
+		// 上游返回的实际 usage.duration 差额结算。
+		return 6
 	}
 	return 5
 }
