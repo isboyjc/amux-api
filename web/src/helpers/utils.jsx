@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { Toast, Pagination } from '@douyinfe/semi-ui';
 import i18next from 'i18next';
-import { toastConstants, BILLING_PRICING_VARS, BILLING_VAR_REGEX } from '../constants';
+import {
+  toastConstants,
+  BILLING_PRICING_VARS,
+  BILLING_VAR_REGEX,
+} from '../constants';
 import React from 'react';
 import { toast } from 'react-toastify';
 import {
@@ -139,7 +143,8 @@ export function showError(error) {
     // 此前直接读 error.response.status 会抛 TypeError，把真实错误掩盖成
     // "Cannot read properties of undefined (reading 'status')"。
     if (!response) {
-      if (error.code === 'ERR_CANCELED' || error.code === 'CanceledError') return;
+      if (error.code === 'ERR_CANCELED' || error.code === 'CanceledError')
+        return;
       if (error.code === 'ECONNABORTED') {
         Toast.error(i18next.t('请求超时，请稍后重试'));
         return;
@@ -814,7 +819,9 @@ export const calculateModelPrice = ({
 
     // tier 数量：统计 tier( 出现次数；时间/请求条件：检测函数调用
     const tierCount = (exprBody.match(/tier\(/g) || []).length;
-    const hasTimeCondition = /\b(?:hour|minute|weekday|month|day)\(/.test(exprBody);
+    const hasTimeCondition = /\b(?:hour|minute|weekday|month|day)\(/.test(
+      exprBody,
+    );
     const hasRequestCondition = /\b(?:param|header)\(/.test(exprBody);
 
     // 提取首档系数：扫描 `var * coeff` 模式，取首次出现（即第一档）
@@ -827,7 +834,12 @@ export const calculateModelPrice = ({
 
     const ruleEval = applyRuleMultiplier
       ? evaluateTieredTimeRules(record.billing_expr)
-      : { effectiveMultiplier: 1, fired: [], hasTime: false, hasRequest: false };
+      : {
+          effectiveMultiplier: 1,
+          fired: [],
+          hasTime: false,
+          hasRequest: false,
+        };
     const effectiveTimeMultiplier = ruleEval.effectiveMultiplier;
 
     const summary = {
@@ -941,7 +953,9 @@ export const calculateModelPrice = ({
     // 这里统一用 hasRatioValue 门槛，缺失时返回 null 让 UI 侧自然隐藏该行，
     // 避免显示 "$NaN"。
     const hasInputRatio = hasRatioValue(record.model_ratio);
-    const inputPrice = hasInputRatio ? formatTokenPrice(inputRatioPriceUSD) : null;
+    const inputPrice = hasInputRatio
+      ? formatTokenPrice(inputRatioPriceUSD)
+      : null;
     const audioInputPrice =
       hasInputRatio && hasRatioValue(record.audio_ratio)
         ? formatTokenPrice(inputRatioPriceUSD * Number(record.audio_ratio))
@@ -1033,11 +1047,7 @@ export const matchesPricingBillingType = (model, billingType) => {
   return false;
 };
 
-export const getModelPriceItems = (
-  priceData,
-  t,
-  quotaDisplayType = 'USD',
-) => {
+export const getModelPriceItems = (priceData, t, quotaDisplayType = 'USD') => {
   // 动态计费且没有可展示的首档价格（例如倍率展示模式）时回退为单行 chip 文案
   if (priceData.isDynamicPricing && !priceData.isPerToken) {
     return [
@@ -1146,7 +1156,10 @@ export const getModelPriceItems = (
         value: priceData.audioOutputPrice,
         suffix: unitSuffix,
       },
-    ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
+    ].filter(
+      (item) =>
+        item.value !== null && item.value !== undefined && item.value !== '',
+    );
   }
 
   return [
@@ -1156,7 +1169,10 @@ export const getModelPriceItems = (
       value: priceData.price,
       suffix: ` / ${priceData.isPerHour ? t('小时') : t('次')}`,
     },
-  ].filter((item) => item.value !== null && item.value !== undefined && item.value !== '');
+  ].filter(
+    (item) =>
+      item.value !== null && item.value !== undefined && item.value !== '',
+  );
 };
 
 // 格式化价格信息（用于卡片视图）
@@ -1198,7 +1214,11 @@ export const MODEL_OUTPUT_CAPABILITIES = [
 // 通过同时传入 tenths 与 percent 两个变量，让各语言的翻译值各取所需。
 // 加价（ratio > 1）：所有语言统一 "+X%"。
 export const formatGroupDiscount = (ratio, t) => {
-  if (ratio === undefined || ratio === null || !Number.isFinite(Number(ratio))) {
+  if (
+    ratio === undefined ||
+    ratio === null ||
+    !Number.isFinite(Number(ratio))
+  ) {
     return null;
   }
   const r = Number(ratio);

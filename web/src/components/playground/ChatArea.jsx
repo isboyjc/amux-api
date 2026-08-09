@@ -41,8 +41,8 @@ const ChatArea = ({
   styleState,
   showDebugPanel,
   roleInfo,
-  onMessageSend,        // (text) => void  父层按当前 modality 分派
-  onTranscribeAudio,    // (file) => void  STT：音频上传按钮直接触发转写
+  onMessageSend, // (text) => void  父层按当前 modality 分派
+  onTranscribeAudio, // (file) => void  STT：音频上传按钮直接触发转写
   onMessageCopy,
   onMessageReset,
   onMessageDelete,
@@ -250,7 +250,10 @@ const ChatArea = ({
     // margin 等布局规则，会改变按钮排原本的样式。
     ({ message: currentMessage }) => {
       const isAnyMessageGenerating = (message || []).some(
-        (m) => m.status === 'loading' || m.status === 'incomplete' || m.status === 'polling',
+        (m) =>
+          m.status === 'loading' ||
+          m.status === 'incomplete' ||
+          m.status === 'polling',
       );
       const isCurrentlyEditing = editingMessageId === currentMessage.id;
       return (
@@ -398,10 +401,7 @@ const ChatArea = ({
                 }}
                 className='mb-4'
               />
-              <Typography.Text
-                type='tertiary'
-                className='text-sm text-center'
-              >
+              <Typography.Text type='tertiary' className='text-sm text-center'>
                 {inputs.model
                   ? t('使用 {{model}} 开始一段对话', { model: inputs.model })
                   : t('在下方输入框选择一个模型开始')}

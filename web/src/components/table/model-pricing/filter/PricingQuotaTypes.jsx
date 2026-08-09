@@ -63,7 +63,6 @@ const PricingQuotaTypes = ({
       activeValue={filterQuotaType}
       onChange={setFilterQuotaType}
       loading={loading}
-      
       t={t}
     />
   );
