@@ -36,6 +36,12 @@ func TestTaskSubmitStatusOK_Non200Success(t *testing.T) {
 	}
 }
 
+func TestTaskQuotaWithRatios(t *testing.T) {
+	if got, want := taskQuotaWithRatios(500_000, map[string]float64{"video_cost": 0.84}), 420_000; got != want {
+		t.Fatalf("taskQuotaWithRatios=%d, want %d", got, want)
+	}
+}
+
 func TestBuildSimpleVideoTaskResponseHidesNonTerminalData(t *testing.T) {
 	task := &model.Task{
 		TaskID: "task_public",

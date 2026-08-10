@@ -146,7 +146,7 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			}
 		}
 	}
-	if detail := videoBillingDetail(task.PrivateData.BillingContext); detail != nil {
+	if detail := videoBillingDetail(task); detail != nil {
 		other["video_billing"] = detail
 	}
 	props := task.Properties
@@ -165,11 +165,17 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 //
 // 快照由适配器维护：提交时写预扣口径，终态结算时改写成实际口径，所以两条日志
 // 各自渲染出的明细都对得上自己那笔金额。
-func videoBillingDetail(bc *model.TaskBillingContext) map[string]interface{} {
-	if bc == nil || bc.VideoUsage == nil {
+func videoBillingDetail(task *model.Task) map[string]interface{} {
+	if task == nil || task.PrivateData.BillingContext == nil {
 		return nil
 	}
-	pricing, ok := billing_setting.GetVideoPricing(bc.OriginModelName)
+	bc := task.PrivateData.BillingContext
+	if bc.VideoUsage == nil {
+		return nil
+	}
+	_, pricing, ok := billing_setting.ResolveVideoPricing(
+		bc.OriginModelName, task.Properties.UpstreamModelName,
+	)
 	if !ok {
 		return nil
 	}

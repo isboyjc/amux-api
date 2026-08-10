@@ -150,7 +150,7 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 
 // RelayTaskSubmit 完成 task 提交的全部流程（每次尝试调用一次）：
 // 刷新渠道元数据 → 确定 platform/adaptor → 验证请求 →
-// 估算计费(EstimateBilling) → 计算价格 → 预扣费（仅首次）→
+// 轻量额度门槛（如需要）→ 估算计费(EstimateBilling) → 精确预扣 →
 // 构建/发送/解析上游请求 → 提交后计费调整(AdjustBillingOnSubmit)。
 // 控制器负责 defer Refund 和成功后 Settle。
 func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
@@ -182,24 +182,56 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	if err := helper.ModelMappedHelper(c, info, nil); err != nil {
 		return nil, service.TaskErrorWrapperLocal(err, "model_mapping_failed", http.StatusBadRequest)
 	}
+	// 3. 预生成公开 task ID（仅首次）
+	if info.PublicTaskID == "" {
+		info.PublicTaskID = model.GenerateTaskID()
+	}
+
+	// 4. 昂贵远程校验的轻量额度门槛。以 HappyHorse Video Edit 为例，
+	// 先按最短合法源视频建立预扣，再下载并探测真实时长，避免零余额用户
+	// 触发最长 2 分钟、最大 100MB 的媒体下载。普通任务返回空口径，仍保持
+	// “参数验证优先于价格计算”的原有错误顺序。
+	priceCalculated := false
+	if estimator, ok := adaptor.(channel.PreValidationBillingEstimator); ok &&
+		info.Billing == nil {
+		validationRatios, taskErr := estimator.EstimatePreValidationBilling(c, info)
+		if taskErr != nil {
+			return nil, taskErr
+		}
+		if len(validationRatios) > 0 {
+			info.OriginModelName = modelName
+			priceData, err := helper.ModelPriceHelperPerCall(c, info)
+			if err != nil {
+				return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+			}
+			info.PriceData = priceData
+			priceCalculated = true
+			validationQuota := taskQuotaWithRatios(info.PriceData.Quota, validationRatios)
+			if !info.PriceData.FreeModel {
+				info.ForcePreConsume = true
+				if apiErr := service.PreConsumeBilling(c, validationQuota, info); apiErr != nil {
+					return nil, service.TaskErrorFromAPIError(apiErr)
+				}
+			}
+		}
+	}
+
+	// 4.1 最终上游模型校验。可能包含远程素材探测，因此必须位于上述额度门槛之后。
 	if validator, ok := adaptor.(channel.MappedTaskValidator); ok {
 		if taskErr := validator.ValidateMappedRequestAndSetAction(c, info); taskErr != nil {
 			return nil, taskErr
 		}
 	}
 
-	// 3. 预生成公开 task ID（仅首次）
-	if info.PublicTaskID == "" {
-		info.PublicTaskID = model.GenerateTaskID()
+	// 4.2 价格计算：未在轻量门槛阶段计算过的任务在完整参数校验后计算。
+	if !priceCalculated {
+		info.OriginModelName = modelName
+		priceData, err := helper.ModelPriceHelperPerCall(c, info)
+		if err != nil {
+			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
+		}
+		info.PriceData = priceData
 	}
-
-	// 4. 价格计算：基础模型价格
-	info.OriginModelName = modelName
-	priceData, err := helper.ModelPriceHelperPerCall(c, info)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
-	}
-	info.PriceData = priceData
 
 	// 5. 计费估算：让适配器根据用户请求提供 OtherRatios（时长、分辨率等）
 	//    必须在 ModelPriceHelperPerCall 之后调用（它会重建 PriceData）。
@@ -214,7 +246,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	//     以 video_cost 的形式给出。若管理员给一个不支持视频计费的模型配了
 	//     价目表（配置面板允许填任意模型名），这里必须拦下——放行的话会拿
 	//     $1 当基准价乘上该适配器自己的倍率，算出一个完全错误的金额。
-	if _, ok := billing_setting.GetVideoPricing(modelName); ok {
+	upstreamModelName := ""
+	if info.ChannelMeta != nil {
+		upstreamModelName = info.UpstreamModelName
+	}
+	if _, _, ok := billing_setting.ResolveVideoPricing(
+		modelName, upstreamModelName,
+	); ok {
 		if _, produced := info.PriceData.OtherRatios[billing_setting.VideoCostRatioKey]; !produced {
 			return nil, service.TaskErrorWrapperLocal(
 				fmt.Errorf("model %s has video pricing configured but the channel adaptor does not support video billing", modelName),
@@ -224,17 +262,17 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 
 	// 6. 将 OtherRatios 应用到基础额度
 	if !common.StringsContains(constant.TaskPricePatches, modelName) {
-		for _, ra := range info.PriceData.OtherRatios {
-			if ra != 1.0 {
-				info.PriceData.Quota = int(float64(info.PriceData.Quota) * ra)
-			}
-		}
+		info.PriceData.Quota = taskQuotaWithRatios(info.PriceData.Quota, info.PriceData.OtherRatios)
 	}
 
-	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
-	if info.Billing == nil && !info.PriceData.FreeModel {
+	// 7. 精确预扣：无会话时直接预扣；已有轻量门槛或重试会话时补到目标额度。
+	if !info.PriceData.FreeModel && info.Billing == nil {
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
+			return nil, service.TaskErrorFromAPIError(apiErr)
+		}
+	} else if !info.PriceData.FreeModel && info.Billing != nil {
+		if apiErr := service.ReserveBilling(info, info.PriceData.Quota); apiErr != nil {
 			return nil, service.TaskErrorFromAPIError(apiErr)
 		}
 	}
@@ -284,6 +322,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		Platform:       platform,
 		Quota:          finalQuota,
 	}, nil
+}
+
+func taskQuotaWithRatios(baseQuota int, ratios map[string]float64) int {
+	quota := baseQuota
+	for _, ratio := range ratios {
+		if ratio != 1.0 {
+			quota = int(float64(quota) * ratio)
+		}
+	}
+	return quota
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

@@ -77,7 +77,7 @@ func TestHappyHorseMediaSchemas(t *testing.T) {
 	}
 }
 
-func TestHappyHorseSchemasDoNotExpose480P(t *testing.T) {
+func TestHappyHorseGenerationSchemasExpose480P(t *testing.T) {
 	for _, modelName := range []string{
 		"happyhorse-1.1-t2v",
 		"happyhorse-1.0-t2v",
@@ -85,7 +85,6 @@ func TestHappyHorseSchemasDoNotExpose480P(t *testing.T) {
 		"happyhorse-1.0-i2v",
 		"happyhorse-1.1-r2v",
 		"happyhorse-1.0-r2v",
-		"happyhorse-1.0-video-edit",
 	} {
 		var schema struct {
 			Properties map[string]struct {
@@ -96,9 +95,26 @@ func TestHappyHorseSchemasDoNotExpose480P(t *testing.T) {
 			t.Fatalf("parse schema for %s: %v", modelName, err)
 		}
 		resolution := schema.Properties["resolution"].Enum
-		if len(resolution) != 2 || resolution[0] != "720P" || resolution[1] != "1080P" {
-			t.Fatalf("resolution enum for %s=%v, want [720P 1080P]", modelName, resolution)
+		if len(resolution) != 3 || resolution[0] != "480P" || resolution[1] != "720P" || resolution[2] != "1080P" {
+			t.Fatalf("resolution enum for %s=%v, want [480P 720P 1080P]", modelName, resolution)
 		}
+	}
+}
+
+func TestHappyHorseVideoEditSchemaDoesNotExpose480P(t *testing.T) {
+	var schema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := common.UnmarshalJsonStr(
+		constant.GetDefaultModelParamSchema("happyhorse-1.0-video-edit"), &schema,
+	); err != nil {
+		t.Fatalf("parse video edit schema: %v", err)
+	}
+	resolution := schema.Properties["resolution"].Enum
+	if len(resolution) != 2 || resolution[0] != "720P" || resolution[1] != "1080P" {
+		t.Fatalf("video edit resolution enum=%v, want [720P 1080P]", resolution)
 	}
 }
 

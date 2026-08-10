@@ -85,6 +85,14 @@ type MappedTaskValidator interface {
 	ValidateMappedRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 }
 
+// PreValidationBillingEstimator 为会触发昂贵远程校验的任务提供轻量预扣口径。
+// RelayTaskSubmit 会在模型映射后、远程校验前调用它；返回的倍率只用于计算并
+// 建立最低额度门槛，完整请求验证后仍会按 EstimateBilling 的真实口径补足。
+// 普通适配器无需实现。
+type PreValidationBillingEstimator interface {
+	EstimatePreValidationBilling(c *gin.Context, info *relaycommon.RelayInfo) (map[string]float64, *dto.TaskError)
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
 }

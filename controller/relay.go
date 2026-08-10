@@ -629,9 +629,15 @@ func RelayTask(c *gin.Context) {
 			perCallBilling = false
 		}
 		// 视频模型同理：ModelPrice 只是哨兵基准价（UsePrice=true），真实报价
-		// 由价目表按参数算出，且参考素材时长在提交时只能按上限预估，必须允许
-		// 终态按上游返回的真实用量多退少补。
-		if _, ok := billing_setting.GetVideoPricing(relayInfo.OriginModelName); ok {
+		// 由价目表按参数及已验证/预估的素材用量算出，必须允许终态按上游返回的
+		// 真实用量多退少补。
+		upstreamModelName := ""
+		if relayInfo.ChannelMeta != nil {
+			upstreamModelName = relayInfo.UpstreamModelName
+		}
+		if _, _, ok := billing_setting.ResolveVideoPricing(
+			relayInfo.OriginModelName, upstreamModelName,
+		); ok {
 			perCallBilling = false
 		}
 		task.PrivateData.BillingContext = &model.TaskBillingContext{

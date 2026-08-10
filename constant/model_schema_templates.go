@@ -343,7 +343,7 @@ const happyHorseT2VParamSchema = `{
     "resolution": {
       "type": "string",
       "title": "分辨率",
-      "enum": ["720P", "1080P"],
+      "enum": ["480P", "720P", "1080P"],
       "default": "1080P"
     },
     "ratio": {
@@ -387,7 +387,7 @@ const happyHorseI2VParamSchema = `{
     "resolution": {
       "type": "string",
       "title": "分辨率",
-      "enum": ["720P", "1080P"],
+      "enum": ["480P", "720P", "1080P"],
       "default": "1080P"
     },
     "duration": {
@@ -428,7 +428,7 @@ const happyHorseR2VParamSchema = `{
     "resolution": {
       "type": "string",
       "title": "分辨率",
-      "enum": ["720P", "1080P"],
+      "enum": ["480P", "720P", "1080P"],
       "default": "1080P"
     },
     "ratio": {

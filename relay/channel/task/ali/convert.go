@@ -2,6 +2,7 @@ package ali
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,6 +34,16 @@ var (
 	size720p  = []string{"1280*720", "720*1280", "960*960", "1088*832", "832*1088"}
 	size1080p = []string{"1920*1080", "1080*1920", "1440*1440", "1632*1248", "1248*1632"}
 )
+
+const (
+	happyHorseVideoEditMinSourceSeconds   = 3
+	happyHorseVideoEditMaxSourceSeconds   = 60
+	happyHorseVideoEditMaxBillableSeconds = happyHorseVideoEditMaxSourceSeconds * 2
+	happyHorseVideoEditMaxSourceBytes     = 100 * 1024 * 1024
+	happyHorseVideoEditDurationContextKey = "ali_happyhorse_video_edit_source_duration"
+)
+
+var happyHorseSourceDurationProbe = service.ProbeRemoteVideoDuration
 
 func ptr[T any](value T) *T {
 	return &value
@@ -196,6 +207,62 @@ func applyMetadataParameters(dst *AliVideoParameters, metadata *AliMetadata) {
 	})
 }
 
+func captureHappyHorseEditBillingDuration(req *AliVideoRequest) {
+	if req == nil || getAliVideoModelKind(req.Model) != aliVideoModelHappyHorseEdit ||
+		req.Parameters == nil || req.Parameters.Duration == nil {
+		return
+	}
+	// Video Edit 的阿里上游协议不接受 parameters.duration。网关的通用与
+	// 专有兼容入口允许把它作为整数秒的源视频计费提示，但转发前必须清除。
+	if req.BillingInputVideoDuration <= 0 {
+		req.BillingInputVideoDuration = float64(*req.Parameters.Duration)
+	}
+	req.Parameters.Duration = nil
+}
+
+func ensureVerifiedHappyHorseEditDuration(c *gin.Context, req *AliVideoRequest) error {
+	if req == nil || getAliVideoModelKind(req.Model) != aliVideoModelHappyHorseEdit {
+		return nil
+	}
+	if c != nil {
+		if duration, exists := c.Get(happyHorseVideoEditDurationContextKey); exists {
+			if value, ok := duration.(float64); ok && value > 0 {
+				req.BillingInputVideoDuration = value
+				return nil
+			}
+		}
+	}
+	if c == nil || c.Request == nil {
+		return errors.New("HappyHorse video editing source video duration verification requires request context")
+	}
+	var sourceURL string
+	for _, media := range req.Input.Media {
+		if media.Type == "video" {
+			sourceURL = media.URL
+			break
+		}
+	}
+	if sourceURL == "" {
+		return errors.New("HappyHorse video editing source video URL is required")
+	}
+	duration, err := happyHorseSourceDurationProbe(
+		c.Request.Context(), sourceURL, happyHorseVideoEditMaxSourceBytes,
+	)
+	if err != nil {
+		return errors.Wrap(err, "verify HappyHorse source video duration")
+	}
+	if math.IsNaN(duration) || math.IsInf(duration, 0) ||
+		duration < happyHorseVideoEditMinSourceSeconds || duration > happyHorseVideoEditMaxSourceSeconds {
+		return fmt.Errorf(
+			"HappyHorse video editing source video duration must be between %d and %d seconds",
+			happyHorseVideoEditMinSourceSeconds, happyHorseVideoEditMaxSourceSeconds,
+		)
+	}
+	req.BillingInputVideoDuration = duration
+	c.Set(happyHorseVideoEditDurationContextKey, duration)
+	return nil
+}
+
 func requestDuration(req relaycommon.TaskSubmitReq) (*int, error) {
 	if req.Duration != nil {
 		return ptr(*req.Duration), nil
@@ -264,6 +331,7 @@ func convertHappyHorseRequest(modelName string, req relaycommon.TaskSubmitReq, m
 		aliReq.Parameters.Duration = duration
 	}
 	applyMetadataParameters(aliReq.Parameters, metadata)
+	captureHappyHorseEditBillingDuration(aliReq)
 	if err := appendHappyHorseMedia(aliReq, kind, req, metadata); err != nil {
 		return nil, err
 	}
@@ -357,7 +425,11 @@ func happyHorseMediaFromContent(content AliContentItem) (AliVideoMedia, error) {
 		if role != "" && role != "reference_video" && role != "video" {
 			return AliVideoMedia{}, fmt.Errorf("unsupported HappyHorse video role: %s", content.Role)
 		}
-		return AliVideoMedia{Type: "video", URL: content.VideoURL.URL}, nil
+		return AliVideoMedia{
+			Type:            "video",
+			URL:             content.VideoURL.URL,
+			BillingDuration: float64(content.Duration),
+		}, nil
 	case "audio_url":
 		return AliVideoMedia{}, errors.New("HappyHorse does not accept audio content")
 	default:
@@ -671,7 +743,10 @@ func validateHappyHorseRequest(req *AliVideoRequest) error {
 		if err != nil {
 			return err
 		}
-		allowedResolutions := []string{"720P", "1080P"}
+		allowedResolutions := []string{"480P", "720P", "1080P"}
+		if kind == aliVideoModelHappyHorseEdit {
+			allowedResolutions = []string{"720P", "1080P"}
+		}
 		if !lo.Contains(allowedResolutions, resolution) {
 			return fmt.Errorf("invalid HappyHorse resolution: %s", *req.Parameters.Resolution)
 		}
@@ -766,6 +841,19 @@ func validateHappyHorseEditRequest(req *AliVideoRequest) error {
 	}
 	if referenceImageCount > 5 {
 		return errors.New("HappyHorse video editing accepts at most 5 reference_image items")
+	}
+	sourceDuration := sourceVideo.BillingDuration
+	if sourceDuration <= 0 {
+		sourceDuration = req.BillingInputVideoDuration
+	}
+	if math.IsNaN(sourceDuration) || math.IsInf(sourceDuration, 0) {
+		return errors.New("HappyHorse video editing source video duration must be finite")
+	}
+	// 客户端 duration 只作为兼容提示，不能在远程媒体探测前据此拒绝请求；
+	// 真实的 3–60 秒约束由 ensureVerifiedHappyHorseEditDuration 校验。
+	if sourceDuration > 0 {
+		req.BillingInputVideoDuration = sourceDuration
+		sourceVideo.BillingDuration = sourceDuration
 	}
 	// 官方示例始终把待编辑视频放在 media[0]，统一重排可避免操练场按
 	// schema 槽位遍历时先收集参考图而改变上游媒体语义。
@@ -862,6 +950,7 @@ func (a *TaskAdaptor) getOfficialRequest(c *gin.Context, info *relaycommon.Relay
 	if info != nil {
 		aliReq.Model = getUpstreamModel(info, aliReq.Model)
 	}
+	captureHappyHorseEditBillingDuration(&aliReq)
 	if err := validateAliVideoRequest(&aliReq); err != nil {
 		return nil, err
 	}
@@ -904,15 +993,22 @@ func ProcessAliOtherRatios(aliReq *AliVideoRequest) (map[string]float64, error) 
 	return otherRatios, nil
 }
 
-func effectiveDuration(aliReq *AliVideoRequest) int {
-	if aliReq != nil && aliReq.Parameters != nil && aliReq.Parameters.Duration != nil {
-		return *aliReq.Parameters.Duration
-	}
+func effectiveDuration(aliReq *AliVideoRequest) float64 {
 	if aliReq != nil && getAliVideoModelKind(aliReq.Model) == aliVideoModelHappyHorseEdit {
-		// Video Edit 的 usage.duration 是输入与输出视频时长之和。提交时无法从
-		// URL 获得素材时长，按官方最短 3 秒输入 + 3 秒输出预扣，完成后再按
-		// 上游返回的实际 usage.duration 差额结算。
-		return 6
+		// Video Edit 的 usage.duration 是输入与输出视频时长之和，输出与源视频
+		// 等长。因此预扣必须是本次源视频时长的 2 倍；120 秒只可能出现在
+		// 60 秒源视频上，不能作为所有请求的固定预扣值。
+		sourceDuration := aliReq.BillingInputVideoDuration
+		if sourceDuration <= 0 && aliReq.Parameters != nil && aliReq.Parameters.Duration != nil {
+			sourceDuration = float64(*aliReq.Parameters.Duration)
+		}
+		return math.Min(
+			sourceDuration*2,
+			float64(happyHorseVideoEditMaxBillableSeconds),
+		)
+	}
+	if aliReq != nil && aliReq.Parameters != nil && aliReq.Parameters.Duration != nil {
+		return float64(*aliReq.Parameters.Duration)
 	}
 	return 5
 }
