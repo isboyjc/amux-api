@@ -28,9 +28,10 @@ import (
 
 // AliVideoRequest 阿里通义万相视频生成请求
 type AliVideoRequest struct {
-	Model      string              `json:"model"`
-	Input      AliVideoInput       `json:"input"`
-	Parameters *AliVideoParameters `json:"parameters,omitempty"`
+	Model                     string              `json:"model"`
+	Input                     AliVideoInput       `json:"input"`
+	Parameters                *AliVideoParameters `json:"parameters,omitempty"`
+	BillingInputVideoDuration float64             `json:"-"`
 }
 
 // AliVideoInput 视频输入参数
@@ -46,9 +47,28 @@ type AliVideoInput struct {
 }
 
 // AliVideoMedia 是阿里视频模型 input.media 中的单个媒体素材。
+// BillingDuration 仅供网关按源视频实际时长预扣，不会透传给阿里上游。
 type AliVideoMedia struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Type            string  `json:"type"`
+	URL             string  `json:"url"`
+	BillingDuration float64 `json:"-"`
+}
+
+// UnmarshalJSON 接受网关扩展的 media.duration 计费提示。MarshalJSON 不实现
+// 对应扩展，因此 BillingDuration 会由 json:"-" 自动从上游请求中移除。
+func (m *AliVideoMedia) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Type     string         `json:"type"`
+		URL      string         `json:"url"`
+		Duration dto.FloatValue `json:"duration,omitempty"`
+	}
+	if err := common.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	m.Type = wire.Type
+	m.URL = wire.URL
+	m.BillingDuration = float64(wire.Duration)
+	return nil
 }
 
 // AliVideoParameters 视频参数
@@ -89,12 +109,12 @@ type AliVideoOutput struct {
 
 // AliUsage 使用统计
 type AliUsage struct {
-	Duration            float64      `json:"duration,omitempty"`
-	InputVideoDuration  float64      `json:"input_video_duration,omitempty"`
-	OutputVideoDuration float64      `json:"output_video_duration,omitempty"`
-	VideoCount          dto.IntValue `json:"video_count,omitempty"`
-	SR                  dto.IntValue `json:"SR,omitempty"`
-	Ratio               string       `json:"ratio,omitempty"`
+	Duration            dto.FloatValue `json:"duration,omitempty"`
+	InputVideoDuration  dto.FloatValue `json:"input_video_duration,omitempty"`
+	OutputVideoDuration dto.FloatValue `json:"output_video_duration,omitempty"`
+	VideoCount          dto.IntValue   `json:"video_count,omitempty"`
+	SR                  dto.IntValue   `json:"SR,omitempty"`
+	Ratio               string         `json:"ratio,omitempty"`
 }
 
 type AliMetadata struct {
@@ -126,11 +146,12 @@ type AliMetadata struct {
 // AliContentItem 是通用视频接口 metadata.content 中的媒体条目。
 // role 由 Playground 的参数 Schema 生成，适配器再映射为 Wan 2.7 media.type。
 type AliContentItem struct {
-	Type     string       `json:"type,omitempty"`
-	Role     string       `json:"role,omitempty"`
-	ImageURL *AliMediaURL `json:"image_url,omitempty"`
-	VideoURL *AliMediaURL `json:"video_url,omitempty"`
-	AudioURL *AliMediaURL `json:"audio_url,omitempty"`
+	Type     string         `json:"type,omitempty"`
+	Role     string         `json:"role,omitempty"`
+	Duration dto.FloatValue `json:"duration,omitempty"`
+	ImageURL *AliMediaURL   `json:"image_url,omitempty"`
+	VideoURL *AliMediaURL   `json:"video_url,omitempty"`
+	AudioURL *AliMediaURL   `json:"audio_url,omitempty"`
 }
 
 type AliMediaURL struct {
@@ -147,6 +168,8 @@ type TaskAdaptor struct {
 	apiKey      string
 	baseURL     string
 }
+
+var _ channel.PreValidationBillingEstimator = (*TaskAdaptor)(nil)
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
@@ -176,20 +199,15 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 // ValidateMappedRequestAndSetAction 在模型映射完成后按最终上游模型校验。
 // 这样模型别名与直接使用官方模型名具有完全一致的参数约束和任务动作。
 func (a *TaskAdaptor) ValidateMappedRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	var (
-		aliReq *AliVideoRequest
-		err    error
-	)
-	if c.GetBool("ali_video_official_format") {
-		aliReq, err = a.getOfficialRequest(c, info)
-	} else {
-		var taskReq relaycommon.TaskSubmitReq
-		taskReq, err = getAliTaskRequest(c)
-		if err == nil {
-			aliReq, err = a.convertToAliRequest(info, taskReq)
-		}
-	}
+	aliReq, err := a.getMappedAliRequest(c, info)
 	if err != nil {
+		code := "invalid_request"
+		if c.GetBool("ali_video_official_format") {
+			code = "InvalidParameter"
+		}
+		return service.TaskErrorWrapperLocal(err, code, http.StatusBadRequest)
+	}
+	if err := ensureVerifiedHappyHorseEditDuration(c, aliReq); err != nil {
 		code := "invalid_request"
 		if c.GetBool("ali_video_official_format") {
 			code = "InvalidParameter"
@@ -201,15 +219,68 @@ func (a *TaskAdaptor) ValidateMappedRequestAndSetAction(c *gin.Context, info *re
 		info.Action = action
 	}
 	if isHappyHorseModelKind(getAliVideoModelKind(aliReq.Model)) {
-		pricingModel := aliReq.Model
+		originModel := ""
 		if info != nil && strings.TrimSpace(info.OriginModelName) != "" {
-			pricingModel = info.OriginModelName
+			originModel = info.OriginModelName
 		}
-		if _, err := billing_setting.ComputeVideoCost(pricingModel, happyHorseVideoUsage(aliReq)); err != nil {
+		_, pricing, ok := billing_setting.ResolveVideoPricing(originModel, aliReq.Model)
+		if !ok {
+			return service.TaskErrorWrapperLocal(
+				fmt.Errorf("video pricing not configured for model %s", originModel),
+				"model_price_error", http.StatusBadRequest,
+			)
+		}
+		if _, err := pricing.Compute(happyHorseVideoUsage(aliReq)); err != nil {
 			return service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
 		}
 	}
 	return nil
+}
+
+func (a *TaskAdaptor) getMappedAliRequest(c *gin.Context, info *relaycommon.RelayInfo) (*AliVideoRequest, error) {
+	if c.GetBool("ali_video_official_format") {
+		return a.getOfficialRequest(c, info)
+	}
+	taskReq, err := getAliTaskRequest(c)
+	if err != nil {
+		return nil, err
+	}
+	return a.convertToAliRequest(info, taskReq)
+}
+
+// EstimatePreValidationBilling 为 HappyHorse Video Edit 的远程视频探测建立
+// 最低额度门槛。源视频最短 3 秒，而官方计费时长是输入+输出（等长），所以
+// 探测前仅预扣 6 秒；探测成功后 RelayTaskSubmit 会再补到真实源时长×2。
+func (a *TaskAdaptor) EstimatePreValidationBilling(c *gin.Context, info *relaycommon.RelayInfo) (map[string]float64, *dto.TaskError) {
+	aliReq, err := a.getMappedAliRequest(c, info)
+	if err != nil {
+		code := "invalid_request"
+		if c.GetBool("ali_video_official_format") {
+			code = "InvalidParameter"
+		}
+		return nil, service.TaskErrorWrapperLocal(err, code, http.StatusBadRequest)
+	}
+	if getAliVideoModelKind(aliReq.Model) != aliVideoModelHappyHorseEdit {
+		return nil, nil
+	}
+	originModel := ""
+	if info != nil {
+		originModel = strings.TrimSpace(info.OriginModelName)
+	}
+	_, pricing, ok := billing_setting.ResolveVideoPricing(originModel, aliReq.Model)
+	if !ok {
+		return nil, service.TaskErrorWrapperLocal(
+			fmt.Errorf("video pricing not configured for model %s", originModel),
+			"model_price_error", http.StatusBadRequest,
+		)
+	}
+	usage := happyHorseVideoUsage(aliReq)
+	usage.OutputSeconds = float64(happyHorseVideoEditMinSourceSeconds * 2)
+	cost, err := pricing.Compute(usage)
+	if err != nil {
+		return nil, service.TaskErrorWrapperLocal(err, "model_price_error", http.StatusBadRequest)
+	}
+	return map[string]float64{billing_setting.VideoCostRatioKey: cost.Total}, nil
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
@@ -277,13 +348,20 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil || aliReq == nil {
 		return nil
 	}
+	if err := ensureVerifiedHappyHorseEditDuration(c, aliReq); err != nil {
+		return nil
+	}
 	if isHappyHorseModelKind(getAliVideoModelKind(aliReq.Model)) {
-		pricingModel := aliReq.Model
+		originModel := ""
 		if info != nil && strings.TrimSpace(info.OriginModelName) != "" {
-			pricingModel = info.OriginModelName
+			originModel = info.OriginModelName
+		}
+		_, pricing, ok := billing_setting.ResolveVideoPricing(originModel, aliReq.Model)
+		if !ok {
+			return nil
 		}
 		usage := happyHorseVideoUsage(aliReq)
-		cost, err := billing_setting.ComputeVideoCost(pricingModel, usage)
+		cost, err := pricing.Compute(usage)
 		if err != nil {
 			return nil
 		}
@@ -327,7 +405,12 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.T
 		return 0
 	}
 	bc := task.PrivateData.BillingContext
-	if _, ok := billing_setting.GetVideoPricing(bc.OriginModelName); !ok {
+	// 旧任务没有 video_cost + VideoUsage 快照，提交时走的是 ModelPrice/seconds
+	// 计费。部署后不能拿新价目表重新结算，否则会在发布窗口内突然补扣或退款。
+	if bc.VideoUsage == nil || bc.OtherRatios == nil {
+		return 0
+	}
+	if _, ok := bc.OtherRatios[billing_setting.VideoCostRatioKey]; !ok {
 		return 0
 	}
 
@@ -336,6 +419,10 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.T
 		modelName = strings.TrimSpace(bc.OriginModelName)
 	}
 	if !isHappyHorseModelKind(getAliVideoModelKind(modelName)) {
+		return 0
+	}
+	_, pricing, ok := billing_setting.ResolveVideoPricing(bc.OriginModelName, modelName)
+	if !ok {
 		return 0
 	}
 
@@ -361,9 +448,9 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, _ *relaycommon.T
 	// HappyHorse 的 usage.duration 已是官方最终计费总时长。Video Edit 中它
 	// 包含输入和输出视频时长之和，因此统一记入 OutputSeconds，不能再把输入
 	// 视频拆出来重复计价。
-	usageForBilling.OutputSeconds = usage.Duration
+	usageForBilling.OutputSeconds = float64(usage.Duration)
 	usageForBilling.VideoSeconds = 0
-	cost, err := billing_setting.ComputeVideoCost(bc.OriginModelName, usageForBilling)
+	cost, err := pricing.Compute(usageForBilling)
 	if err != nil {
 		return 0
 	}

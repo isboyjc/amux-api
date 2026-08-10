@@ -2,6 +2,7 @@ package ali
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -14,11 +15,23 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 
 	"github.com/gin-gonic/gin"
 )
+
+func stubHappyHorseSourceDurationProbe(t *testing.T, duration float64) {
+	t.Helper()
+	original := happyHorseSourceDurationProbe
+	happyHorseSourceDurationProbe = func(context.Context, string, int64) (float64, error) {
+		return duration, nil
+	}
+	t.Cleanup(func() {
+		happyHorseSourceDurationProbe = original
+	})
+}
 
 func TestHappyHorseConversionPreservesExplicitFalseAndZero(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{
@@ -82,8 +95,10 @@ func TestHappyHorseOfficialVideoPricing(t *testing.T) {
 		resolution string
 		want       float64
 	}{
+		{model: "happyhorse-1.1-t2v", resolution: "480P", want: 0.35},
 		{model: "happyhorse-1.1-t2v", resolution: "720P", want: 0.70},
 		{model: "happyhorse-1.1-i2v", resolution: "1080P", want: 0.90},
+		{model: "happyhorse-1.0-r2v", resolution: "480P", want: 0.35},
 		{model: "happyhorse-1.0-r2v", resolution: "720P", want: 0.70},
 		{model: "happyhorse-1.0-video-edit", resolution: "1080P", want: 1.20},
 	}
@@ -102,8 +117,13 @@ func TestHappyHorseOfficialVideoPricing(t *testing.T) {
 	}
 	if _, err := billing_setting.ComputeVideoCost("happyhorse-1.1-t2v", billing_setting.VideoUsage{
 		Resolution: "480P", OutputSeconds: 5,
+	}); err != nil {
+		t.Fatalf("HappyHorse generation 480P must have a pricing tier: %v", err)
+	}
+	if _, err := billing_setting.ComputeVideoCost("happyhorse-1.0-video-edit", billing_setting.VideoUsage{
+		Resolution: "480P", OutputSeconds: 5,
 	}); err == nil {
-		t.Fatal("HappyHorse 480P must not have a pricing tier")
+		t.Fatal("HappyHorse Video Edit 480P must not have a pricing tier")
 	}
 }
 
@@ -133,13 +153,89 @@ func TestHappyHorseEstimateBillingUsesVideoCost(t *testing.T) {
 	}
 }
 
-func TestHappyHorseVideoEditUsesMinimumTotalDurationForPrecharge(t *testing.T) {
-	req := &AliVideoRequest{
-		Model:      "happyhorse-1.0-video-edit",
-		Parameters: &AliVideoParameters{},
+func TestHappyHorseVideoEditPrechargeUsesTwiceSourceDuration(t *testing.T) {
+	tests := []struct {
+		sourceDuration float64
+		want           float64
+	}{
+		{sourceDuration: 6.62, want: 13.24},
+		{sourceDuration: 10, want: 20},
+		{sourceDuration: 60, want: 120},
 	}
-	if got := effectiveDuration(req); got != 6 {
-		t.Fatalf("video edit precharge duration=%d, want 6", got)
+	for _, test := range tests {
+		req := &AliVideoRequest{
+			Model:                     "happyhorse-1.0-video-edit",
+			Parameters:                &AliVideoParameters{},
+			BillingInputVideoDuration: test.sourceDuration,
+		}
+		if got := effectiveDuration(req); got != test.want {
+			t.Fatalf("source duration=%v: precharge duration=%v, want %v", test.sourceDuration, got, test.want)
+		}
+	}
+}
+
+func TestHappyHorseVideoEditEstimateBillingUsesTwiceSourceDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stubHappyHorseSourceDurationProbe(t, 6.62)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/services/aigc/video-generation/video-synthesis", nil)
+	c.Set("ali_video_official_format", true)
+	c.Set("ali_video_original_request", map[string]interface{}{
+		"model": "happyhorse-1.0-video-edit",
+		"input": map[string]interface{}{
+			"prompt": "replace the background",
+			"media": []interface{}{
+				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4", "duration": 3},
+			},
+		},
+		"parameters": map[string]interface{}{"resolution": "720P"},
+	})
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		OriginModelName: "happyhorse-1.0-video-edit",
+	}
+
+	if taskErr := (&TaskAdaptor{}).ValidateMappedRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validate video edit request: %#v", taskErr)
+	}
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
+	if got, want := ratios[billing_setting.VideoCostRatioKey], 13.24*0.14; got < want-1e-12 || got > want+1e-12 {
+		t.Fatalf("video edit precharge cost=%v, want %v", got, want)
+	}
+	snapshot, exists := c.Get(constant.CtxKeyVideoUsageSnapshot)
+	if !exists {
+		t.Fatal("missing video edit usage snapshot")
+	}
+	if snap, ok := snapshot.(*model.VideoUsageSnapshot); !ok || snap.OutputSeconds != 13.24 || !snap.HasVideoInput {
+		t.Fatalf("unexpected video edit usage snapshot: %#v", snapshot)
+	}
+}
+
+func TestHappyHorseVideoEditPreValidationBillingUsesMinimumGate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("ali_video_official_format", true)
+	c.Set("ali_video_original_request", map[string]interface{}{
+		"model": "happyhorse-1.0-video-edit",
+		"input": map[string]interface{}{
+			"prompt": "replace the background",
+			"media": []interface{}{
+				map[string]interface{}{
+					"type": "video", "url": "https://example.com/source.mp4", "duration": 60,
+				},
+			},
+		},
+		"parameters": map[string]interface{}{"resolution": "720P"},
+	})
+	info := &relaycommon.RelayInfo{OriginModelName: "happyhorse-1.0-video-edit"}
+
+	ratios, taskErr := (&TaskAdaptor{}).EstimatePreValidationBilling(c, info)
+	if taskErr != nil {
+		t.Fatalf("estimate pre-validation billing: %#v", taskErr)
+	}
+	// 最短合法源视频 3 秒，输入与输出等长，因此探测前只建立 6 秒门槛。
+	if got, want := ratios[billing_setting.VideoCostRatioKey], 6*0.14; got < want-1e-12 || got > want+1e-12 {
+		t.Fatalf("pre-validation video_cost=%v, want %v", got, want)
 	}
 }
 
@@ -150,8 +246,11 @@ func TestHappyHorseAdjustBillingOnCompleteUsesOfficialTotalDuration(t *testing.T
 		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
 			OriginModelName: "happyhorse-1.0-video-edit",
 			GroupRatio:      1.5,
+			OtherRatios: map[string]float64{
+				billing_setting.VideoCostRatioKey: 12 * 0.24,
+			},
 			VideoUsage: &model.VideoUsageSnapshot{
-				Resolution: "1080P", OutputSeconds: 6, HasVideoInput: true,
+				Resolution: "1080P", OutputSeconds: 12, HasVideoInput: true,
 			},
 		}},
 	}
@@ -163,6 +262,21 @@ func TestHappyHorseAdjustBillingOnCompleteUsesOfficialTotalDuration(t *testing.T
 	}
 	if snap := task.PrivateData.BillingContext.VideoUsage; snap == nil || snap.OutputSeconds != 13.24 || snap.Resolution != "1080P" {
 		t.Fatalf("billing context did not record actual usage: %#v", snap)
+	}
+}
+
+func TestHappyHorseAdjustBillingOnCompleteSkipsLegacyBillingContext(t *testing.T) {
+	task := &model.Task{
+		Data:       []byte(`{"usage":{"duration":10,"SR":1080}}`),
+		Properties: model.Properties{UpstreamModelName: "happyhorse-1.1-t2v"},
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{
+			OriginModelName: "happyhorse-1.1-t2v",
+			GroupRatio:      1,
+			OtherRatios:     map[string]float64{"seconds": 5},
+		}},
+	}
+	if got := (&TaskAdaptor{}).AdjustBillingOnComplete(task, nil); got != 0 {
+		t.Fatalf("legacy task quota=%d, want 0 to preserve original billing", got)
 	}
 }
 
@@ -242,7 +356,7 @@ func TestHappyHorseVideoEditConversion(t *testing.T) {
 		Metadata: map[string]interface{}{
 			"content": []interface{}{
 				map[string]interface{}{"type": "image_url", "role": "reference_image", "image_url": map[string]interface{}{"url": "https://example.com/clothes.png"}},
-				map[string]interface{}{"type": "video_url", "role": "reference_video", "video_url": map[string]interface{}{"url": "https://example.com/source.mp4"}},
+				map[string]interface{}{"type": "video_url", "role": "reference_video", "duration": 6.62, "video_url": map[string]interface{}{"url": "https://example.com/source.mp4"}},
 			},
 			"audio_setting": "origin",
 			"watermark":     false,
@@ -258,11 +372,114 @@ func TestHappyHorseVideoEditConversion(t *testing.T) {
 	if got.Parameters.Duration != nil || got.Parameters.Ratio != nil {
 		t.Fatalf("video edit sent unsupported duration/ratio: %#v", got.Parameters)
 	}
+	if got.BillingInputVideoDuration != 6.62 || effectiveDuration(got) != 13.24 {
+		t.Fatalf("unexpected video edit billing duration: %#v", got)
+	}
 	if got.Parameters.AudioSetting == nil || *got.Parameters.AudioSetting != "origin" {
 		t.Fatalf("unexpected audio_setting: %#v", got.Parameters.AudioSetting)
 	}
 	if got.Parameters.Watermark == nil || *got.Parameters.Watermark {
 		t.Fatalf("video edit watermark=false was not preserved: %#v", got.Parameters.Watermark)
+	}
+	body, err := common.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal video edit request: %v", err)
+	}
+	if strings.Contains(string(body), `"duration"`) {
+		t.Fatalf("billing duration must not be sent upstream: %s", body)
+	}
+}
+
+func TestHappyHorseVideoEditDerivesDurationWithoutClientHint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stubHappyHorseSourceDurationProbe(t, 8.5)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/pg/video/generations", nil)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "happyhorse-1.0-video-edit",
+		Prompt: "replace the background",
+		Metadata: map[string]interface{}{
+			"media": []interface{}{
+				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4"},
+			},
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		OriginModelName: "happyhorse-1.0-video-edit",
+	}
+	if taskErr := (&TaskAdaptor{}).ValidateMappedRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validate video edit request: %#v", taskErr)
+	}
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
+	if got, want := ratios[billing_setting.VideoCostRatioKey], 17*0.24; got < want-1e-12 || got > want+1e-12 {
+		t.Fatalf("video edit precharge cost=%v, want %v", got, want)
+	}
+}
+
+func TestHappyHorseVideoEditDoesNotTrustClientDurationForRangeValidation(t *testing.T) {
+	for _, duration := range []float64{2.99, 60.01} {
+		got, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, relaycommon.TaskSubmitReq{
+			Model:  "happyhorse-1.0-video-edit",
+			Prompt: "replace the background",
+			Metadata: map[string]interface{}{
+				"media": []interface{}{
+					map[string]interface{}{
+						"type": "video", "url": "https://example.com/source.mp4", "duration": duration,
+					},
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("duration hint %v must not reject before probe: %v", duration, err)
+		}
+		if got.BillingInputVideoDuration != duration {
+			t.Fatalf("duration hint=%v, captured=%v", duration, got.BillingInputVideoDuration)
+		}
+	}
+}
+
+func TestHappyHorseVideoEditRejectsOutOfRangeProbedSourceDuration(t *testing.T) {
+	original := happyHorseSourceDurationProbe
+	t.Cleanup(func() { happyHorseSourceDurationProbe = original })
+
+	for _, duration := range []float64{2.99, 60.01} {
+		probeDuration := duration
+		happyHorseSourceDurationProbe = func(context.Context, string, int64) (float64, error) {
+			return probeDuration, nil
+		}
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/services/aigc/video-generation/video-synthesis", nil)
+		req := &AliVideoRequest{
+			Model: "happyhorse-1.0-video-edit",
+			Input: AliVideoInput{Media: []AliVideoMedia{
+				{Type: "video", URL: "https://example.com/source.mp4"},
+			}},
+			Parameters: &AliVideoParameters{},
+		}
+		err := ensureVerifiedHappyHorseEditDuration(c, req)
+		if err == nil || !strings.Contains(err.Error(), "must be between 3 and 60 seconds") {
+			t.Fatalf("probed duration=%v error=%v", duration, err)
+		}
+	}
+}
+
+func TestHappyHorseVideoEditAcceptsDurationHintWithoutForwardingIt(t *testing.T) {
+	got, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, relaycommon.TaskSubmitReq{
+		Model:    "happyhorse-1.0-video-edit",
+		Prompt:   "replace the background",
+		Duration: ptr(7),
+		Metadata: map[string]interface{}{
+			"media": []interface{}{
+				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("convert video edit request: %v", err)
+	}
+	if got.Parameters.Duration != nil || got.BillingInputVideoDuration != 7 || effectiveDuration(got) != 14 {
+		t.Fatalf("unexpected duration hint conversion: %#v", got)
 	}
 }
 
@@ -333,13 +550,42 @@ func TestHappyHorseVideoEditFloatUsageResponse(t *testing.T) {
 	}
 }
 
+func TestAliUsageAcceptsNumberAndStringValues(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "numbers",
+			data: `{"usage":{"duration":13.24,"input_video_duration":6.62,"output_video_duration":6.62,"video_count":1,"SR":720}}`,
+		},
+		{
+			name: "numeric strings",
+			data: `{"usage":{"duration":"13.24","input_video_duration":"6.62","output_video_duration":"6.62","video_count":"1","SR":"720"}}`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			usage, ok := parseAliTaskUsage([]byte(test.data))
+			if !ok {
+				t.Fatal("expected usage to parse")
+			}
+			if float64(usage.Duration) != 13.24 ||
+				float64(usage.InputVideoDuration) != 6.62 ||
+				float64(usage.OutputVideoDuration) != 6.62 ||
+				int(usage.VideoCount) != 1 || int(usage.SR) != 720 {
+				t.Fatalf("unexpected usage: %#v", usage)
+			}
+		})
+	}
+}
+
 func TestHappyHorseValidation(t *testing.T) {
 	tests := []struct {
 		name     string
 		metadata map[string]interface{}
 	}{
 		{name: "resolution", metadata: map[string]interface{}{"resolution": "1440P"}},
-		{name: "unsupported 480P", metadata: map[string]interface{}{"resolution": "480P"}},
 		{name: "ratio", metadata: map[string]interface{}{"ratio": "2:1"}},
 		{name: "duration", metadata: map[string]interface{}{"duration": 2}},
 		{name: "media", metadata: map[string]interface{}{"first_frame_url": "https://example.com/a.png"}},
@@ -356,6 +602,42 @@ func TestHappyHorseValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHappyHorseResolutionValidationBySubtype(t *testing.T) {
+	for _, modelName := range []string{
+		"happyhorse-1.1-t2v",
+		"happyhorse-1.0-t2v",
+	} {
+		t.Run(modelName+" accepts 480P", func(t *testing.T) {
+			_, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, relaycommon.TaskSubmitReq{
+				Model:  modelName,
+				Prompt: "test",
+				Metadata: map[string]interface{}{
+					"resolution": "480P",
+				},
+			})
+			if err != nil {
+				t.Fatalf("480P must be accepted: %v", err)
+			}
+		})
+	}
+
+	t.Run("video edit rejects 480P", func(t *testing.T) {
+		_, err := (&TaskAdaptor{}).convertToAliRequest(&relaycommon.RelayInfo{}, relaycommon.TaskSubmitReq{
+			Model:  "happyhorse-1.0-video-edit",
+			Prompt: "test",
+			Metadata: map[string]interface{}{
+				"resolution": "480P",
+				"media": []interface{}{
+					map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4"},
+				},
+			},
+		})
+		if err == nil {
+			t.Fatal("Video Edit 480P must be rejected")
+		}
+	})
 }
 
 func TestHappyHorseExplicitZeroDurationIsRejected(t *testing.T) {
@@ -393,6 +675,53 @@ func TestMappedModelValidationRunsBeforeBilling(t *testing.T) {
 	}
 	if taskErr.StatusCode != http.StatusBadRequest || !taskErr.LocalError {
 		t.Fatalf("unexpected mapped validation error: %#v", taskErr)
+	}
+}
+
+func TestMappedHappyHorsePricingFallsBackToUpstreamModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "happyhorse-alias",
+		Prompt: "test",
+	})
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		OriginModelName: "happyhorse-alias",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			IsModelMapped:     true,
+			UpstreamModelName: "happyhorse-1.1-t2v",
+		},
+	}
+
+	if taskErr := (&TaskAdaptor{}).ValidateMappedRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("mapped HappyHorse validation failed: %#v", taskErr)
+	}
+	priceData, err := relayhelper.ModelPriceHelperPerCall(c, info)
+	if err != nil {
+		t.Fatalf("mapped HappyHorse base pricing failed: %v", err)
+	}
+	if priceData.ModelPrice != billing_setting.VideoBasePrice || !priceData.UsePrice {
+		t.Fatalf("mapped HappyHorse base price=%#v", priceData)
+	}
+	info.PriceData = priceData
+	ratios := (&TaskAdaptor{}).EstimateBilling(c, info)
+	if got, want := ratios[billing_setting.VideoCostRatioKey], 5*0.18; got < want-1e-12 || got > want+1e-12 {
+		t.Fatalf("mapped HappyHorse video_cost=%v, want %v", got, want)
+	}
+	for key, ratio := range ratios {
+		info.PriceData.AddOtherRatio(key, ratio)
+	}
+	for _, ratio := range info.PriceData.OtherRatios {
+		info.PriceData.Quota = int(float64(info.PriceData.Quota) * ratio)
+	}
+	wantQuota := int(float64(int(
+		billing_setting.VideoBasePrice*common.QuotaPerUnit*priceData.GroupRatioInfo.GroupRatio,
+	)) * ratios[billing_setting.VideoCostRatioKey])
+	if info.PriceData.Quota != wantQuota {
+		t.Fatalf("mapped HappyHorse precharge quota=%d, want %d", info.PriceData.Quota, wantQuota)
 	}
 }
 
@@ -735,6 +1064,42 @@ func TestOfficialRequestPreservesExplicitValues(t *testing.T) {
 	}
 	if got.Parameters.Seed == nil || *got.Parameters.Seed != 0 {
 		t.Fatalf("seed=0 was not preserved")
+	}
+}
+
+func TestOfficialHappyHorseVideoEditUsesDurationAsBillingHint(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("ali_video_original_request", map[string]interface{}{
+		"model": "happyhorse-1.0-video-edit",
+		"input": map[string]interface{}{
+			"prompt": "replace the background",
+			"media": []interface{}{
+				map[string]interface{}{"type": "video", "url": "https://example.com/source.mp4"},
+			},
+		},
+		"parameters": map[string]interface{}{
+			"resolution": "720P",
+			"duration":   7,
+		},
+	})
+
+	got, err := (&TaskAdaptor{}).getOfficialRequest(c, nil)
+	if err != nil {
+		t.Fatalf("getOfficialRequest: %v", err)
+	}
+	if got.BillingInputVideoDuration != 7 || effectiveDuration(got) != 14 {
+		t.Fatalf("unexpected official billing duration: %#v", got)
+	}
+	if got.Parameters.Duration != nil {
+		t.Fatalf("official billing hint must be removed before forwarding: %#v", got.Parameters)
+	}
+	body, err := common.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal official request: %v", err)
+	}
+	if strings.Contains(string(body), `"duration"`) {
+		t.Fatalf("official billing hint leaked upstream: %s", body)
 	}
 }
 

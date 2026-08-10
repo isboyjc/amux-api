@@ -141,18 +141,20 @@ var defaultVideoPricing = buildDefaultVideoPricing()
 func buildDefaultVideoPricing() map[string]VideoPricing {
 	return map[string]VideoPricing{
 		// Alibaba Model Studio HappyHorse 官方按输出分辨率和计费时长收费。
-		// 官方价目表未给出 480P 档位，因此内置配置只接受 720P / 1080P。
+		// 1.1 生成模型的国际站 480P 单价为 $0.07/秒。1.0 API 支持 480P；
+		// 当前价格页未单列该档，暂按 1.1 的 480P 单价 $0.07/秒计费。
+		// Video Edit 仅支持 720P / 1080P，必须使用独立价目表。
 		// 管理员可通过 video_pricing_setting.pricing 覆盖这里的默认单价。
 		// https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api#/api/?type=model&url=3029821
 		// https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api#/api/?type=model&url=3030778
 		// https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=api#/api/?type=model&url=3030779
-		"happyhorse-1.1-t2v":        happyHorse11Pricing(),
-		"happyhorse-1.1-i2v":        happyHorse11Pricing(),
-		"happyhorse-1.1-r2v":        happyHorse11Pricing(),
-		"happyhorse-1.0-t2v":        happyHorse10Pricing(),
-		"happyhorse-1.0-i2v":        happyHorse10Pricing(),
-		"happyhorse-1.0-r2v":        happyHorse10Pricing(),
-		"happyhorse-1.0-video-edit": happyHorse10Pricing(),
+		"happyhorse-1.1-t2v":        happyHorse11GenerationPricing(),
+		"happyhorse-1.1-i2v":        happyHorse11GenerationPricing(),
+		"happyhorse-1.1-r2v":        happyHorse11GenerationPricing(),
+		"happyhorse-1.0-t2v":        happyHorse10GenerationPricing(),
+		"happyhorse-1.0-i2v":        happyHorse10GenerationPricing(),
+		"happyhorse-1.0-r2v":        happyHorse10GenerationPricing(),
+		"happyhorse-1.0-video-edit": happyHorse10VideoEditPricing(),
 
 		// https://platform.minimax.io/docs/guides/pricing-paygo
 		// 输出：2K $0.13/s、768P $0.08/s
@@ -181,18 +183,31 @@ func buildDefaultVideoPricing() map[string]VideoPricing {
 	}
 }
 
-func happyHorse11Pricing() VideoPricing {
+func happyHorse11GenerationPricing() VideoPricing {
 	return VideoPricing{
 		Unit:              VideoPricingUnitSecond,
 		DefaultResolution: "1080P",
 		Output: map[string]float64{
+			"480P":  0.07,
 			"720P":  0.14,
 			"1080P": 0.18,
 		},
 	}
 }
 
-func happyHorse10Pricing() VideoPricing {
+func happyHorse10GenerationPricing() VideoPricing {
+	return VideoPricing{
+		Unit:              VideoPricingUnitSecond,
+		DefaultResolution: "1080P",
+		Output: map[string]float64{
+			"480P":  0.07,
+			"720P":  0.14,
+			"1080P": 0.24,
+		},
+	}
+}
+
+func happyHorse10VideoEditPricing() VideoPricing {
 	return VideoPricing{
 		Unit:              VideoPricingUnitSecond,
 		DefaultResolution: "1080P",
@@ -334,6 +349,27 @@ func GetVideoPricing(model string) (VideoPricing, bool) {
 	return p, ok
 }
 
+// ResolveVideoPricing 按候选顺序返回首个可用的视频价目表。
+// 模型映射场景应先传用户侧模型名，再传上游规范模型名：管理员若为别名配置了
+// 覆盖价则优先采用；未配置时自动回退规范模型的内置价目表。
+func ResolveVideoPricing(models ...string) (string, VideoPricing, bool) {
+	seen := make(map[string]struct{}, len(models))
+	for _, model := range models {
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		if pricing, ok := GetVideoPricing(model); ok {
+			return model, pricing, true
+		}
+	}
+	return "", VideoPricing{}, false
+}
+
 // ---------------------------------------------------------------------------
 // Cost computation
 // ---------------------------------------------------------------------------
@@ -401,7 +437,8 @@ func (p VideoPricing) OutputRate(resolution string, hasVideoInput bool) float64 
 }
 
 // ResolveResolution 把请求里的分辨率归一到价目表的档位键。
-// 精确匹配 → 大小写不敏感匹配 → DefaultResolution。
+// 非空值只允许精确匹配或大小写不敏感匹配；只有调用方未传分辨率时，
+// 才回退 DefaultResolution，避免把显式未知档位静默按默认档计费。
 func (p VideoPricing) ResolveResolution(resolution string) (string, bool) {
 	resolution = strings.TrimSpace(resolution)
 	if resolution != "" {
@@ -413,6 +450,7 @@ func (p VideoPricing) ResolveResolution(resolution string) (string, bool) {
 				return key, true
 			}
 		}
+		return "", false
 	}
 	if p.DefaultResolution != "" {
 		if _, ok := p.Output[p.DefaultResolution]; ok {

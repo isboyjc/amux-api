@@ -171,7 +171,13 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 	// 里把整单金额作为 OtherRatio 返回），这里只需要给一个固定基准价。
 	// 不走 ModelPrice 查表：那张表由管理员维护且会被 DB 配置整体覆盖，视频模型
 	// 不该因为管理员没给它填一个无意义的 $1 就被判定为"未配置价格"。
-	if _, ok := billing_setting.GetVideoPricing(info.OriginModelName); ok {
+	upstreamModelName := ""
+	if info.ChannelMeta != nil {
+		upstreamModelName = info.UpstreamModelName
+	}
+	if _, _, ok := billing_setting.ResolveVideoPricing(
+		info.OriginModelName, upstreamModelName,
+	); ok {
 		return buildPerCallPriceData(billing_setting.VideoBasePrice, groupRatioInfo), nil
 	}
 

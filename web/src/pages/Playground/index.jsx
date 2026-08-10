@@ -528,7 +528,7 @@ const Playground = () => {
 
   // 探测时长。已在缓存里直接复用；缺失则启动新一轮 probe 并缓存。
   // 仅服务于视频/音频 File entry——URL entry 没有本地字节，不在这里
-  // 处理（提交时 URL 时长按 0 计入，让上游自己兜约束）
+  // 处理；重试恢复的 URL entry 若已持久化 duration，提交时会直接复用。
   const ensureDurationProbe = React.useCallback((file) => {
     if (!(file instanceof File)) return Promise.resolve(null);
     if (durationProbesRef.current.has(file)) {
@@ -1891,8 +1891,10 @@ const Playground = () => {
       if (!validateRequiredMediaInputs()) return;
       // 把当前 imageInputsValues 按 schema slot 的 x-content-role 拍平成
       // content 数组：图 → {type:'image_url', image_url:{url}, role}
-      //               视频 → {type:'video_url', video_url:{url}, role}
-      //               音频 → {type:'audio_url', audio_url:{url}, role}
+      //               视频 → {type:'video_url', video_url:{url}, role, duration?}
+      //               音频 → {type:'audio_url', audio_url:{url}, role, duration?}
+      // duration 来自浏览器对本地媒体的元数据探测，供网关按实际素材时长
+      // 预扣；它不是阿里上游 input.media 的字段，适配器会在转发前剥离。
       // 上游 doubao adapter 会把这串透传给 Volcengine。
       //
       // 上传策略：媒体在 paste/drag 时已通过 startUpload(...) 启动 R2 即时
@@ -1902,6 +1904,14 @@ const Playground = () => {
       // 上传，仍然能完成请求。
       (async () => {
         const items = [];
+        const resolveEntryDuration = async (entry) => {
+          const savedDuration = Number(entry?.duration);
+          if (Number.isFinite(savedDuration) && savedDuration > 0) {
+            return savedDuration;
+          }
+          if (!isFileEntry(entry)) return null;
+          return ensureDurationProbe(entry);
+        };
         // 遍历顺序：图片（first/last_frame → reference） → 视频 → 音频。
         // 上游 doubao 不依赖顺序，但保持稳定排列方便调试 / 日志阅读。
         const slotsToWalk = [
@@ -1973,9 +1983,21 @@ const Playground = () => {
             if (contentType === 'image_url') {
               items.push({ type: 'image_url', image_url: { url }, role });
             } else if (contentType === 'video_url') {
-              items.push({ type: 'video_url', video_url: { url }, role });
+              const duration = await resolveEntryDuration(entry);
+              items.push({
+                type: 'video_url',
+                video_url: { url },
+                role,
+                ...(duration != null ? { duration } : {}),
+              });
             } else {
-              items.push({ type: 'audio_url', audio_url: { url }, role });
+              const duration = await resolveEntryDuration(entry);
+              items.push({
+                type: 'audio_url',
+                audio_url: { url },
+                role,
+                ...(duration != null ? { duration } : {}),
+              });
             }
           }
         }
@@ -1983,8 +2005,8 @@ const Playground = () => {
         // 提交前最后一道校验：
         // 1) 音频必须配图或视频（火山硬约束）
         // 2) 视频/音频总时长 ≤ schema 声明的 x-max-total-duration-seconds。
-        //    同 slot 的 entry 累加时长——File entry 用 add 时缓存的探测结果，
-        //    URL entry 没探测过按 0 计入（让上游兜约束，避免误拦）
+        //    同 slot 的 entry 累加时长——File entry 用 add 时缓存的探测结果；
+        //    重试恢复出的 URL entry 优先复用附件中已持久化的 duration。
         const imgCount = items.filter((x) => x.type === 'image_url').length;
         const vidCount = items.filter((x) => x.type === 'video_url').length;
         const audCount = items.filter((x) => x.type === 'audio_url').length;
@@ -2005,13 +2027,9 @@ const Playground = () => {
           let total = 0;
           let hasUnknown = false;
           for (const e of entries) {
-            if (isFileEntry(e)) {
-              const d = await ensureDurationProbe(e);
-              if (d == null) hasUnknown = true;
-              else total += d;
-            } else {
-              hasUnknown = true; // URL entry 拿不到时长，标记一下
-            }
+            const d = await resolveEntryDuration(e);
+            if (d == null) hasUnknown = true;
+            else total += d;
           }
           return { total, hasUnknown };
         };

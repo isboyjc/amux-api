@@ -25,6 +25,25 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 	return nil
 }
 
+// ReserveBilling 将现有计费会话的预扣额度补到目标值。
+// 用于先建立轻量额度门槛、完成昂贵参数探测后再按真实用量精确预扣的场景。
+func ReserveBilling(relayInfo *relaycommon.RelayInfo, targetQuota int) *types.NewAPIError {
+	if relayInfo == nil || relayInfo.Billing == nil {
+		return types.NewError(
+			fmt.Errorf("billing session is not initialized"),
+			types.ErrorCodeUpdateDataError,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if err := relayInfo.Billing.Reserve(targetQuota); err != nil {
+		if apiErr, ok := err.(*types.NewAPIError); ok {
+			return apiErr
+		}
+		return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // SettleBilling — 后结算辅助函数
 // ---------------------------------------------------------------------------

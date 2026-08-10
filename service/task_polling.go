@@ -616,7 +616,9 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		//
 		// 走到这里说明 adaptor 的结算没成功（拿不到上游用量、或换算对不上），
 		// 那本来就是「保持预扣」的兜底路径。
-		if _, ok := billing_setting.GetVideoPricing(taskModelName(task)); ok {
+		if _, _, ok := billing_setting.ResolveVideoPricing(
+			taskModelName(task), task.Properties.UpstreamModelName,
+		); ok {
 			logger.LogInfo(ctx, fmt.Sprintf(
 				"任务 %s 是视频计价模型，跳过按 token 重算，保持预扣额度", task.TaskID))
 			return

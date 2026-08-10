@@ -111,9 +111,11 @@ func TestComputeVideoCost_HappyHorseOfficialPriceTable(t *testing.T) {
 		seconds    float64
 		want       float64
 	}{
+		{model: "happyhorse-1.1-t2v", resolution: "480P", seconds: 5, want: 0.35},
 		{model: "happyhorse-1.1-t2v", resolution: "720P", seconds: 5, want: 0.70},
 		{model: "happyhorse-1.1-i2v", resolution: "1080P", seconds: 5, want: 0.90},
 		{model: "happyhorse-1.1-r2v", resolution: "1080P", seconds: 10, want: 1.80},
+		{model: "happyhorse-1.0-t2v", resolution: "480P", seconds: 5, want: 0.35},
 		{model: "happyhorse-1.0-t2v", resolution: "720P", seconds: 5, want: 0.70},
 		{model: "happyhorse-1.0-i2v", resolution: "1080P", seconds: 5, want: 1.20},
 		{model: "happyhorse-1.0-r2v", resolution: "1080P", seconds: 10, want: 2.40},
@@ -133,8 +135,13 @@ func TestComputeVideoCost_HappyHorseOfficialPriceTable(t *testing.T) {
 
 	if _, err := ComputeVideoCost("happyhorse-1.1-t2v", VideoUsage{
 		Resolution: "480P", OutputSeconds: 5,
+	}); err != nil {
+		t.Fatalf("HappyHorse generation 480P must be priced: %v", err)
+	}
+	if _, err := ComputeVideoCost("happyhorse-1.0-video-edit", VideoUsage{
+		Resolution: "480P", OutputSeconds: 5,
 	}); err == nil {
-		t.Fatal("HappyHorse 480P must be rejected when no official price exists")
+		t.Fatal("HappyHorse Video Edit 480P must be rejected")
 	}
 }
 
@@ -181,6 +188,14 @@ func TestComputeVideoCost_ResolutionFallback(t *testing.T) {
 			t.Errorf("Resolution = %q, want 2K (default)", got.Resolution)
 		}
 		assertMoney(t, "Total", got.Total, 1.30)
+	})
+
+	t.Run("显式未知分辨率不回落默认档", func(t *testing.T) {
+		if _, err := ComputeVideoCost("MiniMax-H3", VideoUsage{
+			Resolution: "4K", OutputSeconds: 10,
+		}); err == nil {
+			t.Fatal("expected error for explicit unknown resolution, got nil")
+		}
 	})
 }
 
@@ -286,6 +301,27 @@ func TestGetVideoPricing_FallsBackToDefaultWhenOverrideMissing(t *testing.T) {
 		t.Fatalf("ComputeVideoCost failed: %v", err)
 	}
 	assertMoney(t, "Total", got.Total, 1.30)
+}
+
+func TestResolveVideoPricingPrefersAliasOverrideThenUpstream(t *testing.T) {
+	withOverride(t, map[string]VideoPricing{
+		"happyhorse-alias": {
+			DefaultResolution: "1080P",
+			Output:            map[string]float64{"1080P": 0.33},
+		},
+	})
+
+	modelName, pricing, ok := ResolveVideoPricing("happyhorse-alias", "happyhorse-1.1-t2v")
+	if !ok || modelName != "happyhorse-alias" {
+		t.Fatalf("resolved model=%q, ok=%v, want alias override", modelName, ok)
+	}
+	assertMoney(t, "alias rate", pricing.Output["1080P"], 0.33)
+
+	modelName, pricing, ok = ResolveVideoPricing("unpriced-alias", "happyhorse-1.1-t2v")
+	if !ok || modelName != "happyhorse-1.1-t2v" {
+		t.Fatalf("resolved model=%q, ok=%v, want upstream model", modelName, ok)
+	}
+	assertMoney(t, "upstream rate", pricing.Output["1080P"], 0.18)
 }
 
 func TestValidateVideoPricing(t *testing.T) {
