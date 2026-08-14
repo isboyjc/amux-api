@@ -76,7 +76,10 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 	created := resp.CreatedAt
 
 	var toolCalls []dto.ToolCallResponse
-	if text == "" && len(resp.Output) > 0 {
+	// 不能因为有文本就跳过工具调用：模型常常先说一句"我来看一下…"再调工具，
+	// Chat Completions 的 assistant 消息本来就允许 content 和 tool_calls 并存。
+	// 以前这里要求 text == ""，等于把带前言的工具调用整个丢掉，agent 拿不到工具就停了。
+	if len(resp.Output) > 0 {
 		for _, out := range resp.Output {
 			if out.Type != "function_call" {
 				continue
@@ -115,8 +118,8 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 		Content: text,
 	}
 	if len(toolCalls) > 0 {
+		// 保留 Content：工具调用不该把模型说的话抹掉。
 		msg.SetToolCalls(toolCalls)
-		msg.Content = ""
 	}
 
 	out := &dto.OpenAITextResponse{
