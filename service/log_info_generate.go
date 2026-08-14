@@ -101,6 +101,14 @@ func appendStreamStatus(relayInfo *relaycommon.RelayInfo, other map[string]inter
 	streamInfo := map[string]interface{}{
 		"status":     status,
 		"end_reason": string(ss.EndReason),
+		// received=0 说明上游一个 data 帧都没发；end_reason=eof 且 received>0 才是中途截断。
+		// 光看 end_reason 分不出这两种，排查断流必须有它。
+		"received": ss.Received(),
+	}
+	// terminal 是协议层的终结事件。Responses / Claude 不发 data: [DONE]，正常跑完也是
+	// end_reason=eof，只有靠它才能和"被截断"区分开。
+	if terminal := ss.TerminalEvent(); terminal != "" {
+		streamInfo["terminal"] = terminal
 	}
 	if ss.EndError != nil {
 		streamInfo["end_error"] = ss.EndError.Error()

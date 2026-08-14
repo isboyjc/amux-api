@@ -41,6 +41,16 @@ func (r *StreamResult) Done() {
 	r.stopped = true
 }
 
+// MarkTerminal 记录收到了协议层的终结事件（如 response.completed / response.incomplete），
+// 不中断后续分片的处理。
+//
+// Responses / Claude 这类协议不发 data: [DONE]，扫描器只能靠连接结束收尾，正常跑完和中途
+// 被截断都会记成 eof，日志里分不出来。注意不能用 Done() 代替：扫描器读完 body 会抢先把
+// EndReason 写成 eof，endOnce 之后 Done() 的标记就丢了。
+func (r *StreamResult) MarkTerminal(event string) {
+	r.status.MarkTerminal(event)
+}
+
 // IsStopped returns whether Stop() or Done() was called during this chunk.
 func (r *StreamResult) IsStopped() bool {
 	return r.stopped

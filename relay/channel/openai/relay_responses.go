@@ -90,7 +90,10 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		sendResponsesStreamData(c, streamResponse, data)
 		switch streamResponse.Type {
-		case "response.completed":
+		case responsesEventCompleted, responsesEventDone, responsesEventIncomplete:
+			// incomplete（撞 max_output_tokens、被内容过滤）同样携带 usage。以前只认
+			// completed，这类响应的真实用量会被丢掉，退化成按输出文本估算。
+			sr.MarkTerminal(streamResponse.Type)
 			if streamResponse.Response != nil {
 				if streamResponse.Response.Usage != nil {
 					if streamResponse.Response.Usage.InputTokens != 0 {
