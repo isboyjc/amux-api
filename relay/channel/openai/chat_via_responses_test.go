@@ -125,3 +125,90 @@ func TestResponsesToChatStream_EmptyStreamIsTruncated(t *testing.T) {
 	assert.Empty(t, info.StreamStatus.TerminalEvent())
 	assert.Equal(t, 0, info.ReceivedResponseCount)
 }
+
+// ---- 工具调用与文本共存 ----
+//
+// Responses API 的事件顺序固定为先 output_text.delta 后 function_call。老实现里
+// sendToolCallDelta 见到 outputText 非空就直接返回，等于把带前言的工具调用整个丢掉，
+// 客户端只收到一段文字和 finish_reason=stop，agent 无事可做就停止执行。
+// gpt-5.x 几乎每次调工具前都会先说一句话，所以这是必现的。
+
+const responsesToolCallSSE = `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.6-sol"}}
+
+data: {"type":"response.output_text.delta","delta":"我来看一下这个文件。"}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file"}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"path\":\"a.go\"}"}
+
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}
+
+`
+
+func TestResponsesToChatStream_ToolCallSurvivesLeadingText(t *testing.T) {
+	body, _ := runResponsesToChatStream(t, responsesToolCallSSE)
+
+	// 文本要保留
+	assert.Contains(t, body, "我来看一下这个文件。")
+	// 工具调用不能被丢掉
+	assert.Contains(t, body, `"tool_calls"`)
+	assert.Contains(t, body, `"read_file"`)
+	assert.Contains(t, body, `call_1`)
+	assert.Contains(t, body, `a.go`)
+	// 有工具调用就必须是 tool_calls，否则 agent 认为本轮结束
+	assert.Contains(t, body, `"finish_reason":"tool_calls"`)
+	assert.NotContains(t, body, `"finish_reason":"stop"`)
+}
+
+// 没有前言文本的纯工具调用，行为不能被上面的改动带坏。
+func TestResponsesToChatStream_ToolCallWithoutText(t *testing.T) {
+	body, _ := runResponsesToChatStream(t, `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.6-sol"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file"}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{}"}
+
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}
+
+`)
+
+	assert.Contains(t, body, `"read_file"`)
+	assert.Contains(t, body, `"finish_reason":"tool_calls"`)
+}
+
+// 并行工具调用：每个 call 要拿到自己的 index，不能挤在一起。
+func TestResponsesToChatStream_ParallelToolCallsGetDistinctIndexes(t *testing.T) {
+	body, _ := runResponsesToChatStream(t, `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.6-sol"}}
+
+data: {"type":"response.output_text.delta","delta":"并行查两个文件。"}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_a"}}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_2","call_id":"call_2","name":"read_b"}}
+
+data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}
+
+`)
+
+	assert.Contains(t, body, `"read_a"`)
+	assert.Contains(t, body, `"read_b"`)
+	assert.Contains(t, body, `"index":0`)
+	assert.Contains(t, body, `"index":1`)
+	assert.Contains(t, body, `"finish_reason":"tool_calls"`)
+}
+
+// 被截断时仍然不能伪造 stop —— 上一轮的修复不能被这次改动破坏。
+func TestResponsesToChatStream_ToolCallThenTruncated(t *testing.T) {
+	body, info := runResponsesToChatStream(t, `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.6-sol"}}
+
+data: {"type":"response.output_text.delta","delta":"我来看一下。"}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file"}}
+
+`)
+
+	assert.Contains(t, body, `"read_file"`)
+	assert.Contains(t, body, `"code":"stream_truncated"`)
+	assert.NotContains(t, body, `"finish_reason":"stop"`)
+	assert.Empty(t, info.StreamStatus.TerminalEvent())
+}

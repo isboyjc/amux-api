@@ -283,10 +283,12 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if callID == "" {
 			return true
 		}
-		if outputText.Len() > 0 {
-			// Prefer streaming assistant text over tool calls to match non-stream behavior.
-			return true
-		}
+		// 这里原本有一道 `outputText.Len() > 0 就直接返回` 的闸，注释写的是"优先文本以对齐
+		// 非流式行为"——但两边都是错的。Responses API 的事件顺序固定为先 output_text.delta
+		// 后 function_call，模型只要在调工具前说一句话（gpt-5.x 几乎必然如此），到工具调用
+		// 事件时这道闸必定成立，整个工具调用被静默丢弃；连带 sawToolCall 也留在 false，
+		// finish_reason 被判成 stop。客户端只看到一段文字和正常结束，agent 无事可做就停了。
+		// Chat Completions 的 assistant 消息本就允许 content 与 tool_calls 并存。
 		if !sendStartIfNeeded() {
 			return false
 		}
@@ -534,7 +536,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 					info.ClaudeConvertInfo.Usage = usage
 				}
 				finishReason := "stop"
-				if sawToolCall && outputText.Len() == 0 {
+				// 有工具调用就是 tool_calls，不看有没有文本——两者本就可以并存。
+				if sawToolCall {
 					finishReason = "tool_calls"
 				}
 				if mapped, ok := responsesTerminalFinishReason(&streamResp); ok {
@@ -605,7 +608,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			sendTruncatedError()
 		} else {
 			finishReason := "stop"
-			if sawToolCall && outputText.Len() == 0 {
+			// 有工具调用就是 tool_calls，不看有没有文本——两者本就可以并存。
+			if sawToolCall {
 				finishReason = "tool_calls"
 			}
 			stop := helper.GenerateStopResponse(responseId, createAt, model, finishReason)
