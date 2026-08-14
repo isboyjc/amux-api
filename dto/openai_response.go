@@ -333,8 +333,10 @@ func (o *OpenAIResponsesResponse) GetSize() string {
 	return ""
 }
 
+// IncompleteDetails 对应 Responses API 的 incomplete_details，字段名是 reason
+// （取值如 max_output_tokens / content_filter），不是 reasoning。
 type IncompleteDetails struct {
-	Reasoning string `json:"reasoning"`
+	Reason string `json:"reason"`
 }
 
 type ResponsesOutput struct {

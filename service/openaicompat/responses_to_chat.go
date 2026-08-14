@@ -7,6 +7,40 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 )
 
+const (
+	ResponsesStatusIncomplete              = "incomplete"
+	responsesIncompleteReasonContentFilter = "content_filter"
+)
+
+// ResponsesStatusString 取出 Responses 响应的 status（它是 json.RawMessage，形如 "completed"）。
+func ResponsesStatusString(resp *dto.OpenAIResponsesResponse) string {
+	if resp == nil || len(resp.Status) == 0 {
+		return ""
+	}
+	return strings.Trim(strings.TrimSpace(string(resp.Status)), `"`)
+}
+
+// ResponsesFinishReasonFromStatus 把 status=incomplete 的响应映射成 Chat Completions 的
+// finish_reason。第二个返回值表示这是不是一个"没跑完"的响应；false 时调用方应沿用自己的
+// 默认值（stop / tool_calls），不要当成 length。
+//
+// 上游 Responses API 用 response.incomplete + incomplete_details.reason 表达"被截断"，
+// 老实现从不看这两个字段，一律报 stop，导致 agent 把截断当成正常结束而停止对话。
+func ResponsesFinishReasonFromStatus(resp *dto.OpenAIResponsesResponse) (string, bool) {
+	if ResponsesStatusString(resp) != ResponsesStatusIncomplete {
+		return "", false
+	}
+	reason := ""
+	if resp.IncompleteDetails != nil {
+		reason = strings.TrimSpace(resp.IncompleteDetails.Reason)
+	}
+	if reason == responsesIncompleteReasonContentFilter {
+		return "content_filter", true
+	}
+	// max_output_tokens 以及未知原因都归到 length，与上游 relaykit 的映射保持一致。
+	return "length", true
+}
+
 func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesResponse, id string) (*dto.OpenAITextResponse, *dto.Usage, error) {
 	if resp == nil {
 		return nil, nil, errors.New("response is nil")
@@ -69,6 +103,11 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 	finishReason := "stop"
 	if len(toolCalls) > 0 {
 		finishReason = "tool_calls"
+	}
+	// status=incomplete 时优先用 incomplete_details 映射出的 length / content_filter，
+	// 否则会把被截断的响应报成正常结束。
+	if mapped, ok := ResponsesFinishReasonFromStatus(resp); ok {
+		finishReason = mapped
 	}
 
 	msg := dto.Message{
