@@ -660,6 +660,11 @@ func RelayTask(c *gin.Context) {
 			task.PrivateData.CallbackURL = cbURL
 			task.PrivateData.CallbackSecret = c.GetString("task_callback_secret")
 		}
+		// Seedance webhook 模式：BuildRequestBody 里命中触发条件时标记，
+		// 落库后轮询循环跳过该任务、状态由上游回调推进。
+		if c.GetBool("task_webhook_mode") {
+			task.PrivateData.WebhookMode = true
+		}
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
 		}

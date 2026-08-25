@@ -156,6 +156,12 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
 	info.InitChannelMeta(c)
 
+	// Seedance webhook 模式标记按「本次尝试」重新判定：控制器的重试循环复用同一个
+	// gin.Context，且跨组回退可能把重试打到另一个 platform 的渠道上。若不清零，
+	// 上一次尝试（已失败）置的 true 会粘到最终落库的任务上——那个赢的上游从没拿到
+	// callback_url，任务却被标成 webhook 模式、轮询跳过，只能卡到超时退款。
+	c.Set("task_webhook_mode", false)
+
 	// 1. 确定 platform → 创建适配器 → 验证请求
 	platform := constant.TaskPlatform(c.GetString("platform"))
 	if platform == "" {

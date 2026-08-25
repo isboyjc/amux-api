@@ -155,6 +155,10 @@ func initConstantEnv() {
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
 	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
 	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
+	// webhook 模式任务的轮询宽限期（分钟）：期间信任上游回调不去轮询，超过后
+	// 恢复轮询自愈。必须明显小于 TASK_TIMEOUT_MINUTES，否则自愈来不及发生就已经
+	// 被判超时退款了。0 表示不跳过（webhook 任务照常轮询）。
+	constant.TaskWebhookPollGraceMinutes = GetEnvOrDefault("TASK_WEBHOOK_POLL_GRACE_MINUTES", 5)
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
 	if soraPatchStr != "" {

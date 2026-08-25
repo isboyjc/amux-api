@@ -358,6 +358,18 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
 		return fmt.Errorf("task %s not found", taskId)
 	}
+	// Seedance webhook 模式：任务状态由上游异步回调推进，宽限期内轮询跳过，
+	// 避免与 webhook 处理器并发写同一任务、重复结算。
+	//
+	// 宽限期过后必须恢复轮询，不能永久跳过：网关无法确认上游真的接受了
+	// callback_url（上游静默忽略、回调在公网被丢、归档 worker 收尾时 CAS 失败
+	// 都不会有任何信号），永久跳过意味着这些情况下任务只能卡到超时被判失败并
+	// 退款——已经生成好的视频白白丢掉。恢复轮询后，updateVideoSingleTask 自身
+	// 的 CAS + 归档在途去重保证与迟到的回调并发也不会重复结算。
+	if task.PrivateData.WebhookMode && !webhookPollGraceExpired(task) {
+		logger.LogInfo(ctx, fmt.Sprintf("Task %s is in webhook mode within grace period, skip polling", task.TaskID))
+		return nil
+	}
 	key := ch.Key
 
 	privateData := task.PrivateData

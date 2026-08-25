@@ -110,6 +110,10 @@ type TaskPrivateData struct {
 	// 任务完成回调：终态时 POST 通知到客户端指定的 URL
 	CallbackURL    string `json:"callback_url,omitempty"`
 	CallbackSecret string `json:"callback_secret,omitempty"`
+	// WebhookMode 标记任务走「上游回调网关」模式（Seedance webhook）。
+	// 为 true 时轮询循环跳过该任务，任务状态由上游异步回调推进，终态由
+	// webhook 处理器完成结算与下游通知。
+	WebhookMode bool `json:"webhook_mode,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。

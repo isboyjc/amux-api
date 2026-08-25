@@ -18,6 +18,11 @@ var ErrorLogEnabled bool
 var TaskQueryLimit int
 var TaskTimeoutMinutes int
 
+// TaskWebhookPollGraceMinutes 是 webhook 模式任务被轮询跳过的宽限期（分钟）。
+// 期间信任上游回调；超过后仍未终态的任务重新纳入轮询自愈。见 service 包的
+// webhookPollGraceExpired。
+var TaskWebhookPollGraceMinutes int
+
 // temporary variable for sora patch, will be removed in future
 var TaskPricePatches []string
 

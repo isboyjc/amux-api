@@ -5565,6 +5565,17 @@
     "默认测试模型": "Mô hình kiểm tra mặc định",
     "默认用户消息": "Xin chào",
     "默认补全倍率": "Tỷ lệ hoàn thành mặc định",
-    "默认账户并发数": ""
+    "默认账户并发数": "",
+    "Seedance 上游回调设置": "Cài đặt callback từ nhà cung cấp Seedance",
+    "开启后，Seedance 视频任务改由上游主动回调本站推进状态，替代定时轮询，可显著降低上游查询压力。仅对提交时携带 callback_url 的任务生效；未满足条件的任务自动回退轮询，不会卡住。": "Khi bật, các tác vụ video Seedance sẽ được cập nhật trạng thái bằng callback từ nhà cung cấp thay vì polling định kỳ, giúp giảm đáng kể tải truy vấn lên nhà cung cấp. Chỉ áp dụng cho tác vụ gửi kèm callback_url; tác vụ không đủ điều kiện sẽ tự quay lại polling và không bị treo.",
+    "生效条件（缺一不可）：开关已开启、已设置回调签名密钥、上方“服务器地址”是上游可访问的公网 http(s) 地址、提交任务时带了 callback_url。": "Điều kiện có hiệu lực (bắt buộc đủ): đã bật công tắc, đã đặt khóa ký callback, \"Địa chỉ máy chủ\" ở trên là địa chỉ http(s) công khai mà nhà cung cấp truy cập được, và tác vụ được gửi kèm callback_url.",
+    "启用 Seedance 上游回调（Webhook）": "Bật callback từ nhà cung cấp Seedance (Webhook)",
+    "回调签名密钥": "Khóa ký callback",
+    "已配置，留空则不修改": "Đã cấu hình, để trống nếu không muốn thay đổi",
+    "未配置，请填写或点击随机生成": "Chưa cấu hình, hãy nhập hoặc bấm Tạo ngẫu nhiên",
+    "回调地址会附带 sig=HMAC(密钥, 任务ID)，本站据此确认回调确实来自上游，防止他人伪造任务成功/失败。密钥不会回传到前端；留空保存表示沿用已有密钥。": "Địa chỉ callback sẽ kèm sig=HMAC(khóa, ID tác vụ); trang web dùng nó để xác nhận callback thực sự đến từ nhà cung cấp, ngăn người khác giả mạo tác vụ thành công/thất bại. Khóa không bao giờ được trả về frontend; lưu với ô trống sẽ giữ nguyên khóa hiện có.",
+    "随机生成": "Tạo ngẫu nhiên",
+    "更新回调设置": "Cập nhật cài đặt callback",
+    "请先设置回调签名密钥，否则上游回调无法通过校验": "Hãy đặt khóa ký callback trước, nếu không callback từ nhà cung cấp sẽ không qua được bước xác minh"
   }
 }

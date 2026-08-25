@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -470,5 +471,175 @@ func TestSeedance20_UnaffectedBy25(t *testing.T) {
 	}
 	if result.Url != "https://cdn.example.com/o.mp4" || result.TotalTokens != 1000 {
 		t.Errorf("ZeroCut 解析结果不对: %+v", result)
+	}
+}
+
+// TestSeedance25_ParseTaskResultCancelled 上游主动取消的任务是终态，必须落
+// FAILURE 并给失败原因，否则掉进 default 被当成「进行中」，任务永远到不了终态、
+// 预扣额度不释放。
+func TestSeedance25_ParseTaskResultCancelled(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	result, err := adaptor.ParseTaskResult([]byte(`{
+		"id":"cgt-x","status":"cancelled","model":"doubao-seedance-2-5-260628",
+		"error":{"code":"cancelled","message":"user cancelled"}
+	}`))
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if result.Status != model.TaskStatusFailure {
+		t.Errorf("Status = %v, want %v", result.Status, model.TaskStatusFailure)
+	}
+	if result.Progress != "100%" {
+		t.Errorf("Progress = %q, want 100%%", result.Progress)
+	}
+	if result.Reason != "user cancelled" {
+		t.Errorf("Reason = %q, want 上游错误信息", result.Reason)
+	}
+}
+
+// TestSeedance_SetupWebhookGating Seedance webhook 模式的门控条件：全局开关 +
+// 客户端 callback_url + 公网 ServerAddress + 公开 task_id 缺一不可。缺任何一条
+// 都应回退轮询，否则上游回调不到网关、任务会卡死。
+func TestSeedance_SetupWebhookGating(t *testing.T) {
+	prevEnabled := system_setting.SeedanceWebhookEnabled
+	prevAddr := system_setting.ServerAddress
+	prevSecret := system_setting.SeedanceWebhookSecret
+	t.Cleanup(func() {
+		system_setting.SeedanceWebhookEnabled = prevEnabled
+		system_setting.ServerAddress = prevAddr
+		system_setting.SeedanceWebhookSecret = prevSecret
+	})
+
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_abc123"},
+	}
+
+	// 1. 全局开关关闭 → 走轮询
+	system_setting.SeedanceWebhookEnabled = false
+	system_setting.SeedanceWebhookSecret = "test-secret"
+	system_setting.ServerAddress = "https://amux.example.com"
+	if _, ok := SetupSeedanceWebhook(info, "https://client.example.com/cb", APITypeZeroCut); ok {
+		t.Error("全局开关关闭时不应进入 webhook 模式")
+	}
+
+	// 2. 开关开启但客户端没带 callback_url → 走轮询
+	system_setting.SeedanceWebhookEnabled = true
+	if _, ok := SetupSeedanceWebhook(info, "", APITypeZeroCut); ok {
+		t.Error("客户端未带 callback_url 时不应进入 webhook 模式")
+	}
+
+	// 3. 签名密钥为空 → 走轮询（回调地址带不上可校验的签名，伪造风险未消除）
+	system_setting.SeedanceWebhookSecret = ""
+	if _, ok := SetupSeedanceWebhook(info, "https://client.example.com/cb", APITypeZeroCut); ok {
+		t.Error("SeedanceWebhookSecret 为空时不应进入 webhook 模式")
+	}
+	system_setting.SeedanceWebhookSecret = "test-secret"
+
+	// 4. ServerAddress 是私网地址 → 走轮询（上游回调不到）
+	system_setting.ServerAddress = "http://localhost:3000"
+	if _, ok := SetupSeedanceWebhook(info, "https://client.example.com/cb", APITypeZeroCut); ok {
+		t.Error("ServerAddress 为 localhost 时不应进入 webhook 模式")
+	}
+
+	// 5. 全部满足 → webhook 模式，回调地址拼上公开 task_id + HMAC 签名
+	system_setting.ServerAddress = "https://amux.example.com"
+	setup, ok := SetupSeedanceWebhook(info, "https://client.example.com/cb", APITypeZeroCut)
+	if !ok {
+		t.Fatal("满足全部条件时应进入 webhook 模式")
+	}
+	want := "https://amux.example.com/api/v1/webhook/seedance/task_abc123?sig=" + common.GenerateHMACWithKey([]byte("test-secret"), "task_abc123")
+	if setup.CallbackURL != want {
+		t.Errorf("CallbackURL = %q, want %q", setup.CallbackURL, want)
+	}
+	if setup.TraceID != "task_abc123" {
+		t.Errorf("TraceID = %q, want task_abc123", setup.TraceID)
+	}
+
+	// 6. 缺公开 task_id → 走轮询
+	noTask := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	if _, ok := SetupSeedanceWebhook(noTask, "https://client.example.com/cb", APITypeZeroCut); ok {
+		t.Error("缺少 PublicTaskID 时不应进入 webhook 模式")
+	}
+}
+
+// TestSeedance_SetupWebhookTraceIDByAPIType trace_id 是 ZeroCut 专有字段：
+// ZeroCut 必须同时拿到 callback_url + trace_id 才会触发回调；官方 Ark 不认识
+// 这个字段，多传会被判成 InvalidParameter 直接把提交打挂。所以填哪些字段只能
+// 按 adaptor 探测到的上游类型决定，不能按走了哪条模型分支决定。
+func TestSeedance_SetupWebhookTraceIDByAPIType(t *testing.T) {
+	prevEnabled := system_setting.SeedanceWebhookEnabled
+	prevAddr := system_setting.ServerAddress
+	prevSecret := system_setting.SeedanceWebhookSecret
+	t.Cleanup(func() {
+		system_setting.SeedanceWebhookEnabled = prevEnabled
+		system_setting.ServerAddress = prevAddr
+		system_setting.SeedanceWebhookSecret = prevSecret
+	})
+	system_setting.SeedanceWebhookEnabled = true
+	system_setting.SeedanceWebhookSecret = "test-secret"
+	system_setting.ServerAddress = "https://amux.example.com"
+
+	info := &relaycommon.RelayInfo{
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_abc123"},
+	}
+
+	zc, ok := SetupSeedanceWebhook(info, "https://client.example.com/cb", APITypeZeroCut)
+	if !ok {
+		t.Fatal("ZeroCut 应进入 webhook 模式")
+	}
+	if zc.TraceID != "task_abc123" {
+		t.Errorf("ZeroCut TraceID = %q, want task_abc123", zc.TraceID)
+	}
+
+	ark, ok := SetupSeedanceWebhook(info, "https://client.example.com/cb", APITypeDoubaoOfficial)
+	if !ok {
+		t.Fatal("官方 Ark 也应进入 webhook 模式（URL 自带 task_id 即可寻址）")
+	}
+	if ark.TraceID != "" {
+		t.Errorf("官方 Ark TraceID = %q, want 空（多传会被 Ark 判成 InvalidParameter）", ark.TraceID)
+	}
+	if ark.CallbackURL != zc.CallbackURL {
+		t.Errorf("两种上游的回调地址应一致: ark=%q zerocut=%q", ark.CallbackURL, zc.CallbackURL)
+	}
+}
+
+// TestSeedance25_ArkRequestOmitsTraceIDForOfficial 官方 Ark 请求体里不能出现
+// trace_id 字段（哪怕是空串）——omitempty 必须真的把它丢掉。
+func TestSeedance25_ArkRequestOmitsTraceIDForOfficial(t *testing.T) {
+	official := (&Seedance25Request{
+		Prompt:      "test",
+		Duration:    Seedance25AutoDuration,
+		CallbackURL: "https://amux.example.com/api/v1/webhook/seedance/task_abc123",
+	}).ToArkRequest("doubao-seedance-2-5-260628")
+	data, err := common.Marshal(official)
+	if err != nil {
+		t.Fatalf("marshal 失败: %v", err)
+	}
+	if strings.Contains(string(data), "trace_id") {
+		t.Errorf("官方 Ark 请求体不应包含 trace_id: %s", string(data))
+	}
+
+	zerocut := (&Seedance25Request{
+		Prompt:      "test",
+		Duration:    Seedance25AutoDuration,
+		CallbackURL: "https://amux.example.com/api/v1/webhook/seedance/task_abc123",
+		TraceID:     "task_abc123",
+	}).ToArkRequest("doubao-seedance-2-5-260628")
+	if zerocut.TraceID != "task_abc123" {
+		t.Errorf("ZeroCut TraceID = %q, want task_abc123", zerocut.TraceID)
+	}
+}
+
+// TestSeedance25_ToArkRequestCarriesCallbackURL webhook 模式下把回调地址设给
+// Seedance25Request 后，构造的上游请求体必须原样带上 callback_url。
+func TestSeedance25_ToArkRequestCarriesCallbackURL(t *testing.T) {
+	r := &Seedance25Request{
+		Prompt:      "test",
+		Duration:    Seedance25AutoDuration,
+		CallbackURL: "https://amux.example.com/api/v1/webhook/seedance/task_abc123",
+	}
+	arkReq := r.ToArkRequest("doubao-seedance-2-5-260628")
+	if arkReq.CallbackURL != r.CallbackURL {
+		t.Errorf("CallbackURL = %q, want %q", arkReq.CallbackURL, r.CallbackURL)
 	}
 }

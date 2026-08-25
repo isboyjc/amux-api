@@ -157,6 +157,11 @@ type ArkVideoRequest struct {
 	ExecutionExpiresAfter *int          `json:"execution_expires_after,omitempty"`
 	SafetyIdentifier      string        `json:"safety_identifier,omitempty"`
 	Tools                 []ArkTool     `json:"tools,omitempty"`
+	CallbackURL           string        `json:"callback_url,omitempty"`
+	// TraceID 只在上游是 ZeroCut 时填（它要求 callback_url + trace_id 同时传
+	// 才触发回调）。官方 Ark 不认识这个字段，恒为空由 omitempty 丢弃——多传
+	// 会被 Ark 判成 InvalidParameter 直接把提交打挂。
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 // ArkIncomingRequest 解析客户端按火山 v3 原生协议发来的请求体。
@@ -211,6 +216,11 @@ type Seedance25Request struct {
 	ExecutionExpiresAfter *int
 	SafetyIdentifier      string
 	WebSearch             bool
+	// CallbackURL 是网关构造的上游回调地址（Seedance webhook 模式）。为空表示
+	// 走轮询模式，回调地址不会出现在上游请求体里。
+	CallbackURL string
+	// TraceID 是透传给 ZeroCut 的网关公开任务 ID，仅在上游为 ZeroCut 时非空。
+	TraceID string
 
 	// unroledImages 暂存 role 不填的图片，等整个请求解析完再归位。
 	unroledImages []string
@@ -636,8 +646,8 @@ func (r *Seedance25Request) ToArkRequest(upstreamModel string) *ArkVideoRequest 
 		Priority:              r.Priority,
 		ExecutionExpiresAfter: r.ExecutionExpiresAfter,
 		SafetyIdentifier:      r.SafetyIdentifier,
-		// CallbackURL 不透传：任务状态由网关轮询，用户的回调地址由网关自己的
-		// 回调机制处理，直接转给上游会让上游绕过网关回调用户。
+		CallbackURL:           r.CallbackURL,
+		TraceID:               r.TraceID,
 	}
 	if r.WebSearch {
 		req.Tools = []ArkTool{{Type: Seedance25ToolWebSearch}}

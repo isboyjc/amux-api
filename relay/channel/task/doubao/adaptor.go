@@ -65,6 +65,7 @@ type requestPayload struct {
 	Model                 string         `json:"model"`
 	Content               []ContentItem  `json:"content,omitempty"`
 	CallbackURL           string         `json:"callback_url,omitempty"`
+	TraceID               string         `json:"trace_id,omitempty"`
 	ReturnLastFrame       *dto.BoolValue `json:"return_last_frame,omitempty"`
 	ServiceTier           string         `json:"service_tier,omitempty"`
 	ExecutionExpiresAfter *dto.IntValue  `json:"execution_expires_after,omitempty"`
@@ -121,6 +122,9 @@ type responseTask struct {
 type zeroCutResponse struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+	// TraceID 是方案 A 的透传 ID：发起任务时把网关公开 task_id 填进 trace_id，
+	// 回调 payload 里原样带回，webhook 端点据此兜底定位任务（URL task_id 为主）。
+	TraceID string `json:"trace_id,omitempty"`
 	Data    struct {
 		ID     int                    `json:"id"` // Used in query response
 		Type   string                 `json:"type"`
@@ -649,6 +653,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err != nil {
 			return nil, err
 		}
+		// Seedance webhook 模式：把网关构造的回调地址设给上游 2.5 请求体，
+		// 由上游异步回调推进任务状态（替代网关轮询）。走哪条分支由模型名决定，
+		// 但上游可能是官方 Ark 也可能是 ZeroCut——后者要求 callback_url 与
+		// trace_id 同时传才会触发回调，所以按 a.apiType 决定填哪些字段。
+		if setup, ok := SetupSeedanceWebhook(info, c.GetString("task_callback_url"), a.apiType); ok {
+			s25.CallbackURL = setup.CallbackURL
+			s25.TraceID = setup.TraceID
+			c.Set("task_webhook_mode", true)
+		}
 		arkReq := s25.ToArkRequest(a.seedance25UpstreamModel(info))
 		logger.LogJson(c, "seedance 2.5 video request body", arkReq)
 		data, err := common.Marshal(arkReq)
@@ -688,6 +701,15 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			info.UpstreamModelName = body.Model
 		}
 
+		// webhook 模式：网关把自己构造的回调地址填给上游。ZeroCut 还要求同时
+		// 带 trace_id 才会触发回调；官方 Ark 不认识 trace_id（多传会被判成
+		// InvalidParameter），所以 setup.TraceID 对 Ark 为空、omitempty 丢弃。
+		if setup, ok := SetupSeedanceWebhook(info, c.GetString("task_callback_url"), a.apiType); ok {
+			body.CallbackURL = setup.CallbackURL
+			body.TraceID = setup.TraceID
+			c.Set("task_webhook_mode", true)
+		}
+
 		data, err := common.Marshal(body)
 		if err != nil {
 			return nil, err
@@ -716,6 +738,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	// 在映射前调 strip 拿到的是原始别名，CanonicalSeedanceName 命不中，
 	// duration 不会被剔除→上游照样 InvalidParameter。
 	stripIncompatibleParams(body)
+	// 与 raw 分支一致：webhook 模式下填回调地址；trace_id 仅对 ZeroCut 填。
+	if setup, ok := SetupSeedanceWebhook(info, c.GetString("task_callback_url"), a.apiType); ok {
+		body.CallbackURL = setup.CallbackURL
+		body.TraceID = setup.TraceID
+		c.Set("task_webhook_mode", true)
+	}
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -978,8 +1006,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			// Ensure Url is empty for failed tasks
 			taskResult.Url = ""
 		default:
-			taskResult.Status = model.TaskStatusInProgress
-			taskResult.Progress = "50%"
+			// 未知状态：返回错误而不是兜底成「进行中」。webhook 模式下解析失败会
+			// 被拒收（非 2xx）触发上游重试；轮询模式下调用方 log 后保持原状态、
+			// 下一轮重试。若上游新增合法状态，应显式加进上面的 case，而不是让未知
+			// 状态静默当作进行中——否则畸形/未知回调会被误 ack，终态永不落库、
+			// 预扣额度不释放。
+			return nil, fmt.Errorf("unknown zerocut status %q", zeroCutResp.Data.Status)
 		}
 		return &taskResult, nil
 	}
@@ -1019,10 +1051,20 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if taskResult.Reason == "" {
 			taskResult.Reason = "task expired"
 		}
+	case "cancelled":
+		// 上游主动取消的任务也是终态，跟 expired 同理必须落 FAILURE，否则掉进
+		// default 被当成「进行中」，任务永远到不了终态、预扣额度不释放。
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = "100%"
+		taskResult.Reason = resTask.Error.Message
+		if taskResult.Reason == "" {
+			taskResult.Reason = "task cancelled"
+		}
 	default:
-		// Unknown status, treat as processing
-		taskResult.Status = model.TaskStatusInProgress
-		taskResult.Progress = "30%"
+		// 未知状态：返回错误而不是兜底成「进行中」。理由同上（ZeroCut 分支）——
+		// webhook 模式靠它触发非 2xx 重试，轮询模式靠它保持原状态下轮重试。
+		// 上游新增合法状态时显式加进上面的 case，否则畸形/未知回调会被误 ack。
+		return nil, fmt.Errorf("unknown doubao task status %q", resTask.Status)
 	}
 
 	return &taskResult, nil

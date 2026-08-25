@@ -192,24 +192,27 @@ func groupHintForError(c *gin.Context, usingGroup string) string {
 // - application/x-www-form-urlencoded
 // - multipart/form-data
 func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
+	var modelRequest *ModelRequest
 	if strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json") {
-		modelRequest, err := getModelFromJSONBody(c)
+		req, err := getModelFromJSONBody(c)
 		if err != nil {
 			return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 		}
-		return modelRequest, nil
+		modelRequest = req
+	} else {
+		var req ModelRequest
+		if err := common.UnmarshalBodyReusable(c, &req); err != nil {
+			return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+		}
+		modelRequest = &req
 	}
-
-	var modelRequest ModelRequest
-	err := common.UnmarshalBodyReusable(c, &modelRequest)
-	if err != nil {
-		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
-	}
+	// 无论哪种 Content-Type，都从解析出的请求里把回调地址写进 context，
+	// 供 RelayTaskSubmit 落库 + Seedance webhook 门控使用。
 	if modelRequest.CallbackURL != "" {
 		c.Set("task_callback_url", modelRequest.CallbackURL)
 		c.Set("task_callback_secret", modelRequest.CallbackSecret)
 	}
-	return &modelRequest, nil
+	return modelRequest, nil
 }
 
 func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
@@ -225,12 +228,23 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
 		return nil, errors.New("invalid JSON request body")
 	}
 
-	values := gjson.GetManyBytes(requestBody, "model", "group")
+	// callback_url / callback_secret 也要从 JSON 体里读出来放进 ModelRequest，
+	// 供 getModelFromRequest 统一写入 context —— 否则 JSON 提交永远进不了
+	// Seedance webhook 模式（表单分支有读，JSON 分支此前漏了）。
+	values := gjson.GetManyBytes(requestBody, "model", "group", "callback_url", "callback_secret")
 	model, err := getJSONStringValue(values[0], "model")
 	if err != nil {
 		return nil, err
 	}
 	group, err := getJSONStringValue(values[1], "group")
+	if err != nil {
+		return nil, err
+	}
+	callbackURL, err := getJSONStringValue(values[2], "callback_url")
+	if err != nil {
+		return nil, err
+	}
+	callbackSecret, err := getJSONStringValue(values[3], "callback_secret")
 	if err != nil {
 		return nil, err
 	}
@@ -241,8 +255,10 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
 	c.Request.Body = io.NopCloser(storage)
 
 	return &ModelRequest{
-		Model: model,
-		Group: group,
+		Model:          model,
+		Group:          group,
+		CallbackURL:    callbackURL,
+		CallbackSecret: callbackSecret,
 	}, nil
 }
 

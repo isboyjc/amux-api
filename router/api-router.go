@@ -63,6 +63,12 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/stripe/webhook", controller.StripeWebhook)
 		apiRouter.POST("/creem/webhook", controller.CreemWebhook)
 		apiRouter.POST("/waffo/webhook", controller.WaffoWebhook)
+		// Seedance 上游异步回调（官方 Ark / ZeroCut）。无 TokenAuth，但要求回调
+		// 请求携带 HMAC 签名：回调地址拼了 sig=HMAC(SeedanceWebhookSecret, taskID)，
+		// 只有拿到该地址的上游能正确回带，仅知道公开 task_id 的调用者无法伪造
+		// （见 SetupSeedanceWebhook / controller.SeedanceTaskWebhook）。签名校验用
+		// constant-time 比较，签名不符直接 404。
+		apiRouter.POST("/v1/webhook/seedance/:task_id", controller.SeedanceTaskWebhook)
 
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), controller.UniversalVerify)

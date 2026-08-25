@@ -103,6 +103,9 @@ const SystemSetting = () => {
     LinuxDOClientSecret: '',
     LinuxDOMinimumTrustLevel: '',
     ServerAddress: '',
+    // Seedance 上游回调（webhook）配置
+    SeedanceWebhookEnabled: '',
+    SeedanceWebhookSecret: '',
     // SSRF防护配置
     'fetch_setting.enable_ssrf_protection': true,
     'fetch_setting.allow_private_ip': '',
@@ -130,6 +133,10 @@ const SystemSetting = () => {
   const [domainList, setDomainList] = useState([]);
   const [ipList, setIpList] = useState([]);
   const [allowedPorts, setAllowedPorts] = useState([]);
+  // SeedanceWebhookSecretConfigured：后端派生标记。密钥以 Secret 结尾，
+  // GetOptions 不回传其值，只回传"是否已配置"，避免密钥落到前端。
+  const [seedanceSecretConfigured, setSeedanceSecretConfigured] =
+    useState(false);
 
   const getOptions = async () => {
     setLoading(true);
@@ -198,6 +205,7 @@ const SystemSetting = () => {
           case 'passkey.enabled':
           case 'passkey.allow_insecure_origin':
           case 'WorkerAllowHttpImageRequestEnabled':
+          case 'SeedanceWebhookEnabled':
             item.value = toBoolean(item.value);
             break;
           case 'passkey.origins':
@@ -223,6 +231,12 @@ const SystemSetting = () => {
         }
         newInputs[item.key] = item.value;
       });
+      setSeedanceSecretConfigured(
+        toBoolean(newInputs['SeedanceWebhookSecretConfigured']),
+      );
+      // 派生标记不是表单字段，别塞进 Form 的值里
+      delete newInputs['SeedanceWebhookSecretConfigured'];
+      newInputs['SeedanceWebhookSecret'] = '';
       setInputs(newInputs);
       setOriginInputs(newInputs);
       // 同步模式布尔到本地状态
@@ -320,6 +334,39 @@ const SystemSetting = () => {
       options.push({ key: 'WorkerValidKey', value: inputs.WorkerValidKey });
     }
     await updateOptions(options);
+  };
+
+  // Seedance 上游回调设置。密钥留空表示"不改动已保存的密钥"——后端从不回传
+  // 密钥原值，若把空串一并提交会把已配置的密钥清掉，webhook 随之静默失效。
+  const submitSeedanceWebhook = async () => {
+    const enabled = !!inputs.SeedanceWebhookEnabled;
+    const secret = (inputs.SeedanceWebhookSecret || '').trim();
+    if (enabled && !secret && !seedanceSecretConfigured) {
+      showError(t('请先设置回调签名密钥，否则上游回调无法通过校验'));
+      return;
+    }
+    const options = [{ key: 'SeedanceWebhookEnabled', value: enabled }];
+    if (secret !== '') {
+      options.push({ key: 'SeedanceWebhookSecret', value: secret });
+    }
+    await updateOptions(options);
+    if (secret !== '') {
+      setSeedanceSecretConfigured(true);
+      // 保存成功后清空输入框，密钥不在前端留存
+      setInputs((prev) => ({ ...prev, SeedanceWebhookSecret: '' }));
+      formApiRef.current?.setValue('SeedanceWebhookSecret', '');
+    }
+  };
+
+  // 生成一个高强度随机密钥填进输入框（仅填充，仍需点保存）。
+  const generateSeedanceWebhookSecret = () => {
+    const bytes = new Uint8Array(32);
+    window.crypto.getRandomValues(bytes);
+    const secret = Array.from(bytes)
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+    setInputs((prev) => ({ ...prev, SeedanceWebhookSecret: secret }));
+    formApiRef.current?.setValue('SeedanceWebhookSecret', secret);
   };
 
   const submitServerAddress = async () => {
@@ -774,6 +821,70 @@ const SystemSetting = () => {
                   </Row>
                   <Button onClick={submitServerAddress}>
                     {t('更新服务器地址')}
+                  </Button>
+                </Form.Section>
+              </Card>
+
+              <Card>
+                <Form.Section text={t('Seedance 上游回调设置')}>
+                  <Banner
+                    type='info'
+                    description={t(
+                      '开启后，Seedance 视频任务改由上游主动回调本站推进状态，替代定时轮询，可显著降低上游查询压力。仅对提交时携带 callback_url 的任务生效；未满足条件的任务自动回退轮询，不会卡住。',
+                    )}
+                    style={{ marginBottom: 20, marginTop: 16 }}
+                  />
+                  <Text>
+                    {t(
+                      '生效条件（缺一不可）：开关已开启、已设置回调签名密钥、上方“服务器地址”是上游可访问的公网 http(s) 地址、提交任务时带了 callback_url。',
+                    )}
+                  </Text>
+                  <Row
+                    gutter={{ xs: 8, sm: 16, md: 24, lg: 24, xl: 24, xxl: 24 }}
+                    style={{ marginTop: 16 }}
+                  >
+                    <Col xs={24} sm={24} md={24} lg={24} xl={24}>
+                      <Form.Checkbox field='SeedanceWebhookEnabled' noLabel>
+                        {t('启用 Seedance 上游回调（Webhook）')}
+                      </Form.Checkbox>
+                    </Col>
+                  </Row>
+                  <Row
+                    gutter={{ xs: 8, sm: 16, md: 24, lg: 24, xl: 24, xxl: 24 }}
+                  >
+                    <Col xs={24} sm={24} md={16} lg={16} xl={16}>
+                      <Form.Input
+                        field='SeedanceWebhookSecret'
+                        label={t('回调签名密钥')}
+                        placeholder={
+                          seedanceSecretConfigured
+                            ? t('已配置，留空则不修改')
+                            : t('未配置，请填写或点击随机生成')
+                        }
+                        type='password'
+                        extraText={t(
+                          '回调地址会附带 sig=HMAC(密钥, 任务ID)，本站据此确认回调确实来自上游，防止他人伪造任务成功/失败。密钥不会回传到前端；留空保存表示沿用已有密钥。',
+                        )}
+                      />
+                    </Col>
+                    <Col
+                      xs={24}
+                      sm={24}
+                      md={8}
+                      lg={8}
+                      xl={8}
+                      style={{ display: 'flex', alignItems: 'center' }}
+                    >
+                      <Button
+                        onClick={generateSeedanceWebhookSecret}
+                        style={{ marginTop: 12 }}
+                      >
+                        {t('随机生成')}
+                      </Button>
+                    </Col>
+                  </Row>
+                  <Button onClick={submitSeedanceWebhook}>
+                    {t('更新回调设置')}
                   </Button>
                 </Form.Section>
               </Card>
@@ -1349,10 +1460,7 @@ const SystemSetting = () => {
                         field='EmailDomainBlacklistEnabled'
                         noLabel
                         onChange={(e) =>
-                          handleCheckboxChange(
-                            'EmailDomainBlacklistEnabled',
-                            e,
-                          )
+                          handleCheckboxChange('EmailDomainBlacklistEnabled', e)
                         }
                       >
                         {t('启用邮箱域名黑名单')}
